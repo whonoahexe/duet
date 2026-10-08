@@ -44,6 +44,7 @@ The two of us can reliably message and call each other — on both phones, inclu
 - User says the SFU runs on this machine; at init time `docker ps` showed only `sideby-staging` sync/lens/redis containers, so SFU reachability/deploy location must be confirmed early (README documents it on GCP VM-B).
 - Client-side mediasoup consumption needs `mediasoup-client` and the SFU's signaling protocol.
 - iOS PWA constraints: push only when installed to home screen (16.4+); no background ringing; camera/mic permission prompts per session quirks.
+- **Infra state at init (2026-10-08):** `sideby.me` expired 2026-08-20 (redemption, NXDOMAIN); SFU not running anywhere reachable. Both are Phase 1 blockers for calls. Research found duet only needs `SFU_TOKEN_SECRET` to mint HS256 join tokens (rooms auto-create on join), and the owner's private `@sideby-me/rtc` 0.9.0 SDK (GitHub Packages; needs `read:packages` token at build) handles the client handshake.
 - Scale: 2 users. No need for horizontal scaling, queues, or multi-tenant concerns.
 
 ## Constraints
@@ -64,7 +65,9 @@ The two of us can reliably message and call each other — on both phones, inclu
 | Password + TOTP 2FA, two seeded accounts | User's choice; no sign-up surface | — Pending |
 | Push-to-answer for incoming calls | Avoids native CallKit; user accepted | — Pending |
 | Self-host app + DB + media on this machine | Keeps data off third parties | — Pending |
-| Domain: assume a subdomain like `duet.sideby.me` with TLS | Needed for PWA/push/WSS; confirm during phase 1 | — Pending |
+| New domain (not sideby.me) for duet + SFU/TURN | sideby.me expired 2026-08-20 (redemption); user chose to move to a different domain — exact domain TBD | — Pending |
+| Run SFU + coturn on this machine | User choice; GCP VM-B is down. Requires UDP port-forwards + a non-CGNAT public IP — verify first | — Pending |
+| Cloudflare Tunnel for duet app ingress (HTTPS/WSS) | Matches existing staging setup; no port-forward for the app. Accepted: Cloudflare sees app traffic in transit. Tunnel cannot carry SFU UDP media | — Pending |
 
 ## Evolution
 
