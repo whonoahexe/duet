@@ -2,7 +2,7 @@
 
 ## Overview
 
-duet goes from nothing to a private two-person messenger in three coarse phases. Phase 1 stands up a real HTTPS origin on the new domain, the self-hosted app/DB, two-account password + TOTP login, and an installable PWA on both phones; in parallel, a user-gated ops track brings the SFU + coturn up on this machine and proves media flows from a phone on cellular. Phase 2 delivers the core value: reliable real-time chat with web push, plus photos, video clips and voice notes that play on both an iPhone and a Pixel. Phase 3 adds voice and video calls over the SFU with push-to-answer, and only starts once the Phase 1 media smoke test is green.
+duet goes from nothing to a private two-person messenger in three coarse phases. Phase 1 stands up a real HTTPS origin on the new domain, the self-hosted app/DB, two-account password login, and an installable PWA on both phones; in parallel, a user-gated ops track brings the SFU + coturn up on this machine and proves media flows from a phone on cellular. Phase 2 delivers the core value: reliable real-time chat with web push, plus photos, video clips and voice notes that play on both an iPhone and a Pixel. Phase 3 adds voice and video calls over the SFU with push-to-answer, and only starts once the Phase 1 media smoke test is green.
 
 ## Phases
 
@@ -12,20 +12,20 @@ duet goes from nothing to a private two-person messenger in three coarse phases.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation, Auth & Media Plane** - Live HTTPS app on the new domain, two-account TOTP login, installable PWA; parallel ops track proves the SFU carries media over cellular
+- [ ] **Phase 1: Foundation, Auth & Media Plane** - Live HTTPS app on the new domain, two-account password login, installable PWA; parallel ops track proves the SFU carries media over cellular
 - [ ] **Phase 2: Chat, Media & Push** - Reliable real-time chat with history, receipts, typing, reactions and replies; photos, video clips and voice notes on both phones; message push notifications
 - [ ] **Phase 3: Voice & Video Calls** - 1:1 voice/video calls through the self-hosted SFU with push-to-answer, in-call controls and reconnect, on Wi-Fi and cellular
 
 ## Phase Details
 
 ### Phase 1: Foundation, Auth & Media Plane
-**Goal**: Both of us can open duet at its own HTTPS address, log in with password + TOTP, and install it to our home screens, and the self-hosted SFU is proven to carry media from a phone on cellular
+**Goal**: Both of us can open duet at its own HTTPS address, log in with a password, and install it to our home screens, and the self-hosted SFU is proven to carry media from a phone on cellular
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
 **Requirements**: INFR-01, INFR-02, INFR-03, INFR-04, AUTH-01, AUTH-02, AUTH-03, AUTH-04, SHEL-01, SHEL-02
 **Success Criteria** (what must be TRUE):
   1. Opening the duet URL on the new domain over HTTPS (Cloudflare Tunnel) shows a login screen built only from shadcn preset `b51GFhBEQ`; app, SQLite DB and media dir run in Docker on this machine and data survives a container restart
-  2. Each of the two seeded users can log in with password + TOTP code, a wrong code is rejected, and there is no sign-up path anywhere in the app
+  2. Each of the two seeded users can log in by tapping their name and entering their password, a wrong password is rejected (and repeated failures are rate-limited), and there is no sign-up path anywhere in the app
   3. A logged-in user who closes and reopens the installed app days later is still logged in, and can log out explicitly
   4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
   5. Ops track: the home connection is confirmed as non-CGNAT public IPv4, and from a phone on cellular the smoke harness joins an SFU room on this machine and reports `bytesReceived > 0`, both direct and with relay-only TURN forced

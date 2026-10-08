@@ -16,7 +16,7 @@ The two of us can reliably message and call each other — on both phones, inclu
 
 ### Active
 
-- [ ] Exactly two fixed accounts; log in with password + 2FA (TOTP); no public sign-up
+- [ ] Exactly two fixed accounts; log in with a password (tap your name); no public sign-up
 - [ ] Installable PWA on iOS (Safari, 16.4+) and Android (Chrome)
 - [ ] Real-time 1:1 text chat with persistent history (kept forever)
 - [ ] Send images (kept forever, normal history)
@@ -62,10 +62,10 @@ The two of us can reliably message and call each other — on both phones, inclu
 |----------|-----------|---------|
 | Installable PWA (Next.js) over native/Capacitor | Fastest; one codebase; reuses shadcn preset directly; push works on iOS 16.4+ | — Pending |
 | Private & self-hosted, no E2EE | User's chosen security bar; avoids key-management and SFU insertable-streams work | — Pending |
-| Password + TOTP 2FA, two seeded accounts | User's choice; no sign-up surface | — Pending |
+| Password-only login (TOTP dropped 2026-10-08), two seeded accounts | User's choice in Phase 1 discussion; argon2id + rate limit compensate; no sign-up surface | — Pending |
 | Push-to-answer for incoming calls | Avoids native CallKit; user accepted | — Pending |
 | Self-host app + DB + media on this machine | Keeps data off third parties | — Pending |
-| New domain (not sideby.me) for duet + SFU/TURN | sideby.me expired 2026-08-20 (redemption); user chose to move to a different domain — exact domain TBD | — Pending |
+| New domain (not sideby.me) for duet + SFU/TURN | sideby.me expired 2026-08-20 (redemption); user chose brkn.me (portfolio domain, on Cloudflare): duet.brkn.me (tunnel), sfu./turn.brkn.me (DNS-only) | — Pending |
 | Run SFU + coturn on this machine | User choice; GCP VM-B is down. Requires UDP port-forwards + a non-CGNAT public IP — verify first | — Pending |
 | Cloudflare Tunnel for duet app ingress (HTTPS/WSS) | Matches existing staging setup; no port-forward for the app. Accepted: Cloudflare sees app traffic in transit. Tunnel cannot carry SFU UDP media | — Pending |
 

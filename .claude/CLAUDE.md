@@ -32,7 +32,7 @@ A private, self-hosted chat app for exactly two people — the owner and their g
 | Server | **One** Node process: Fastify 5 serves `web/out`, `/api/*`, `/ws`, `/media/*` | node 24 LTS · fastify 5.12.5 |
 | Realtime | `@fastify/websocket` (raw `ws`) carrying a zod-typed JSON protocol | @fastify/websocket 11.3.3 · ws 8.x |
 | DB | SQLite file in WAL mode via better-sqlite3 + Drizzle ORM | better-sqlite3 13.0.3 · drizzle-orm 0.45.4 · drizzle-kit 0.31.11 |
-| Auth | Hand-rolled: argon2id password + TOTP + opaque session cookie | @node-rs/argon2 2.2.2 · otplib 13.5.0 · qrcode 1.5.4 |
+| Auth | Hand-rolled: argon2id password + opaque session cookie (TOTP dropped 2026-10-08, see Phase 1 CONTEXT D-05) | @node-rs/argon2 2.2.2 |
 | Files | Local disk volume `/data/media`, uploaded through `@fastify/multipart` and served through `@fastify/static` (HTTP Range support, which iOS video needs) behind an auth hook | @fastify/multipart 10.1.3 · @fastify/static 10.1.5 |
 | Push | `web-push` with VAPID; a hand-written `public/sw.js` | web-push 3.6.7 |
 | PWA | `app/manifest.ts` plus the hand-written SW. **No Serwist.** | — |

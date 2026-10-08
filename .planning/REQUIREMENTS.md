@@ -15,7 +15,7 @@
 ### Auth
 
 - [ ] **AUTH-01**: Exactly two accounts exist, created by a server seed script; there is no sign-up UI
-- [ ] **AUTH-02**: User can log in with password + TOTP 2FA code
+- [ ] **AUTH-02**: User can log in by tapping their name and entering their password (password-only; TOTP dropped 2026-10-08)
 - [ ] **AUTH-03**: User stays logged in across app restarts for a long rolling period (no frequent re-login)
 - [ ] **AUTH-04**: User can log out
 
@@ -78,8 +78,8 @@
 
 ### Account
 
-- **AUTH-05**: Recovery codes for lost authenticator
-- **AUTH-06**: CLI script to reset a user's password/2FA
+- **AUTH-05**: ~~Recovery codes for lost authenticator~~ (moot: TOTP dropped)
+- **AUTH-06**: CLI script to reset a user's password
 
 ### Ops
 
