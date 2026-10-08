@@ -1,0 +1,72 @@
+# Roadmap: duet
+
+## Overview
+
+duet goes from nothing to a private two-person messenger in three coarse phases. Phase 1 stands up a real HTTPS origin on the new domain, the self-hosted app/DB, two-account password + TOTP login, and an installable PWA on both phones; in parallel, a user-gated ops track brings the SFU + coturn up on this machine and proves media flows from a phone on cellular. Phase 2 delivers the core value: reliable real-time chat with web push, plus photos, video clips and voice notes that play on both an iPhone and a Pixel. Phase 3 adds voice and video calls over the SFU with push-to-answer, and only starts once the Phase 1 media smoke test is green.
+
+## Phases
+
+**Phase Numbering:**
+- Integer phases (1, 2, 3): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+
+Decimal phases appear between their surrounding integers in numeric order.
+
+- [ ] **Phase 1: Foundation, Auth & Media Plane** - Live HTTPS app on the new domain, two-account TOTP login, installable PWA; parallel ops track proves the SFU carries media over cellular
+- [ ] **Phase 2: Chat, Media & Push** - Reliable real-time chat with history, receipts, typing, reactions and replies; photos, video clips and voice notes on both phones; message push notifications
+- [ ] **Phase 3: Voice & Video Calls** - 1:1 voice/video calls through the self-hosted SFU with push-to-answer, in-call controls and reconnect, on Wi-Fi and cellular
+
+## Phase Details
+
+### Phase 1: Foundation, Auth & Media Plane
+**Goal**: Both of us can open duet at its own HTTPS address, log in with password + TOTP, and install it to our home screens, and the self-hosted SFU is proven to carry media from a phone on cellular
+**Mode:** mvp
+**Depends on**: Nothing (first phase)
+**Requirements**: INFR-01, INFR-02, INFR-03, INFR-04, AUTH-01, AUTH-02, AUTH-03, AUTH-04, SHEL-01, SHEL-02
+**Success Criteria** (what must be TRUE):
+  1. Opening the duet URL on the new domain over HTTPS (Cloudflare Tunnel) shows a login screen built only from shadcn preset `b51GFhBEQ`; app, SQLite DB and media dir run in Docker on this machine and data survives a container restart
+  2. Each of the two seeded users can log in with password + TOTP code, a wrong code is rejected, and there is no sign-up path anywhere in the app
+  3. A logged-in user who closes and reopens the installed app days later is still logged in, and can log out explicitly
+  4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
+  5. Ops track: the home connection is confirmed as non-CGNAT public IPv4, and from a phone on cellular the smoke harness joins an SFU room on this machine and reports `bytesReceived > 0`, both direct and with relay-only TURN forced
+**Plans**: TBD
+**UI hint**: yes
+**Notes**: INFR-03/INFR-04 are a parallel, user-gated ops track (new-domain DNS, router UDP/TCP port-forwards, CGNAT check, GitHub Packages token for `@sideby-me/rtc`). Phase 2 does not wait on it; Phase 3 does.
+
+### Phase 2: Chat, Media & Push
+**Goal**: We can message each other in real time, reliably, with history kept forever, share photos, short video clips and voice notes that display and play correctly on both an iPhone and a Pixel (visible only to the two of us), and get a push notification when the app is not open
+**Mode:** mvp
+**Depends on**: Phase 1 (app track: INFR-01/02, AUTH, SHEL-01/02); does not require the ops track to be green
+**Requirements**: CHAT-01, CHAT-02, CHAT-03, CHAT-04, CHAT-05, CHAT-06, CHAT-07, CHAT-08, CHAT-09, NOTF-01, NOTF-02, NOTF-03, SHEL-03, MDIA-01, MDIA-02, MDIA-03, MDIA-04, MDIA-05
+**Success Criteria** (what must be TRUE):
+  1. A message sent from one phone appears on the other in real time; the sender sees sending, sent, read and failed states; each person sees a typing indicator, can react with an emoji and reply to a specific message as a quoted reply; scrolling up loads older history all the way back to the first message
+  2. Messages typed while offline are queued and send automatically on reconnect, failed ones can be retried with a tap, no message ever appears twice, and returning to the app after it was backgrounded shows everything missed without a manual refresh
+  3. With the app closed or backgrounded, a new message raises a push notification on both the iPhone and the Pixel; tapping it opens the app into the chat, no push arrives while the recipient is actively viewing the chat, and first run on the iPhone walks the user through Add to Home Screen and enabling notifications with a test-push button that delivers a real notification
+  4. User can send a photo from the camera or photo library (an iPhone HEIC photo displays correctly on the Pixel, and tapping any image opens it full screen) and a short video clip from either phone (including an iPhone HEVC `.MOV`) that plays on both phones
+  5. User can record and send a voice note that the other person plays with a working scrubber on either phone; seeking within videos and voice notes works (Range requests), and media URLs return no content without a logged-in session
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 3: Voice & Video Calls
+**Goal**: We can call each other by voice or video through the self-hosted SFU, on Wi-Fi or cellular, with push-to-answer ringing
+**Mode:** mvp
+**Depends on**: Phase 2 (web push for ringing); Phase 1 ops track GREEN (INFR-03/INFR-04 smoke test passed from cellular)
+**Requirements**: CALL-01, CALL-02, CALL-03, CALL-04, CALL-05, CALL-06, CALL-07, CALL-08, CALL-09
+**Success Criteria** (what must be TRUE):
+  1. From the chat, either person can start a voice call or a video call and both hear (and see) each other, including with one phone on cellular via TURN relay and the other on Wi-Fi
+  2. With the recipient's app closed, an incoming-call push arrives; tapping it, or simply opening the app, shows an incoming-call screen with Accept and Decline; an unanswered call stops ringing after a timeout, and the caller can cancel while it rings
+  3. During a call, user can mute/unmute, turn the camera on/off, switch between front and back camera, and hang up, and the screen does not lock for the duration of the call
+  4. A brief network drop mid-call shows "Reconnecting…" and the call resumes automatically without either person redialing
+**Plans**: TBD
+**UI hint**: yes
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/04) runs in parallel with Phases 1-2 and must be green before Phase 3 starts.
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Foundation, Auth & Media Plane | 0/TBD | Not started | - |
+| 2. Chat, Media & Push | 0/TBD | Not started | - |
+| 3. Voice & Video Calls | 0/TBD | Not started | - |
