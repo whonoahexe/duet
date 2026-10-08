@@ -1,6 +1,13 @@
 ---
-gsd_state_version: '1.0'
+gsd_state_version: "1.0"
+current_phase: 1
+current_phase_name: Foundation, Auth & Media Plane
 status: planning
+stopped_at: Phase 1 context gathered
+last_updated: "2026-10-08T17:39:47.532Z"
+last_activity: 2026-10-08
+last_activity_desc: Roadmap revised to 3 phases (Rich Media merged into Phase 2), 37/37 v1 requirements mapped
+state_head: 0ce7acb218d4bb680dc75cf9d9d90c30abc84bf0
 progress:
   total_phases: 3
   completed_phases: 0
@@ -64,10 +71,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 1]: New domain name not chosen yet; blocks INFR-01 and everything that needs an HTTPS origin (PWA install, push, WSS, getUserMedia).
+- [Phase 1]: Domain resolved: brkn.me (on Cloudflare) — duet.brkn.me via tunnel, sfu./turn.brkn.me DNS-only.
 - [Phase 1 ops]: Non-CGNAT public IPv4 on the home connection is unverified. If it is CGNAT, the SFU cannot run at home and Phase 3 needs a different host.
 - [Phase 1 ops]: User actions required: DNS for SFU/TURN, router UDP/TCP port-forwards, GitHub Packages token (`read:packages`) for `@sideby-me/rtc`.
-- [Phase 1]: Recovery codes / CLI 2FA reset are v2 (AUTH-05/06). TOTP lockout risk; the seed script (AUTH-01) is the stopgap.
+- [Phase 1]: TOTP dropped (password-only); re-running the seed script is the password-reset stopgap until AUTH-06.
 - [Phase 2]: Phase 2 is now the largest phase (18 requirements: chat, push, rich media). Expect plan-phase to split it into several plans. Rich-media plans (HEIC/HEVC transcoding, cross-platform voice-note format) need research before planning.
 
 ## Deferred Items
@@ -80,6 +87,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-08
-Stopped at: Roadmap revised to 3 phases; ready for `/gsd-plan-phase 1`
-Resume file: None
+Last session: 2026-10-08T17:39:47.489Z
+Stopped at: Phase 1 context gathered
+Resume file: .planning/phases/01-foundation-auth-media-plane/01-CONTEXT.md
