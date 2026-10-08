@@ -1,0 +1,1 @@
+{"content":"Cloudflare proxied requests: max request body 100MB on Free/Pro (413 above). WebSocket idle connections dropped after ~100s inactivity (secondary sources, Enterprise-only to change) - use app-level heartbeat <60s.","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-10-08T16:50:57.232Z","ttl":86400000,"kind":"web"}
