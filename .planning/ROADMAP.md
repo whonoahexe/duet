@@ -19,6 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Foundation, Auth & Media Plane
+
 **Goal**: Both of us can open duet at its own HTTPS address, log in with a password, and install it to our home screens, and the self-hosted SFU is proven to carry media from a phone on cellular
 **Mode:** mvp
 **Depends on**: Nothing (first phase)
@@ -29,11 +30,28 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A logged-in user who closes and reopens the installed app days later is still logged in, and can log out explicitly
   4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
   5. Ops track: the home connection is confirmed as non-CGNAT public IPv4, and from a phone on cellular the smoke harness joins an SFU room on this machine and reports `bytesReceived > 0`, both direct and with relay-only TURN forced
-**Plans**: TBD
+
+**Plans**: 5 plans (4 waves; app track 01→02→03, ops track 04 in parallel from wave 1, then 05)
+
+Plans:
+**Wave 1**
+- [ ] 01-01-PLAN.md — Walking skeleton: package gate, preset scaffold + one Fastify process + SQLite (migrations proven live) + seed; login screen lists the two people (wave 1)
+- [ ] 01-04-PLAN.md — Ops: one human sitting (CGNAT, router, tokens, accounts), then home SFU + coturn + SNI stack with certs, renew/DDNS (wave 1, user-gated)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 01-02-PLAN.md — Auth slice: tap name → password → chat-shaped shell; rate limit + Origin check; 90-day rolling session; logout menu (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 01-03-PLAN.md — Live at https://duet.brkn.me via Docker + Cloudflare Tunnel with persistent ./data; installable dark PWA; end-of-phase device UAT (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 01-05-PLAN.md — Ops: token minter + live SFU join check, /debug/sfu harness, cellular smoke run direct + relay (wave 4, user-gated)
+
 **UI hint**: yes
 **Notes**: INFR-03/INFR-04 are a parallel, user-gated ops track (new-domain DNS, router UDP/TCP port-forwards, CGNAT check, GitHub Packages token for `@sideby-me/rtc`). Phase 2 does not wait on it; Phase 3 does.
 
 ### Phase 2: Chat, Media & Push
+
 **Goal**: We can message each other in real time, reliably, with history kept forever, share photos, short video clips and voice notes that display and play correctly on both an iPhone and a Pixel (visible only to the two of us), and get a push notification when the app is not open
 **Mode:** mvp
 **Depends on**: Phase 1 (app track: INFR-01/02, AUTH, SHEL-01/02); does not require the ops track to be green
@@ -44,10 +62,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. With the app closed or backgrounded, a new message raises a push notification on both the iPhone and the Pixel; tapping it opens the app into the chat, no push arrives while the recipient is actively viewing the chat, and first run on the iPhone walks the user through Add to Home Screen and enabling notifications with a test-push button that delivers a real notification
   4. User can send a photo from the camera or photo library (an iPhone HEIC photo displays correctly on the Pixel, and tapping any image opens it full screen) and a short video clip from either phone (including an iPhone HEVC `.MOV`) that plays on both phones
   5. User can record and send a voice note that the other person plays with a working scrubber on either phone; seeking within videos and voice notes works (Range requests), and media URLs return no content without a logged-in session
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 3: Voice & Video Calls
+
 **Goal**: We can call each other by voice or video through the self-hosted SFU, on Wi-Fi or cellular, with push-to-answer ringing
 **Mode:** mvp
 **Depends on**: Phase 2 (web push for ringing); Phase 1 ops track GREEN (INFR-03/INFR-04 smoke test passed from cellular)
@@ -57,6 +77,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. With the recipient's app closed, an incoming-call push arrives; tapping it, or simply opening the app, shows an incoming-call screen with Accept and Decline; an unanswered call stops ringing after a timeout, and the caller can cancel while it rings
   3. During a call, user can mute/unmute, turn the camera on/off, switch between front and back camera, and hang up, and the screen does not lock for the duration of the call
   4. A brief network drop mid-call shows "Reconnecting…" and the call resumes automatically without either person redialing
+
 **Plans**: TBD
 **UI hint**: yes
 
@@ -67,6 +88,6 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Auth & Media Plane | 0/TBD | Not started | - |
+| 1. Foundation, Auth & Media Plane | 0/5 | Planned | - |
 | 2. Chat, Media & Push | 0/TBD | Not started | - |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |
