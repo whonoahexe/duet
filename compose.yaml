@@ -1,0 +1,27 @@
+name: duet
+
+services:
+  duet:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: "3100"
+      HOST: 0.0.0.0
+    volumes:
+      - ./data:/data
+    # No `ports:` on purpose: only cloudflared (same compose network) reaches duet:3100,
+    # so CF-Connecting-IP (the login rate-limit key) cannot be forged from the LAN.
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    # The image runs as 65532, which cannot read the uid-1000 0400 credentials file.
+    user: "1000:1000"
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./deploy/cloudflared:/etc/cloudflared:ro
+    depends_on:
+      - duet

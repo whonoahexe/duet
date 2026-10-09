@@ -1,0 +1,15 @@
+.git
+**/node_modules
+web/.next
+web/out
+data
+.env
+.env.*
+!.env.example
+deploy/cloudflared/credentials.json
+deploy/cloudflared/config.yml
+ops
+.planning
+.claude
+.gsd
+coverage
