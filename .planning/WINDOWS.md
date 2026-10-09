@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 1
+open_count: 0
 waived_count: 0
-fixed_count: 0
+fixed_count: 1
 total_count: 1
-last_updated: 2026-10-09T08:57:05.941Z
+last_updated: 2026-10-09T09:07:42.933Z
 ---
 
 # Broken Windows Ledger
@@ -15,7 +15,7 @@ last_updated: 2026-10-09T08:57:05.941Z
 
 | id | phase | kind | file | line | description | status | reason | recorded_at | resolved_at |
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
-| 1 | 01 | stub | web/app/page.tsx | 32 | LoginTiles onSelect is a no-op; plan 01-02 wires it to the password step | open |  | 2026-10-09T08:57:05.941Z |  |
+| 1 | 01 | stub | web/app/page.tsx | 32 | LoginTiles onSelect is a no-op; plan 01-02 wires it to the password step | fixed |  | 2026-10-09T08:57:05.941Z | 2026-10-09T09:07:42.933Z |
 
 ````json
 [
@@ -26,10 +26,10 @@ last_updated: 2026-10-09T08:57:05.941Z
     "file": "web/app/page.tsx",
     "line": 32,
     "description": "LoginTiles onSelect is a no-op; plan 01-02 wires it to the password step",
-    "status": "open",
+    "status": "fixed",
     "reason": "",
     "recorded_at": "2026-10-09T08:57:05.941Z",
-    "resolved_at": null,
+    "resolved_at": "2026-10-09T09:07:42.933Z",
     "milestone": null
   }
 ]
