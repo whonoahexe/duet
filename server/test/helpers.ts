@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs"
+import type { WebSocket } from "ws"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { FastifyInstance } from "fastify"
@@ -52,6 +53,7 @@ export interface MakeTestAppOptions {
   fetch?: typeof fetch
   turnTimeoutMs?: number
   logStream?: NodeJS.WritableStream
+  heartbeatMs?: number
 }
 
 export async function makeTestApp({
@@ -61,9 +63,10 @@ export async function makeTestApp({
   fetch,
   turnTimeoutMs,
   logStream,
+  heartbeatMs,
 }: MakeTestAppOptions = {}): Promise<TestApp> {
   const dir = dataDir ?? makeDataDir()
-  const app = await buildApp(testConfig(dir, env), { fetch, turnTimeoutMs, logStream })
+  const app = await buildApp(testConfig(dir, env), { fetch, turnTimeoutMs, logStream, heartbeatMs })
   if (seed) {
     await seedUsers(app.db, [TEST_USERS.alice, TEST_USERS.bob])
   }
@@ -100,4 +103,88 @@ export async function loginCookie(app: FastifyInstance, username: "alice" | "bob
   const m = /duet_session=([^;]+)/.exec(header)
   if (!m) throw new Error("login set no duet_session cookie")
   return `duet_session=${m[1]}`
+}
+
+/** A server frame as the test sees it (loosely typed so tests can assert on any field). */
+export type WsFrame = { t: string } & Record<string, any>
+
+export interface WsTestClient {
+  ws: WebSocket
+  /** Resolves to the next parsed frame (queued or future); rejects after timeoutMs. */
+  next(timeoutMs?: number): Promise<WsFrame>
+  /** Waits ms, then resolves to every frame received and not yet consumed. */
+  collect(ms: number): Promise<WsFrame[]>
+  /** Resolves once the socket closes, with the close code. */
+  closed: Promise<{ code: number }>
+  /** JSON-encodes and sends a frame. */
+  send(frame: unknown): void
+}
+
+/**
+ * Open /ws through @fastify/websocket's injectWS. The message listener is attached in onInit, so the
+ * hello frame (sent right after the upgrade) is never missed. cookie/origin null = header omitted.
+ */
+export async function openWs(
+  app: FastifyInstance,
+  cookie: string | null,
+  origin: string | null,
+): Promise<WsTestClient> {
+  const headers: Record<string, string> = {}
+  if (cookie !== null) headers.cookie = cookie
+  if (origin !== null) headers.origin = origin
+
+  const queue: WsFrame[] = []
+  const waiters: Array<(f: WsFrame) => void> = []
+  let resolveClosed!: (v: { code: number }) => void
+  const closed = new Promise<{ code: number }>((r) => {
+    resolveClosed = r
+  })
+
+  const ws = await app.injectWS("/ws", { headers } as never, {
+    onInit(socket) {
+      socket.on("message", (data) => {
+        let frame: WsFrame
+        try {
+          frame = JSON.parse(data.toString()) as WsFrame
+        } catch {
+          frame = { t: "__unparseable__" }
+        }
+        const w = waiters.shift()
+        if (w) w(frame)
+        else queue.push(frame)
+      })
+      socket.on("close", (code) => resolveClosed({ code }))
+      socket.on("error", () => {
+        /* surfaced through close */
+      })
+    },
+  })
+
+  return {
+    ws,
+    closed,
+    send(frame) {
+      ws.send(typeof frame === "string" ? frame : JSON.stringify(frame))
+    },
+    next(timeoutMs = 1000) {
+      const queued = queue.shift()
+      if (queued) return Promise.resolve(queued)
+      return new Promise<WsFrame>((resolve, reject) => {
+        const waiter = (f: WsFrame) => {
+          clearTimeout(timer)
+          resolve(f)
+        }
+        const timer = setTimeout(() => {
+          const i = waiters.indexOf(waiter)
+          if (i >= 0) waiters.splice(i, 1)
+          reject(new Error(`no ws frame within ${timeoutMs} ms`))
+        }, timeoutMs)
+        waiters.push(waiter)
+      })
+    },
+    async collect(ms) {
+      await new Promise((r) => setTimeout(r, ms))
+      return queue.splice(0, queue.length)
+    },
+  }
 }
