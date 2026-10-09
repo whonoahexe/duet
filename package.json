@@ -14,5 +14,8 @@
     "test": "npm run test -w server",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "seed": "npm run seed -w server --"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
   }
 }
