@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { rmSync } from "node:fs"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { FastifyInstance } from "fastify"
@@ -100,5 +101,139 @@ describe("login happy path", () => {
   it("GET /api/me with an unknown token is 401", async () => {
     const me = await t.app.inject({ method: "GET", url: "/api/me", headers: { cookie: "duet_session=not-a-real-token" } })
     expect(me.statusCode).toBe(401)
+  })
+})
+
+describe("login errors", () => {
+  it("wrong password is a generic 401 with no cookie", async () => {
+    const res = await login(t.app, { userId: userId(t.app, "alice"), password: "not-alices-password" })
+    expect(res.statusCode).toBe(401)
+    expect(res.json()).toEqual({ error: "wrong_password" })
+    expect(res.headers["set-cookie"]).toBeUndefined()
+  })
+
+  it("an unknown but well-formed userId gets the identical 401 body", async () => {
+    const res = await login(t.app, { userId: randomUUID(), password: "whatever-password" })
+    expect(res.statusCode).toBe(401)
+    expect(res.body).toBe(JSON.stringify({ error: "wrong_password" }))
+    expect(res.headers["set-cookie"]).toBeUndefined()
+  })
+
+  const invalidBodies: Array<[string, () => unknown]> = [
+    ["{}", () => ({})],
+    ["non-uuid userId", () => ({ userId: "x", password: "y" })],
+    ["empty password", () => ({ userId: userId(t.app, "alice"), password: "" })],
+    ["missing password", () => ({ userId: userId(t.app, "alice") })],
+    ["empty userId", () => ({ userId: "", password: "alice-test-password-1" })],
+  ]
+  for (const [name, body] of invalidBodies) {
+    it(`invalid body (${name}) is 400 invalid_body with no cookie`, async () => {
+      const res = await login(t.app, body())
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toEqual({ error: "invalid_body" })
+      expect(res.headers["set-cookie"]).toBeUndefined()
+    })
+  }
+
+  it("malformed JSON is 400 invalid_body, never 500", async () => {
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/login",
+      headers: { origin: ORIGIN, "content-type": "application/json", "cf-connecting-ip": freshIp() },
+      payload: "{not json",
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toEqual({ error: "invalid_body" })
+  })
+})
+
+describe("login rate limit (5 per 5 minutes per CF-Connecting-IP + userId)", () => {
+  it("answers the 6th attempt for the same person from the same IP with 429, without affecting others", async () => {
+    const alice = userId(t.app, "alice")
+    const bob = userId(t.app, "bob")
+    const ip = "1.1.1.1"
+    for (let i = 0; i < 5; i++) {
+      const res = await login(t.app, { userId: alice, password: `wrong-password-${i}` }, { ip })
+      expect(res.statusCode).toBe(401)
+    }
+    const sixth = await login(t.app, { userId: alice, password: "wrong-password-6" }, { ip })
+    expect(sixth.statusCode).toBe(429)
+    expect(sixth.json()).toMatchObject({ error: "rate_limited" })
+    expect(sixth.headers["set-cookie"]).toBeUndefined()
+
+    const otherPerson = await login(t.app, { userId: bob, password: "wrong-password-b" }, { ip })
+    expect(otherPerson.statusCode).toBe(401)
+
+    const otherIp = await login(t.app, { userId: alice, password: "wrong-password-x" }, { ip: "2.2.2.2" })
+    expect(otherIp.statusCode).toBe(401)
+  })
+})
+
+describe("Origin check on non-GET /api/*", () => {
+  it("rejects a foreign Origin with 403 bad_origin", async () => {
+    const res = await login(
+      t.app,
+      { userId: userId(t.app, "alice"), password: TEST_USERS.alice.password },
+      { origin: "https://evil.example" },
+    )
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toEqual({ error: "bad_origin" })
+    expect(res.headers["set-cookie"]).toBeUndefined()
+  })
+
+  it("rejects a missing Origin with 403", async () => {
+    const res = await login(t.app, { userId: userId(t.app, "alice"), password: TEST_USERS.alice.password }, { origin: null })
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toEqual({ error: "bad_origin" })
+  })
+
+  it("lets APP_ORIGIN through", async () => {
+    const res = await login(t.app, { userId: userId(t.app, "alice"), password: TEST_USERS.alice.password })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it("does not apply to GET", async () => {
+    const res = await t.app.inject({ method: "GET", url: "/api/users" })
+    expect(res.statusCode).toBe(200)
+  })
+})
+
+describe("security headers", () => {
+  it("sets nosniff, DENY and same-origin referrer, without HSTS when not Secure", async () => {
+    const res = await t.app.inject({ method: "GET", url: "/api/users" })
+    expect(res.headers["x-content-type-options"]).toBe("nosniff")
+    expect(res.headers["x-frame-options"]).toBe("DENY")
+    expect(res.headers["referrer-policy"]).toBe("same-origin")
+    expect(res.headers["strict-transport-security"]).toBeUndefined()
+  })
+
+  it("adds HSTS when COOKIE_SECURE is true", async () => {
+    const dir = makeDataDir()
+    const app = await buildApp({ ...testConfig(dir), COOKIE_SECURE: true })
+    try {
+      const res = await app.inject({ method: "GET", url: "/api/users" })
+      expect(res.headers["strict-transport-security"]).toBe("max-age=15552000")
+    } finally {
+      await app.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("Unicode normalization", () => {
+  it("logs in with the NFC form of a password seeded as NFD", async () => {
+    const dir = makeDataDir()
+    const app = await buildApp(testConfig(dir))
+    try {
+      const nfc = "café-crème-brûlée"
+      const nfd = nfc.normalize("NFD")
+      expect(nfd).not.toBe(nfc)
+      await seedUsers(app.db, [{ username: "uni", displayName: "Uni Code", password: nfd }])
+      const res = await login(app, { userId: userId(app, "uni"), password: nfc })
+      expect(res.statusCode).toBe(200)
+    } finally {
+      await app.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
