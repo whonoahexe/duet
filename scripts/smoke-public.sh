@@ -52,6 +52,10 @@ get "$BASE/api/users"
 [ "$(header x-frame-options)" = "DENY" ] || die "/api/users is missing X-Frame-Options: DENY"
 cp "$tmp/body" "$tmp/users.json"
 
+# 4b. the TURN credential endpoint is login-gated (INFR-03): no cookie -> 401
+get -X POST -H "Origin: $BASE" "$BASE/api/rtc/ice-servers"
+[ "$status" = "401" ] || die "POST /api/rtc/ice-servers without a session returned $status, expected 401"
+
 # 5. optional real login round-trip
 if [ -n "${DUET_SEED_FILE:-}" ]; then
   [ -r "$DUET_SEED_FILE" ] || die "DUET_SEED_FILE is not readable"

@@ -9,6 +9,7 @@ import { authRoutes } from "./auth/routes"
 import { decorateAuth } from "./auth/session"
 import { originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
+import { rtcRoutes } from "./rtc/routes"
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -17,8 +18,20 @@ declare module "fastify" {
   }
 }
 
-export async function buildApp(config: Config): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: config.LOG_LEVEL } })
+/** Injection points for tests (no network, readable logs). Production passes nothing. */
+export interface AppDeps {
+  /** fetch used for Cloudflare TURN minting. Default: globalThis.fetch. */
+  fetch?: typeof fetch
+  /** Cloudflare TURN mint timeout. Default: 5000 ms. */
+  turnTimeoutMs?: number
+  /** When set, logs go here at level info (tests read them). Default: stdout at LOG_LEVEL. */
+  logStream?: NodeJS.WritableStream
+}
+
+export async function buildApp(config: Config, deps: AppDeps = {}): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: deps.logStream ? { level: "info", stream: deps.logStream } : { level: config.LOG_LEVEL },
+  })
 
   const { sqlite, db } = openDb(config.DATA_DIR)
   app.decorate("db", db)
@@ -57,6 +70,14 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
 
   await app.register(usersRoutes)
   await app.register(authRoutes)
+  await app.register(rtcRoutes, { fetch: deps.fetch ?? globalThis.fetch, timeoutMs: deps.turnTimeoutMs ?? 5000 })
+
+  // One line at boot so a deploy without TURN is visible in the logs (never the key id or bearer).
+  if (config.CF_TURN_KEY_ID && config.CF_TURN_KEY_API_TOKEN) {
+    app.log.info({ evt: "turn_config", configured: true })
+  } else {
+    app.log.warn({ evt: "turn_config", configured: false })
+  }
 
   // Static export (web/out). Skipped when it has not been built (tests, server-only dev).
   const hasStatic = existsSync(config.WEB_OUT)
