@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Foundation, Auth & Media Plane
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-10-09T08:58:08.664Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-10-09T09:08:56.942Z"
 last_activity: 2026-10-09
-last_activity_desc: Completed 01-01 walking skeleton
-state_head: 8f5283e38cb8b5c1ca0c8f89d3a51bfcbaa25ea6
+last_activity_desc: Completed 01-02 password login and rolling session
+state_head: 01297afeb76d860fecd56dc2dee828e65d29976e
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
-  percent: 20
+  completed_plans: 2
+  percent: 40
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 01 (Foundation, Auth & Media Plane) — EXECUTING
-Plan: 2 of 5
-Status: Executing Phase 01
-Last activity: 2026-10-09 — Completed 01-01 walking skeleton
+Plan: 3 of 5
+Status: Ready to execute
+Last activity: 2026-10-09 — Completed 01-02 password login and rolling session
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [██░░░░░░░░] 20%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 9min | 3 tasks | 65 files |
+| Phase 01 P02 | 8min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,9 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-01: forcedTheme=dark alone neutralizes the scaffold d-key hotkey; theme-provider.tsx unchanged
 - [Phase 01]: 01-01: Seed keeps the stored hash when the password is unchanged (byte-identical re-runs); length counted in NFC code points
 - [Phase 01]: 01-01: Commits land on master as dispatched although git.base-branch flags it protected; consider git.allow_default_branch_commits: true
+- [Phase 01]: 01-02: Root setErrorHandler maps FST_ERR_CTP_* to 400 invalid_body and sends @fastify/rate-limit's thrown object with its statusCode (rethrowing it gave 200)
+- [Phase 01]: 01-02: Origin guard runs on every non-GET /api/* including 404s; APP_ORIGIN must exactly match the public origin in 01-03 or all login POSTs get 403
+- [Phase 01]: 01-02: Logout 401 counts as logged out; other failures toast via a dark Toaster mounted in Shell
 
 ### Pending Todos
 
@@ -96,6 +100,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-09T08:58:08.642Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-10-09T09:08:56.919Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

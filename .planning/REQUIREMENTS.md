@@ -15,9 +15,9 @@
 ### Auth
 
 - [x] **AUTH-01**: Exactly two accounts exist, created by a server seed script; there is no sign-up UI
-- [ ] **AUTH-02**: User can log in by tapping their name and entering their password (password-only; TOTP dropped 2026-10-08)
-- [ ] **AUTH-03**: User stays logged in across app restarts for a long rolling period (no frequent re-login)
-- [ ] **AUTH-04**: User can log out
+- [x] **AUTH-02**: User can log in by tapping their name and entering their password (password-only; TOTP dropped 2026-10-08)
+- [x] **AUTH-03**: User stays logged in across app restarts for a long rolling period (no frequent re-login)
+- [x] **AUTH-04**: User can log out
 
 ### App Shell
 
@@ -121,9 +121,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFR-03 | Phase 1 | Pending |
 | INFR-04 | Phase 1 | Pending |
 | AUTH-01 | Phase 1 | Complete |
-| AUTH-02 | Phase 1 | Pending |
-| AUTH-03 | Phase 1 | Pending |
-| AUTH-04 | Phase 1 | Pending |
+| AUTH-02 | Phase 1 | Complete |
+| AUTH-03 | Phase 1 | Complete |
+| AUTH-04 | Phase 1 | Complete |
 | SHEL-01 | Phase 1 | Complete |
 | SHEL-02 | Phase 1 | Pending |
 | SHEL-03 | Phase 2 | Pending |
