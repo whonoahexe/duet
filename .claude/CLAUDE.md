@@ -14,7 +14,7 @@ A private, self-hosted chat app for exactly two people — the owner and their g
 - **Timeline**: Fast — user does not want this to drag on for days. Prefer the simplest thing that works.
 - **Hosting**: Self-hosted on this machine (Docker), alongside the SFU. Database + media files on local disk.
 - **Platforms**: iPhone (Safari PWA) and Pixel (Chrome PWA).
-- **Media plane**: Must use the existing SFU + coturn rather than building P2P/mesh.
+- **Media plane**: 1:1 peer-to-peer WebRTC with Cloudflare TURN relay (credentials minted by the duet server). No SFU — reversed 2026-10-09 because the home connection is CGNAT; the SFU/`@sideby-me/rtc` sections of the stack notes below are historical.
 - **Transport security**: HTTPS/WSS everywhere (required for PWA install, push, getUserMedia).
 
 <!-- GSD:project-end -->

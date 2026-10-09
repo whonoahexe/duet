@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A private, self-hosted chat app for exactly two people — the owner and their girlfriend. Text chat, images, short video clips, voice notes, and 1:1 voice/video calls, delivered as an installable PWA on an iPhone and a Pixel. Calls route through the owner's existing mediasoup SFU (`sfu.sideby.me`); everything else runs on the same machine.
+A private, self-hosted chat app for exactly two people — the owner and their girlfriend. Text chat, images, short video clips, voice notes, and 1:1 voice/video calls, delivered as an installable PWA on an iPhone and a Pixel. Calls are peer-to-peer WebRTC, relayed through Cloudflare TURN when a direct path fails (switched from the self-hosted SFU on 2026-10-09 because the home connection is CGNAT); everything else runs on the same machine.
 
 ## Core Value
 
@@ -24,10 +24,10 @@ The two of us can reliably message and call each other — on both phones, inclu
 - [ ] Record and send voice notes
 - [ ] Read receipts and typing indicator
 - [ ] Emoji reactions and reply-to-message
-- [ ] 1:1 voice calls via the existing SFU
-- [ ] 1:1 video calls via the existing SFU
+- [ ] 1:1 voice calls (peer-to-peer WebRTC)
+- [ ] 1:1 video calls (peer-to-peer WebRTC)
 - [ ] Incoming call / new message delivered as a web push notification; tapping opens the app into the call/chat
-- [ ] Calls work over cellular (TURN relay via existing coturn)
+- [ ] Calls work over cellular (Cloudflare TURN relay)
 
 ### Out of Scope
 
@@ -51,9 +51,9 @@ The two of us can reliably message and call each other — on both phones, inclu
 
 - **UI**: shadcn preset `b51GFhBEQ` (`https://ui.shadcn.com/create?preset=b51GFhBEQ`) — locked, no deviation whatsoever. Init via `npx shadcn create --preset b51GFhBEQ` (or equivalent) and only use its components/tokens.
 - **Timeline**: Fast — user does not want this to drag on for days. Prefer the simplest thing that works.
-- **Hosting**: Self-hosted on this machine (Docker), alongside the SFU. Database + media files on local disk.
+- **Hosting**: Self-hosted on this machine (Docker). Database + media files on local disk.
 - **Platforms**: iPhone (Safari PWA) and Pixel (Chrome PWA).
-- **Media plane**: Must use the existing SFU + coturn rather than building P2P/mesh.
+- **Media plane**: 1:1 peer-to-peer WebRTC (DTLS-SRTP, end-to-end encrypted between the phones) with Cloudflare TURN as the relay; short-lived TURN credentials minted by the duet server. No SFU. (Revised 2026-10-09; the previous "must use the existing SFU + coturn" constraint was reversed by the user after CGNAT was confirmed.)
 - **Transport security**: HTTPS/WSS everywhere (required for PWA install, push, getUserMedia).
 
 ## Key Decisions
@@ -66,7 +66,8 @@ The two of us can reliably message and call each other — on both phones, inclu
 | Push-to-answer for incoming calls | Avoids native CallKit; user accepted | — Pending |
 | Self-host app + DB + media on this machine | Keeps data off third parties | — Pending |
 | New domain (not sideby.me) for duet + SFU/TURN | sideby.me expired 2026-08-20 (redemption); user chose brkn.me (portfolio domain, on Cloudflare): duet.brkn.me (tunnel), sfu./turn.brkn.me (DNS-only) | — Pending |
-| Run SFU + coturn on this machine | User choice; GCP VM-B is down. Requires UDP port-forwards + a non-CGNAT public IP — verify first | — Pending |
+| Run SFU + coturn on this machine | User choice; GCP VM-B is down. Requires UDP port-forwards + a non-CGNAT public IP — verify first | ✗ Reversed 2026-10-09: home is CGNAT (outer router PPPoE WAN 172.18.28.128, egress 103.198.98.196, no public IPv6) |
+| P2P WebRTC + Cloudflare TURN instead of an SFU (2026-10-09) | Two people only, so an SFU adds nothing; no VPS/router/cert ops; media E2E-encrypted between phones; existing Cloudflare account/token can manage TURN keys (verified). Trade-off: drops the @sideby-me/rtc SDK, so signaling and ICE-restart are hand-written over duet's WS; TURN is a third party but only relays encrypted packets | — Pending |
 | Cloudflare Tunnel for duet app ingress (HTTPS/WSS) | Matches existing staging setup; no port-forward for the app. Accepted: Cloudflare sees app traffic in transit. Tunnel cannot carry SFU UDP media | — Pending |
 
 ## Evolution

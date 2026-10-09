@@ -9,8 +9,8 @@
 
 - [x] **INFR-01**: duet is reachable at an HTTPS URL on the new domain via a Cloudflare Tunnel to this machine
 - [x] **INFR-02**: App, database (SQLite) and media files run self-hosted in Docker on this machine with data on a persistent volume
-- [ ] **INFR-03**: SFU + coturn run on this machine and are reachable from the public internet (new domain DNS, router UDP/TCP port-forwards, verified non-CGNAT public IPv4)
-- [ ] **INFR-04**: A smoke test proves media flows through the SFU (`bytesReceived > 0`) from a phone on cellular, both direct and forced-relay via TURN
+- [ ] **INFR-03**: TURN relay is provisioned on Cloudflare (TURN key via API) and the duet server mints short-lived TURN credentials for logged-in users only (revised 2026-10-09: was self-hosted SFU + coturn; home connection is CGNAT)
+- [ ] **INFR-04**: A smoke test proves a peer-to-peer WebRTC connection carries media (`bytesReceived > 0`) between two clients with one phone on cellular, both with normal ICE and with relay-only (forced TURN)
 
 ### Auth
 
