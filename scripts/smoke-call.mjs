@@ -28,6 +28,8 @@ const browser = await chromium.launch({
 
 /** Console errors per page, printed only when a run fails. */
 const consoleErrors = new Map()
+/** Status codes of every POST /api/debug/call-report the pages sent. */
+const reportStatuses = []
 
 async function loggedInPage(fixture, userId) {
   const context = await browser.newContext()
@@ -56,6 +58,9 @@ async function loggedInPage(fixture, userId) {
     if (msg.type() === "error") errors.push(msg.text().slice(0, 300))
   })
   page.on("pageerror", (err) => errors.push(String(err).slice(0, 300)))
+  page.on("response", (res) => {
+    if (res.url().endsWith("/api/debug/call-report")) reportStatuses.push(res.status())
+  })
   return page
 }
 
@@ -150,6 +155,12 @@ try {
     if (mixed.localA !== "relay") throw new Error(`relay-all PASS with peer A local type ${mixed.localA}`)
     console.log("smoke-call relay ok (relay-all)")
   }
+
+  // Each page reports its first PASS and again on Stop: at least 2 runs x 2 pages x 2 reports, all 204.
+  if (reportStatuses.length < 8 || reportStatuses.some((s) => s !== 204)) {
+    throw new Error(`call reports: ${reportStatuses.length} sent, statuses ${[...new Set(reportStatuses)].join(",")}`)
+  }
+  console.log(`smoke-call reports ok (${reportStatuses.length})`)
 } catch (err) {
   console.error(`smoke-call: ${err instanceof Error ? err.message : String(err)}`)
   dumpErrors(pages)

@@ -3,7 +3,19 @@
 import { useEffect, useRef, useState, type RefObject } from "react"
 import { toast } from "sonner"
 import { ArrowLeftIcon, PhoneCallIcon, PlayIcon, StopIcon } from "@phosphor-icons/react"
-import { RoomId, WS_CLOSE_LOGGED_OUT, type MeResponse, type ServerFrame } from "@duet/shared"
+import {
+  callVerdict,
+  CandidateType,
+  ConnState,
+  NoContent,
+  RelayProtocol,
+  RoomId,
+  WS_CLOSE_LOGGED_OUT,
+  type CallReport,
+  type CallVerdict,
+  type MeResponse,
+  type ServerFrame,
+} from "@duet/shared"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,13 +25,13 @@ import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/componen
 import { Toaster } from "@/components/ui/sonner"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
-import { ApiError } from "@/lib/api"
+import { ApiError, apiPost } from "@/lib/api"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import { createPeer, type Peer } from "@/lib/rtc/peer"
 import { sampleCall, type CallSample } from "@/lib/rtc/stats"
 import { SignalingClient, signalingUrl } from "@/lib/ws"
 
-type Verdict = "pass" | "waiting" | "not_relayed" | "failed"
+type Verdict = CallVerdict
 type Phase = "idle" | "starting" | "waiting-peer" | "in-call"
 
 const VERDICT_LABEL: Record<Verdict, string> = {
@@ -45,20 +57,28 @@ interface Run {
   timer: ReturnType<typeof setInterval> | null
   sampling: boolean
   prevBytes: number
+  /** Latest sample and its verdict, reported on Stop. */
+  last: { sample: CallSample; verdict: Verdict } | null
+  /** The first PASS of this run has been reported. */
+  reportedPass: boolean
 }
 
-function inlineVerdict(sample: CallSample, prevBytes: number, forceRelay: boolean): Verdict {
-  if (sample.state === "failed") return "failed"
-  if (forceRelay && sample.localType !== undefined && sample.localType !== "relay") return "not_relayed"
-  if (
-    sample.state === "connected" &&
-    sample.inboundBytes > 0 &&
-    sample.inboundBytes > prevBytes &&
-    (!forceRelay || sample.localType === "relay")
-  ) {
-    return "pass"
+/** The CallReport for one sample. Values the browser reports outside the schema are dropped, not sent. */
+function buildReport(clientId: string, run: Run, sample: CallSample, verdict: Verdict): CallReport {
+  return {
+    clientId,
+    room: run.room,
+    forceRelay: run.forceRelay,
+    pass: verdict === "pass",
+    verdict,
+    connectionState: ConnState.safeParse(sample.state).data ?? "closed",
+    inboundBytes: Math.min(Math.max(0, Math.round(sample.inboundBytes)), Number.MAX_SAFE_INTEGER),
+    localType: CandidateType.safeParse(sample.localType).data,
+    remoteType: CandidateType.safeParse(sample.remoteType).data,
+    relayProtocol: RelayProtocol.safeParse(sample.relayProtocol).data,
+    rttMs: sample.rttMs !== undefined && sample.rttMs <= 600000 ? sample.rttMs : undefined,
+    ua: navigator.userAgent.slice(0, 300),
   }
-  return "waiting"
 }
 
 function describeError(err: unknown): string {
@@ -94,6 +114,7 @@ export function CallTest({ me }: { me: MeResponse }) {
   const localVideo = useRef<HTMLVideoElement>(null)
   const remoteVideo = useRef<HTMLVideoElement>(null)
   const runRef = useRef<Run | null>(null)
+  const clientIdRef = useRef<string | null>(null)
 
   const running = phase !== "idle"
   const roomValid = RoomId.safeParse(room).success
@@ -117,9 +138,19 @@ export function CallTest({ me }: { me: MeResponse }) {
     })
   }
 
+  /** POSTs one CallReport (evt call_smoke in the server log). A failure toasts and never changes the verdict. */
+  function report(run: Run, sample: CallSample, verdict: Verdict) {
+    // Once per page load (crypto.randomUUID needs a secure context, which the call test needs anyway).
+    clientIdRef.current ??= crypto.randomUUID()
+    apiPost("/api/debug/call-report", buildReport(clientIdRef.current, run, sample, verdict), NoContent).catch(() => {
+      toast.error("Couldn't send the call report")
+    })
+  }
+
   function stopRun(run: Run) {
     if (run.stopped) return
     run.stopped = true
+    if (run.last) report(run, run.last.sample, run.last.verdict)
     if (run.timer) clearInterval(run.timer)
     run.timer = null
     run.peer?.close()
@@ -157,6 +188,7 @@ export function CallTest({ me }: { me: MeResponse }) {
     run.peer = null
     run.peerConnId = null
     run.prevBytes = 0
+    run.last = null
     attach(remoteVideo, null, true)
     setSample(null)
     setVerdict("waiting")
@@ -230,10 +262,15 @@ export function CallTest({ me }: { me: MeResponse }) {
     try {
       const s = await sampleCall(peer.pc)
       if (run.stopped || run.peer !== peer) return
-      const v = inlineVerdict(s, run.prevBytes, run.forceRelay)
+      const v = callVerdict(s, run.prevBytes, run.forceRelay)
       run.prevBytes = s.inboundBytes
+      run.last = { sample: s, verdict: v }
       setSample(s)
       setVerdict(v)
+      if (v === "pass" && !run.reportedPass) {
+        run.reportedPass = true
+        report(run, s, v)
+      }
       if (v === "failed") {
         toast.error("The connection failed")
         stopRun(run)
@@ -266,6 +303,8 @@ export function CallTest({ me }: { me: MeResponse }) {
       timer: null,
       sampling: false,
       prevBytes: 0,
+      last: null,
+      reportedPass: false,
     }
     runRef.current = run
     setPhase("starting")

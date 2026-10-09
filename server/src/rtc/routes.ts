@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify"
-import type { IceServersResponse } from "@duet/shared"
+import { CallReport, type IceServersResponse } from "@duet/shared"
 import { requireUser } from "../auth/session"
 import { mintIceServers, TurnError } from "./turn"
 
@@ -22,23 +22,28 @@ function clientIp(request: FastifyRequest): string {
  * originGuard, 30/min per client IP, never cached. Responses carry the minted credential, so nothing
  * from Cloudflare (username, credential, key id, bearer) is ever logged.
  */
+/** 30 requests a minute per client IP, shared shape for every /api/rtc and /api/debug route. */
+function perIpLimit() {
+  return {
+    rateLimit: {
+      max: 30,
+      timeWindow: "1 minute",
+      keyGenerator: clientIp,
+      errorResponseBuilder: (_request: FastifyRequest, context: { ttl: number }) => ({
+        statusCode: 429,
+        error: "rate_limited",
+        retryAfterSeconds: Math.max(1, Math.ceil(context.ttl / 1000)),
+      }),
+    },
+  }
+}
+
 export async function rtcRoutes(app: FastifyInstance, opts: RtcRoutesOptions) {
   app.post(
     "/api/rtc/ice-servers",
     {
       preHandler: requireUser,
-      config: {
-        rateLimit: {
-          max: 30,
-          timeWindow: "1 minute",
-          keyGenerator: clientIp,
-          errorResponseBuilder: (_request, context) => ({
-            statusCode: 429,
-            error: "rate_limited",
-            retryAfterSeconds: Math.max(1, Math.ceil(context.ttl / 1000)),
-          }),
-        },
-      },
+      config: perIpLimit(),
     },
     async (request, reply) => {
       const userId = request.user!.id
@@ -63,6 +68,25 @@ export async function rtcRoutes(app: FastifyInstance, opts: RtcRoutesOptions) {
         }
         throw err
       }
+    },
+  )
+
+  /**
+   * POST /api/debug/call-report (INFR-04, T-01-43): one call-test run from a logged-in user, written
+   * as a single `call_smoke` log line that scripts/check-call-smoke.sh reads. Only the validated
+   * report fields plus userId and the client IP are logged; nothing is echoed back.
+   */
+  app.post(
+    "/api/debug/call-report",
+    {
+      preHandler: requireUser,
+      config: perIpLimit(),
+    },
+    async (request, reply) => {
+      const parsed = CallReport.safeParse(request.body)
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_body" })
+      request.log.info({ evt: "call_smoke", userId: request.user!.id, cfIp: clientIp(request), ...parsed.data })
+      return reply.code(204).send()
     },
   )
 }
