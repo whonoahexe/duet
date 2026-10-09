@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Foundation, Auth & Media Plane
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-10-09T14:20:27.054Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-10-09T21:36:06.432Z"
 last_activity: 2026-10-09
-last_activity_desc: Completed 01-02 password login and rolling session
-state_head: 1d703d89b2d2de60ca1db15c9ce38624171480b2
+last_activity_desc: Completed 01-04 Cloudflare TURN credentials and /ws signaling hub
+state_head: b7c509747b9a9e0a9dc8b461b95d75cfb532b9bf
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 
 ## Current Position
 
-Phase: 01 (Foundation, Auth & Media Plane) — READY TO EXECUTE
-Plan: 3 of TBD (app track done; media track must be re-planned)
-Status: Needs planning — run `/gsd-plan-phase 01` to add the P2P + Cloudflare TURN media-track plans (INFR-03/04). Do NOT verify or complete Phase 1 before those plans exist and run.
-Last activity: 2026-10-09 — Calls switched from self-hosted SFU to P2P WebRTC + Cloudflare TURN (home is CGNAT); SFU plans 01-04/01-05 superseded
+Phase: 01 (Foundation, Auth & Media Plane) — EXECUTING
+Plan: 5 of 5 (01-04 complete; next 01-05 call test + cellular proof)
+Status: Ready to execute 01-05
+Last activity: 2026-10-09 — Completed 01-04: Cloudflare TURN key via API, POST /api/rtc/ice-servers (deployed), authenticated /ws hub (not yet deployed; 01-05 redeploys)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P01 | 9min | 3 tasks | 65 files |
 | Phase 01 P02 | 8min | 3 tasks | 12 files |
 | Phase 01 P03 | 12min | 2 tasks | 19 files |
+| Phase 01 P04 | 7h 11m | 3 tasks | 20 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,11 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-03: Cloudflare zone Browser Cache TTL rewrites /sw.js no-cache to max-age=14400 at the edge; SW registered with updateViaCache none, zone setting left alone (D-01)
 - [Phase 01]: 01-03: seed-users.json shredded after the public login round-trip; password reset = interactive seed via docker compose exec -it duet
 - [Phase 01]: 2026-10-09 (D-16): Home connection is CGNAT (ONT PPPoE WAN 172.18.28.128 vs egress 103.198.98.196; no public IPv6). User dropped the SFU: calls are 1:1 peer-to-peer WebRTC with Cloudflare TURN relay, TURN credentials minted by the duet server, signaling over duet's WS. No VPS, no router changes, no sfu./turn. DNS, no @sideby-me/rtc SDK. Old 01-04/01-05 plans moved to phases/01-.../superseded/ (history only). The Cloudflare account token (~/.config/duet/cloudflare.ini + cloudflare.env, expires 2026-12-08) is verified to reach /accounts/{id}/calls/turn_keys; user wants all Cloudflare work done via API, never manual.
+- [Phase 01]: 01-04: turn-key.sh reads the TURN bearer as .result.key // .result.secret (the live Cloudflare API returns result.secret)
+- [Phase 01]: 01-04: ServerFrame is non-strict zod (ClientFrame stays strict) so older installed PWAs tolerate fields a newer server adds
+- [Phase 01]: 01-04: /ws authenticates with requireUserNoRenew (no renewal, no cookie) because a 101 cannot carry Set-Cookie; HTTP requests keep the 90-day session rolling
+- [Phase 01]: 01-04: The signaling hub addresses connections (connId), not users; a room holds two connections, possibly of the same person
+- [Phase 01]: 01-04: injectWS tests need a pong shim and terminate() disconnects (PassThrough pair never finishes a graceful close); graceful close verified over real TCP
 
 ### Pending Todos
 
@@ -91,7 +97,7 @@ None yet.
 ### Blockers/Concerns
 
 - [Phase 1]: Domain resolved: brkn.me (on Cloudflare) — duet.brkn.me via tunnel (live). No sfu./turn. records (SFU dropped 2026-10-09).
-- [Phase 1 media]: RESOLVED 2026-10-09 — home is CGNAT, so no home-hosted media; switched to P2P + Cloudflare TURN (D-16). Remaining: re-plan and execute the media track (INFR-03/04). Router changes and the GitHub Packages token are no longer needed.
+- [Phase 1 media]: RESOLVED 2026-10-09 — home is CGNAT, so no home-hosted media; switched to P2P + Cloudflare TURN (D-16). 01-04 done (TURN mint live, /ws hub built); remaining: 01-05 (call test, headless + cellular proof, /ws rollout). Router changes and the GitHub Packages token are no longer needed.
 - [Phase 1]: End-of-phase human UAT still pending: install the PWA on iPhone (Safari) and Pixel (Chrome), stay logged in after force-quit, /signup is not found.
 - [Phase 1]: TOTP dropped (password-only); re-running the seed script is the password-reset stopgap until AUTH-06.
 - [Phase 2]: Phase 2 is now the largest phase (18 requirements: chat, push, rich media). Expect plan-phase to split it into several plans. Rich-media plans (HEIC/HEVC transcoding, cross-platform voice-note format) need research before planning.
@@ -106,6 +112,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-09T09:23:17.455Z
-Stopped at: Media plane switched to P2P + Cloudflare TURN; next is /gsd-plan-phase 01 (add media-track plans)
+Last session: 2026-10-09T21:35:53.063Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
