@@ -2,9 +2,9 @@ import { randomBytes } from "node:crypto"
 import { asc, eq, ne } from "drizzle-orm"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import { LoginBody, type MeResponse, type OkResponse } from "@duet/shared"
-import { users } from "../db/schema"
+import { sessions, users } from "../db/schema"
 import { hashPassword, verifyPassword } from "./password"
-import { issueSession, requireUser } from "./session"
+import { clearSessionCookie, issueSession, requireUser } from "./session"
 
 const summary = { id: users.id, username: users.username, displayName: users.displayName }
 
@@ -29,7 +29,7 @@ function loginRateLimitKey(request: FastifyRequest): string {
   return `${ip}:${userId}`
 }
 
-/** POST /api/login (rate-limited), GET /api/me. Request bodies are never logged. */
+/** POST /api/login (rate-limited), GET /api/me, POST /api/logout. Request bodies are never logged. */
 export async function authRoutes(app: FastifyInstance) {
   app.post(
     "/api/login",
@@ -72,5 +72,12 @@ export async function authRoutes(app: FastifyInstance) {
     const peer =
       app.db.select(summary).from(users).where(ne(users.id, me.id)).orderBy(asc(users.createdAt)).get() ?? null
     return { user: { id: me.id, username: me.username, displayName: me.displayName }, peer }
+  })
+
+  /** D-06: logout revokes this device's session server-side and clears the cookie. */
+  app.post("/api/logout", { preHandler: requireUser }, async (request, reply) => {
+    app.db.delete(sessions).where(eq(sessions.id, request.session!.id)).run()
+    clearSessionCookie(reply, app.config)
+    return { ok: true } satisfies OkResponse
   })
 }

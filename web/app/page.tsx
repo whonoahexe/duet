@@ -51,7 +51,7 @@ export default function Page() {
   }, [load])
 
   if (state.kind === "shell") {
-    return <Shell me={state.me} />
+    return <Shell me={state.me} onLoggedOut={() => void loadTiles()} />
   }
 
   return (
