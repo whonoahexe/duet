@@ -281,7 +281,7 @@ None beyond the end-of-phase cellular UAT above.
 
 - Phase 1 is complete as code. Still pending at end of phase: the cellular UAT (INFR-04 gate) and the 01-03 device UAT, run in one phone session. Phase 3 (calls) waits on `check-call-smoke.sh` printing `call-smoke ok`.
 - Phase 3 reuses `web/lib/ws.ts`, `web/lib/rtc/peer.ts` (renegotiation-safe), `stats.ts` and `ice.ts`. The "Call test" menu item can stay as "Diagnostics" or be removed.
-- `requirements-completed` lists INFR-03 and INFR-04 as the plan declares. INFR-04's real-phone proof still depends on the UAT above.
+- `requirements-completed` lists INFR-03 and INFR-04 because the plan declares both. In REQUIREMENTS.md only INFR-03 is checked off. INFR-04's text requires the cellular proof, so it stays Pending until `check-call-smoke.sh` prints `call-smoke ok`.
 
 ## Self-Check: PASSED
 

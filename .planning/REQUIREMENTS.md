@@ -9,7 +9,7 @@
 
 - [x] **INFR-01**: duet is reachable at an HTTPS URL on the new domain via a Cloudflare Tunnel to this machine
 - [x] **INFR-02**: App, database (SQLite) and media files run self-hosted in Docker on this machine with data on a persistent volume
-- [ ] **INFR-03**: TURN relay is provisioned on Cloudflare (TURN key via API) and the duet server mints short-lived TURN credentials for logged-in users only (revised 2026-10-09: was self-hosted SFU + coturn; home connection is CGNAT)
+- [x] **INFR-03**: TURN relay is provisioned on Cloudflare (TURN key via API) and the duet server mints short-lived TURN credentials for logged-in users only (revised 2026-10-09: was self-hosted SFU + coturn; home connection is CGNAT)
 - [ ] **INFR-04**: A smoke test proves a peer-to-peer WebRTC connection carries media (`bytesReceived > 0`) between two clients with one phone on cellular, both with normal ICE and with relay-only (forced TURN)
 
 ### Auth
@@ -118,7 +118,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | INFR-01 | Phase 1 | Complete |
 | INFR-02 | Phase 1 | Complete |
-| INFR-03 | Phase 1 | Pending |
+| INFR-03 | Phase 1 | Complete |
 | INFR-04 | Phase 1 | Pending |
 | AUTH-01 | Phase 1 | Complete |
 | AUTH-02 | Phase 1 | Complete |

@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
   5. Media track: the duet server mints short-lived Cloudflare TURN credentials for logged-in users, and from a phone on cellular the smoke harness connects peer-to-peer to a second client and reports `bytesReceived > 0`, both with normal ICE and with relay-only TURN forced
 
-**Plans:** 4/5 plans executed. App track 01→02→03 is executed. Media track 04→05 (P2P WebRTC + Cloudflare TURN, INFR-03/INFR-04) is planned. The original SFU plans 01-04/01-05 were superseded on 2026-10-09 and kept in `phases/01-foundation-auth-media-plane/superseded/`; the new plans reuse their IDs. Phase 1 is not complete until 01-04/01-05 have run and the end-of-phase cellular and device UAT passes.
+**Plans:** 5/5 plans executed. App track 01→02→03 is executed. Media track 04→05 (P2P WebRTC + Cloudflare TURN, INFR-03/INFR-04) is planned. The original SFU plans 01-04/01-05 were superseded on 2026-10-09 and kept in `phases/01-foundation-auth-media-plane/superseded/`; the new plans reuse their IDs. Phase 1 is not complete until 01-04/01-05 have run and the end-of-phase cellular and device UAT passes.
 
 Plans:
 **Wave 1**
@@ -48,7 +48,7 @@ Plans:
 - [x] 01-04-PLAN.md — TURN credentials + signaling: Cloudflare TURN key via API, POST /api/rtc/ice-servers (deployed), package gate, authenticated /ws hub with rooms of two (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 01-05-PLAN.md — Call test + proof: /debug/call harness (perfect negotiation, force relay, getStats), headless two-peer smoke in both modes, call_smoke reports, "Call test" menu item, redeploy, cellular UAT checked by check-call-smoke.sh (wave 5)
+- [x] 01-05-PLAN.md — Call test + proof: /debug/call harness (perfect negotiation, force relay, getStats), headless two-peer smoke in both modes, call_smoke reports, "Call test" menu item, redeploy, cellular UAT checked by check-call-smoke.sh (wave 5)
 
 **UI hint**: yes
 **Notes**: INFR-03/INFR-04 are the media track: a Cloudflare TURN key created via the API, server-minted TURN credentials, WS signaling, and a cellular smoke test on real phones. Since D-16 (2026-10-09) it needs no router changes, DNS records or private SDK. Phase 2 does not wait on it; Phase 3 does.
@@ -91,6 +91,6 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Auth & Media Plane | 4/5 | In Progress | - |
+| 1. Foundation, Auth & Media Plane | 5/5 | In Progress | - |
 | 2. Chat, Media & Push | 0/TBD | Not started | - |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |

@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Foundation, Auth & Media Plane
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-10-09T21:36:06.432Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-10-09T21:49:14.860Z"
 last_activity: 2026-10-09
-last_activity_desc: Completed 01-04 Cloudflare TURN credentials and /ws signaling hub
-state_head: b7c509747b9a9e0a9dc8b461b95d75cfb532b9bf
+last_activity_desc: Completed 01-05 call test harness (headless both modes), deployed; cellular UAT pending
+state_head: bad27f5ea56feb3d037dd6719da972dd8494549f
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 01 (Foundation, Auth & Media Plane) — EXECUTING
-Plan: 5 of 5 (01-04 complete; next 01-05 call test + cellular proof)
-Status: Ready to execute 01-05
-Last activity: 2026-10-09 — Completed 01-04: Cloudflare TURN key via API, POST /api/rtc/ice-servers (deployed), authenticated /ws hub (not yet deployed; 01-05 redeploys)
+Plan: 5 of 5 (all plans executed; end-of-phase UAT pending)
+Status: Awaiting end-of-phase UAT (cellular call test INFR-04 + 01-03 device install)
+Last activity: 2026-10-09 — Completed 01-05: /debug/call harness + headless smoke (host/host, relay-relay PASS over real Cloudflare TURN), call_smoke reports, "Call test" menu item, redeployed with /ws live; check-call-smoke.sh decides the cellular gate
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P02 | 8min | 3 tasks | 12 files |
 | Phase 01 P03 | 12min | 2 tasks | 19 files |
 | Phase 01 P04 | 7h 11m | 3 tasks | 20 files |
+| Phase 01 P05 | 10min | 3 tasks | 21 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,9 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-04: /ws authenticates with requireUserNoRenew (no renewal, no cookie) because a 101 cannot carry Set-Cookie; HTTP requests keep the 90-day session rolling
 - [Phase 01]: 01-04: The signaling hub addresses connections (connId), not users; a room holds two connections, possibly of the same person
 - [Phase 01]: 01-04: injectWS tests need a pong shim and terminate() disconnects (PassThrough pair never finishes a graceful close); graceful close verified over real TCP
+- [Phase 01]: 01-05: Forced relay hairpins through Cloudflare from one host (relay-relay passed first try); MA5 relay-all fallback unused, MA6 cookie sharing works without fallback
+- [Phase 01]: 01-05: callVerdict lives in @duet/shared (failed > not_relayed > pass on growing bytes, relay required when forced > waiting); call reports go through one stopRun path plus the first PASS
+- [Phase 01]: 01-05: INFR-04 cellular gate is decided by scripts/check-call-smoke.sh from call_smoke log lines (two clientIds, one cfIp off the home egress IP, relay-only in forced mode)
 
 ### Pending Todos
 
@@ -97,7 +101,7 @@ None yet.
 ### Blockers/Concerns
 
 - [Phase 1]: Domain resolved: brkn.me (on Cloudflare) — duet.brkn.me via tunnel (live). No sfu./turn. records (SFU dropped 2026-10-09).
-- [Phase 1 media]: RESOLVED 2026-10-09 — home is CGNAT, so no home-hosted media; switched to P2P + Cloudflare TURN (D-16). 01-04 done (TURN mint live, /ws hub built); remaining: 01-05 (call test, headless + cellular proof, /ws rollout). Router changes and the GitHub Packages token are no longer needed.
+- [Phase 1 media]: RESOLVED 2026-10-09 — home is CGNAT, so no home-hosted media; switched to P2P + Cloudflare TURN (D-16). 01-04 and 01-05 done (TURN mint live, /ws deployed, headless two-peer smoke passes in both modes); remaining: the cellular UAT on real phones, then `bash scripts/check-call-smoke.sh` must print call-smoke ok (INFR-04 stays Pending until then). Router changes and the GitHub Packages token are no longer needed.
 - [Phase 1]: End-of-phase human UAT still pending: install the PWA on iPhone (Safari) and Pixel (Chrome), stay logged in after force-quit, /signup is not found.
 - [Phase 1]: TOTP dropped (password-only); re-running the seed script is the password-reset stopgap until AUTH-06.
 - [Phase 2]: Phase 2 is now the largest phase (18 requirements: chat, push, rich media). Expect plan-phase to split it into several plans. Rich-media plans (HEIC/HEVC transcoding, cross-platform voice-note format) need research before planning.
@@ -112,6 +116,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-09T21:35:53.063Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-10-09T21:49:14.832Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None
