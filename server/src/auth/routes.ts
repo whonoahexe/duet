@@ -77,6 +77,8 @@ export async function authRoutes(app: FastifyInstance) {
   /** D-06: logout revokes this device's session server-side and clears the cookie. */
   app.post("/api/logout", { preHandler: requireUser }, async (request, reply) => {
     app.db.delete(sessions).where(eq(sessions.id, request.session!.id)).run()
+    // This device's open /ws sockets end with 4401; other sessions' sockets stay open.
+    app.hub.closeSession(request.session!.id)
     clearSessionCookie(reply, app.config)
     return { ok: true } satisfies OkResponse
   })

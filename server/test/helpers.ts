@@ -153,6 +153,9 @@ export async function openWs(
         if (w) w(frame)
         else queue.push(frame)
       })
+      // Browsers answer pings at the protocol level. injectWS builds its client in server mode with
+      // autoPong unset, so answer pings here to behave like a real client.
+      socket.on("ping", (data) => socket.pong(data))
       socket.on("close", (code) => resolveClosed({ code }))
       socket.on("error", () => {
         /* surfaced through close */

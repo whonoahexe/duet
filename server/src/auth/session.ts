@@ -93,6 +93,20 @@ export function issueSession(
  * now + SESSION_TTL_MS AND Set-Cookie is re-issued with a fresh 90-day Max-Age.
  */
 export async function requireUser(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  return authenticate(request, reply, true)
+}
+
+/**
+ * preHandler for the /ws upgrade (Pitfall M1). Same checks as requireUser (401 on a missing or
+ * unknown session, an expired row is deleted), but it never renews: a 101 response cannot carry
+ * Set-Cookie, so moving expires_at here would put the DB ahead of the browser cookie. It never
+ * touches the cookie at all. Ordinary HTTP requests (GET /api/me) keep the session rolling.
+ */
+export async function requireUserNoRenew(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  return authenticate(request, reply, false)
+}
+
+async function authenticate(request: FastifyRequest, reply: FastifyReply, renew: boolean): Promise<void> {
   const { db, config } = request.server
   const token = request.cookies[COOKIE_NAME]
   if (!token) {
@@ -121,12 +135,12 @@ export async function requireUser(request: FastifyRequest, reply: FastifyReply):
   const now = Date.now()
   if (row.expiresAt.getTime() <= now) {
     db.delete(sessions).where(eq(sessions.id, id)).run()
-    clearSessionCookie(reply, config)
+    if (renew) clearSessionCookie(reply, config)
     return reply.code(401).send({ error: "unauthenticated" })
   }
 
   let lastSeenAt = row.lastSeenAt
-  if (now - row.lastSeenAt.getTime() > RENEW_AFTER_MS) {
+  if (renew && now - row.lastSeenAt.getTime() > RENEW_AFTER_MS) {
     // Pitfall 5: extending only the DB row would still log the person out on day 90, because the
     // browser cookie keeps its original Max-Age. Re-issue the same token with a fresh Max-Age.
     lastSeenAt = new Date(now)

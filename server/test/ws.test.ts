@@ -87,7 +87,7 @@ describe("GET /ws auth and Origin (before the upgrade)", () => {
     expect(hello.t).toBe("hello")
     expect(hello.connId).toMatch(UUID)
     expect(hello.userId).toBe(sessionRow(aliceCookie)!.userId)
-    c.ws.close()
+    c.ws.terminate()
   })
 })
 
@@ -116,7 +116,7 @@ describe("rooms and relay", () => {
 
     expect(await outsider.collect(200)).toEqual([])
     expect(await a.collect(50)).toEqual([])
-    for (const c of [a, b, outsider]) c.ws.close()
+    for (const c of [a, b, outsider]) c.ws.terminate()
   })
 
   it("lets two connections of the same user share a room; a third gets room.full", async () => {
@@ -138,7 +138,7 @@ describe("rooms and relay", () => {
     expect(await a3.next()).toEqual({ t: "error", code: "not_in_room" })
     expect(await a1.collect(100)).toEqual([])
     expect(await a2.collect(0)).toEqual([])
-    for (const c of [a1, a2, a3]) c.ws.close()
+    for (const c of [a1, a2, a3]) c.ws.terminate()
   })
 
   it("admits exactly two of three same-tick joins and sends room.full to exactly one", async () => {
@@ -148,7 +148,7 @@ describe("rooms and relay", () => {
     const all = frames.flat()
     expect(all.filter((f) => f.t === "room.joined")).toHaveLength(2)
     expect(all.filter((f) => f.t === "room.full")).toHaveLength(1)
-    for (const c of cs) c.ws.close()
+    for (const c of cs) c.ws.terminate()
   })
 
   it("sends room.peer-left when a member disconnects and frees the slot", async () => {
@@ -158,21 +158,21 @@ describe("rooms and relay", () => {
     await joined(b, "r5")
     expect((await a.next()).t).toBe("room.peer-joined")
 
-    b.ws.close()
+    b.ws.terminate()
     expect(await a.next()).toEqual({ t: "room.peer-left", room: "r5", connId: b.connId })
 
     const c = await connect(bobCookie)
     const j = await joined(c, "r5")
     expect(j.peers).toEqual([{ connId: a.connId, userId: a.userId }])
-    a.ws.close()
-    c.ws.close()
+    a.ws.terminate()
+    c.ws.terminate()
   })
 
   it("answers not_in_room for a signal to a room the sender has not joined", async () => {
     const a = await connect(aliceCookie)
     a.send({ t: "rtc.signal", room: "nobody-here", data: { candidate: null } })
     expect(await a.next()).toEqual({ t: "error", code: "not_in_room" })
-    a.ws.close()
+    a.ws.terminate()
   })
 
   it("answers too_many_rooms on a fifth room for one connection", async () => {
@@ -180,7 +180,7 @@ describe("rooms and relay", () => {
     for (const room of ["m1", "m2", "m3", "m4"]) await joined(a, room)
     a.send({ t: "room.join", room: "m5" })
     expect(await a.next()).toEqual({ t: "error", code: "too_many_rooms" })
-    a.ws.close()
+    a.ws.terminate()
   })
 })
 
@@ -196,15 +196,15 @@ describe("frame validation (bad_frame keeps the socket open)", () => {
       const a = await connect(aliceCookie)
       a.send(raw)
       expect(await a.next()).toEqual({ t: "error", code: "bad_frame" })
-      await joined(a, "still-open")
-      a.ws.close()
+      await joined(a, `still-open-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`)
+      a.ws.terminate()
     })
   }
 
   it("accepts a 64-char room id", async () => {
     const a = await connect(aliceCookie)
     await joined(a, "b".repeat(64))
-    a.ws.close()
+    a.ws.terminate()
   })
 })
 
@@ -229,8 +229,8 @@ describe("signal size limits", () => {
     a.send({ t: "rtc.signal", room: "sdp-limit", data: { description: { type: "offer", sdp: "x".repeat(65537) } } })
     expect(await a.next()).toEqual({ t: "error", code: "bad_frame" })
     expect(await b.collect(100)).toEqual([])
-    a.ws.close()
-    b.ws.close()
+    a.ws.terminate()
+    b.ws.terminate()
   })
 
   it("relays a candidate of 2048 chars and rejects 2049 with bad_frame", async () => {
@@ -242,8 +242,8 @@ describe("signal size limits", () => {
     a.send({ t: "rtc.signal", room: "cand-limit", data: { candidate: { candidate: "c".repeat(2049) } } })
     expect(await a.next()).toEqual({ t: "error", code: "bad_frame" })
     expect(await b.collect(100)).toEqual([])
-    a.ws.close()
-    b.ws.close()
+    a.ws.terminate()
+    b.ws.terminate()
   })
 })
 
@@ -278,7 +278,7 @@ describe("logout and session renewal", () => {
 
     await joined(b, "after-logout")
     expect(b.ws.readyState).toBe(b.ws.OPEN)
-    b.ws.close()
+    b.ws.terminate()
   })
 
   it("does not renew the session on connect; GET /api/me still renews it", async () => {
@@ -295,7 +295,7 @@ describe("logout and session renewal", () => {
     const row = sessionRow(cookie)!
     expect(row.lastSeenAt.getTime()).toBe(old.getTime())
     expect(row.expiresAt.getTime()).toBe(oldExpiry.getTime())
-    c.ws.close()
+    c.ws.terminate()
 
     const me = await t.app.inject({ method: "GET", url: "/api/me", headers: { cookie } })
     expect(me.statusCode).toBe(200)
@@ -312,7 +312,7 @@ describe("heartbeat", () => {
       expect((await c.next()).t).toBe("hello")
       await new Promise((r) => setTimeout(r, 300))
       expect(c.ws.readyState).toBe(c.ws.OPEN)
-      c.ws.close()
+      c.ws.terminate()
     } finally {
       await hb.close()
     }
@@ -332,7 +332,7 @@ describe("logging", () => {
     a.send({ t: "rtc.signal", room: "log-room", data: { candidate: { candidate: candMarker } } })
     expect((await b.next()).t).toBe("rtc.signal")
     expect((await b.next()).t).toBe("rtc.signal")
-    a.ws.close()
+    a.ws.terminate()
     await a.closed
     await new Promise((r) => setTimeout(r, 50))
 
@@ -341,6 +341,6 @@ describe("logging", () => {
     expect(logs).toContain('"evt":"ws_close"')
     expect(logs).not.toContain(sdpMarker)
     expect(logs).not.toContain(candMarker)
-    b.ws.close()
+    b.ws.terminate()
   })
 })

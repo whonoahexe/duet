@@ -3,6 +3,8 @@ import Fastify, { type FastifyInstance } from "fastify"
 import fastifyCookie from "@fastify/cookie"
 import fastifyRateLimit from "@fastify/rate-limit"
 import fastifyStatic from "@fastify/static"
+import fastifyWebsocket from "@fastify/websocket"
+import { WS_MAX_PAYLOAD } from "@duet/shared"
 import type { Config } from "./config"
 import { openDb, type Db } from "./db/client"
 import { authRoutes } from "./auth/routes"
@@ -10,11 +12,15 @@ import { decorateAuth } from "./auth/session"
 import { originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
 import { rtcRoutes } from "./rtc/routes"
+import { createHub, type Hub } from "./ws/hub"
+import { wsRoutes } from "./ws/routes"
 
 declare module "fastify" {
   interface FastifyInstance {
     db: Db
     config: Config
+    /** In-memory /ws signaling hub. */
+    hub: Hub
   }
 }
 
@@ -26,6 +32,8 @@ export interface AppDeps {
   turnTimeoutMs?: number
   /** When set, logs go here at level info (tests read them). Default: stdout at LOG_LEVEL. */
   logStream?: NodeJS.WritableStream
+  /** /ws heartbeat ping interval. Default: 25000 ms (under Cloudflare's ~100 s idle cutoff). */
+  heartbeatMs?: number
 }
 
 export async function buildApp(config: Config, deps: AppDeps = {}): Promise<FastifyInstance> {
@@ -65,12 +73,20 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   await app.register(fastifyCookie)
   // Per-route limits only (POST /api/login). Must be registered before the routes.
   await app.register(fastifyRateLimit, { global: false })
+  // Must be registered before any route. maxPayload: larger messages close the socket with 1009.
+  await app.register(fastifyWebsocket, { options: { maxPayload: WS_MAX_PAYLOAD } })
+  const hub = createHub({ log: app.log, heartbeatMs: deps.heartbeatMs ?? 25_000 })
+  app.decorate("hub", hub)
+  app.addHook("onClose", async () => {
+    hub.close()
+  })
 
   app.get("/healthz", async () => ({ ok: true }))
 
   await app.register(usersRoutes)
   await app.register(authRoutes)
   await app.register(rtcRoutes, { fetch: deps.fetch ?? globalThis.fetch, timeoutMs: deps.turnTimeoutMs ?? 5000 })
+  await app.register(wsRoutes)
 
   // One line at boot so a deploy without TURN is visible in the logs (never the key id or bearer).
   if (config.CF_TURN_KEY_ID && config.CF_TURN_KEY_API_TOKEN) {
