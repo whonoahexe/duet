@@ -26,7 +26,13 @@ describe("GET /api/users", () => {
 describe("no sign-up path", () => {
   for (const url of ["/api/register", "/api/signup"]) {
     it(`POST ${url} is a JSON 404`, async () => {
-      const res = await t.app.inject({ method: "POST", url, payload: { username: "eve", password: "x".repeat(20) } })
+      // Same-origin request, so the Origin guard passes and the missing route is what answers.
+      const res = await t.app.inject({
+        method: "POST",
+        url,
+        headers: { origin: "http://localhost:3000" },
+        payload: { username: "eve", password: "x".repeat(20) },
+      })
       expect(res.statusCode).toBe(404)
       expect(res.json()).toEqual({ error: "not_found" })
     })

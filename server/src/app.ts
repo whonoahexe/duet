@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs"
 import Fastify, { type FastifyInstance } from "fastify"
 import fastifyCookie from "@fastify/cookie"
+import fastifyRateLimit from "@fastify/rate-limit"
 import fastifyStatic from "@fastify/static"
 import type { Config } from "./config"
 import { openDb, type Db } from "./db/client"
 import { authRoutes } from "./auth/routes"
 import { decorateAuth } from "./auth/session"
+import { originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
 
 declare module "fastify" {
@@ -25,8 +27,31 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     sqlite.close()
   })
 
+  // Guards first, so they cover every route registered below (and the 404 handler).
+  app.addHook("onRequest", originGuard(config))
+  app.addHook("onSend", securityHeaders(config))
+
+  // Unparseable request bodies (malformed JSON, bad content type) are a generic invalid_body,
+  // never a 500 and never an echo of the input. The rate limiter throws its errorResponseBuilder
+  // result (a plain object with statusCode), which is sent as the body. Everything else falls
+  // through to Fastify's default handler.
+  app.setErrorHandler((error: unknown, _request, reply) => {
+    const e = error as { code?: unknown; statusCode?: unknown }
+    if (typeof e.code === "string" && e.code.startsWith("FST_ERR_CTP_")) {
+      const status = typeof e.statusCode === "number" && e.statusCode < 500 ? e.statusCode : 400
+      return reply.code(status).send({ error: "invalid_body" })
+    }
+    if (!(error instanceof Error) && typeof e.statusCode === "number") {
+      const { statusCode, ...body } = error as { statusCode: number } & Record<string, unknown>
+      return reply.code(statusCode).send(body)
+    }
+    throw error
+  })
+
   decorateAuth(app)
   await app.register(fastifyCookie)
+  // Per-route limits only (POST /api/login). Must be registered before the routes.
+  await app.register(fastifyRateLimit, { global: false })
 
   app.get("/healthz", async () => ({ ok: true }))
 
