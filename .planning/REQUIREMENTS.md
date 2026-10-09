@@ -7,8 +7,8 @@
 
 ### Infrastructure
 
-- [ ] **INFR-01**: duet is reachable at an HTTPS URL on the new domain via a Cloudflare Tunnel to this machine
-- [ ] **INFR-02**: App, database (SQLite) and media files run self-hosted in Docker on this machine with data on a persistent volume
+- [x] **INFR-01**: duet is reachable at an HTTPS URL on the new domain via a Cloudflare Tunnel to this machine
+- [x] **INFR-02**: App, database (SQLite) and media files run self-hosted in Docker on this machine with data on a persistent volume
 - [ ] **INFR-03**: SFU + coturn run on this machine and are reachable from the public internet (new domain DNS, router UDP/TCP port-forwards, verified non-CGNAT public IPv4)
 - [ ] **INFR-04**: A smoke test proves media flows through the SFU (`bytesReceived > 0`) from a phone on cellular, both direct and forced-relay via TURN
 
@@ -22,7 +22,7 @@
 ### App Shell
 
 - [x] **SHEL-01**: UI is built exclusively from shadcn preset `b51GFhBEQ` (scaffolded via `shadcn init -p b51GFhBEQ`, components only via `shadcn add`)
-- [ ] **SHEL-02**: User can install the app to the home screen on iPhone (Safari) and Pixel (Chrome) and it launches standalone
+- [x] **SHEL-02**: User can install the app to the home screen on iPhone (Safari) and Pixel (Chrome) and it launches standalone
 - [ ] **SHEL-03**: First-run onboarding guides iPhone users to Add to Home Screen and to enable notifications, with a test-push button
 
 ### Chat
@@ -116,8 +116,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFR-01 | Phase 1 | Pending |
-| INFR-02 | Phase 1 | Pending |
+| INFR-01 | Phase 1 | Complete |
+| INFR-02 | Phase 1 | Complete |
 | INFR-03 | Phase 1 | Pending |
 | INFR-04 | Phase 1 | Pending |
 | AUTH-01 | Phase 1 | Complete |
@@ -125,7 +125,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUTH-03 | Phase 1 | Complete |
 | AUTH-04 | Phase 1 | Complete |
 | SHEL-01 | Phase 1 | Complete |
-| SHEL-02 | Phase 1 | Pending |
+| SHEL-02 | Phase 1 | Complete |
 | SHEL-03 | Phase 2 | Pending |
 | CHAT-01 | Phase 2 | Pending |
 | CHAT-02 | Phase 2 | Pending |

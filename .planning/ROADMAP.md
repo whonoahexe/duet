@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
   5. Ops track: the home connection is confirmed as non-CGNAT public IPv4, and from a phone on cellular the smoke harness joins an SFU room on this machine and reports `bytesReceived > 0`, both direct and with relay-only TURN forced
 
-**Plans**: 2/5 plans executed (4 waves; app track 01→02→03, ops track 04 in parallel from wave 1, then 05)
+**Plans**: 3/5 plans executed (4 waves; app track 01→02→03, ops track 04 in parallel from wave 1, then 05)
 
 Plans:
 **Wave 1**
@@ -42,7 +42,7 @@ Plans:
 - [x] 01-02-PLAN.md — Auth slice: tap name → password → chat-shaped shell; rate limit + Origin check; 90-day rolling session; logout menu (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 01-03-PLAN.md — Live at https://duet.brkn.me via Docker + Cloudflare Tunnel with persistent ./data; installable dark PWA; end-of-phase device UAT (wave 3)
+- [x] 01-03-PLAN.md — Live at https://duet.brkn.me via Docker + Cloudflare Tunnel with persistent ./data; installable dark PWA; end-of-phase device UAT (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 01-05-PLAN.md — Ops: token minter + live SFU join check, /debug/sfu harness, cellular smoke run direct + relay (wave 4, user-gated)
@@ -88,6 +88,6 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Auth & Media Plane | 2/5 | In Progress | - |
+| 1. Foundation, Auth & Media Plane | 3/5 | In Progress | - |
 | 2. Chat, Media & Push | 0/TBD | Not started | - |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |

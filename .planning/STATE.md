@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Foundation, Auth & Media Plane
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-10-09T09:08:56.942Z"
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-10-09T09:23:17.479Z"
 last_activity: 2026-10-09
 last_activity_desc: Completed 01-02 password login and rolling session
-state_head: 01297afeb76d860fecd56dc2dee828e65d29976e
+state_head: ed92aeba8236c494b134c9946b1ca168c4d0e16d
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 5
-  completed_plans: 2
-  percent: 40
+  completed_plans: 3
+  percent: 60
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 01 (Foundation, Auth & Media Plane) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-10-09 — Completed 01-02 password login and rolling session
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [████░░░░░░] 40%
 |------|----------|-------|-------|
 | Phase 01 P01 | 9min | 3 tasks | 65 files |
 | Phase 01 P02 | 8min | 3 tasks | 12 files |
+| Phase 01 P03 | 12min | 2 tasks | 19 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,10 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-02: Root setErrorHandler maps FST_ERR_CTP_* to 400 invalid_body and sends @fastify/rate-limit's thrown object with its statusCode (rethrowing it gave 200)
 - [Phase 01]: 01-02: Origin guard runs on every non-GET /api/* including 404s; APP_ORIGIN must exactly match the public origin in 01-03 or all login POSTs get 403
 - [Phase 01]: 01-02: Logout 401 counts as logged out; other failures toast via a dark Toaster mounted in Shell
+- [Phase 01]: 01-03: Docker build stage installs python3/make/g++ because better-sqlite3 13.0.3 has no prebuilt for Node 24.21 (ABI 137); runtime stage has no toolchain
+- [Phase 01]: 01-03: Tunnel 'duet' (b338db16) and the duet.brkn.me proxied CNAME are created via the Cloudflare API only (setup.sh, zone-diff guard); ~/.cloudflared untouched
+- [Phase 01]: 01-03: Cloudflare zone Browser Cache TTL rewrites /sw.js no-cache to max-age=14400 at the edge; SW registered with updateViaCache none, zone setting left alone (D-01)
+- [Phase 01]: 01-03: seed-users.json shredded after the public login round-trip; password reset = interactive seed via docker compose exec -it duet
 
 ### Pending Todos
 
@@ -100,6 +105,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-09T09:08:56.919Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-10-09T09:23:17.455Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None
