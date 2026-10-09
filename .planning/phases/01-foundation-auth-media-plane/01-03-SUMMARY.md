@@ -250,7 +250,7 @@ Expected: a light heart on a rose icon, labelled "duet". The app launches standa
 ## Next Phase Readiness
 
 - **01-04 (SFU ops):** the same `cloudflare.ini` token and `CF_ACCOUNT_ID` work through the API. `setup.sh`'s `cf()` + diff-guard pattern can be reused for the sfu/turn A records.
-- **01-05 (debug SFU page):** add the BuildKit npm secret to `compose.yaml` `build.secrets` and `RUN --mount=type=secret` before `npm ci` (Pitfall 14). Redeploy with `docker compose up -d --build`, then re-run `scripts/smoke-public.sh`.
+- *(Superseded 2026-10-09, D-16: no SFU and no private SDK, so this BuildKit npm secret note no longer applies.)* ~~**01-05 (debug SFU page):** add the BuildKit npm secret to `compose.yaml` `build.secrets` and `RUN --mount=type=secret` before `npm ci` (Pitfall 14). Redeploy with `docker compose up -d --build`, then re-run `scripts/smoke-public.sh`.~~
 - **Phase 2:** the SW is registered at scope `/` with `updateViaCache: none`, ready for push handlers. Media goes in `./data/media` (already created by `openDb`).
 
 ## Plan-level Verification

@@ -1,3 +1,5 @@
+> **⚠ 2026-10-09 — partly superseded (D-16 in 01-CONTEXT.md).** The home connection is CGNAT, and the user dropped the SFU. Everything in this file about the self-hosted SFU, coturn, nginx-sni, router port-forwards, sfu./turn.brkn.me DNS/certs, `@sideby-me/rtc`, mediasoup-client and GitHub Packages build secrets is **historical — do not plan from it.** Calls are now 1:1 peer-to-peer WebRTC with Cloudflare TURN (credentials minted by the duet server). The app-track research (Fastify, SQLite, auth, Docker, Cloudflare Tunnel, PWA) remains valid.
+
 # Phase 1: Foundation, Auth & Media Plane - Research
 
 **Researched:** 2026-10-08

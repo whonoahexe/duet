@@ -11,7 +11,7 @@ A private, self-hosted chat app for exactly two people: text, images, short clip
 | `shared/` | zod schemas shared by web and server |
 | `deploy/cloudflared/` | Tunnel setup script; generated `config.yml` / `credentials.json` (gitignored) |
 | `scripts/` | smoke and check scripts |
-| `ops/sfu/` | The separate SFU + coturn stack. See `ops/sfu/README.md` |
+| ~~`ops/sfu/`~~ | Not used: the SFU was dropped on 2026-10-09 (home is CGNAT). Calls are P2P WebRTC with Cloudflare TURN |
 
 ## Local development
 
@@ -44,7 +44,7 @@ Secrets live outside the repo in `${DUET_SECRETS_DIR:-~/.config/duet}`, mode 600
 
 | File | Used by |
 |---|---|
-| `cloudflare.ini` (`dns_cloudflare_api_token = ...`) | `deploy/cloudflared/setup.sh` (and the SFU ops track) |
+| `cloudflare.ini` (`dns_cloudflare_api_token = ...`) | `deploy/cloudflared/setup.sh` (and Cloudflare TURN key setup) |
 | `cloudflare.env` (`CF_ACCOUNT_ID=...`) | `setup.sh` (the account that owns the tunnel) |
 | `seed-users.json` | one-off seeding; shred it afterwards |
 

@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 01 (Foundation, Auth & Media Plane) — EXECUTING
-Plan: 4 of 5
-Status: Ready to execute
-Last activity: 2026-10-09 — Completed 01-02 password login and rolling session
+Plan: 3 of TBD (app track done; media track must be re-planned)
+Status: Needs planning — run `/gsd-plan-phase 01` to add the P2P + Cloudflare TURN media-track plans (INFR-03/04). Do NOT verify or complete Phase 1 before those plans exist and run.
+Last activity: 2026-10-09 — Calls switched from self-hosted SFU to P2P WebRTC + Cloudflare TURN (home is CGNAT); SFU plans 01-04/01-05 superseded
 
 Progress: [██████░░░░] 60%
 
@@ -82,6 +82,7 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-03: Tunnel 'duet' (b338db16) and the duet.brkn.me proxied CNAME are created via the Cloudflare API only (setup.sh, zone-diff guard); ~/.cloudflared untouched
 - [Phase 01]: 01-03: Cloudflare zone Browser Cache TTL rewrites /sw.js no-cache to max-age=14400 at the edge; SW registered with updateViaCache none, zone setting left alone (D-01)
 - [Phase 01]: 01-03: seed-users.json shredded after the public login round-trip; password reset = interactive seed via docker compose exec -it duet
+- [Phase 01]: 2026-10-09 (D-16): Home connection is CGNAT (ONT PPPoE WAN 172.18.28.128 vs egress 103.198.98.196; no public IPv6). User dropped the SFU: calls are 1:1 peer-to-peer WebRTC with Cloudflare TURN relay, TURN credentials minted by the duet server, signaling over duet's WS. No VPS, no router changes, no sfu./turn. DNS, no @sideby-me/rtc SDK. Old 01-04/01-05 plans moved to phases/01-.../superseded/ (history only). The Cloudflare account token (~/.config/duet/cloudflare.ini + cloudflare.env, expires 2026-12-08) is verified to reach /accounts/{id}/calls/turn_keys; user wants all Cloudflare work done via API, never manual.
 
 ### Pending Todos
 
@@ -89,9 +90,9 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 1]: Domain resolved: brkn.me (on Cloudflare) — duet.brkn.me via tunnel, sfu./turn.brkn.me DNS-only.
-- [Phase 1 ops]: Non-CGNAT public IPv4 on the home connection is unverified. If it is CGNAT, the SFU cannot run at home and Phase 3 needs a different host.
-- [Phase 1 ops]: User actions required: DNS for SFU/TURN, router UDP/TCP port-forwards, GitHub Packages token (`read:packages`) for `@sideby-me/rtc`.
+- [Phase 1]: Domain resolved: brkn.me (on Cloudflare) — duet.brkn.me via tunnel (live). No sfu./turn. records (SFU dropped 2026-10-09).
+- [Phase 1 media]: RESOLVED 2026-10-09 — home is CGNAT, so no home-hosted media; switched to P2P + Cloudflare TURN (D-16). Remaining: re-plan and execute the media track (INFR-03/04). Router changes and the GitHub Packages token are no longer needed.
+- [Phase 1]: End-of-phase human UAT still pending: install the PWA on iPhone (Safari) and Pixel (Chrome), stay logged in after force-quit, /signup is not found.
 - [Phase 1]: TOTP dropped (password-only); re-running the seed script is the password-reset stopgap until AUTH-06.
 - [Phase 2]: Phase 2 is now the largest phase (18 requirements: chat, push, rich media). Expect plan-phase to split it into several plans. Rich-media plans (HEIC/HEVC transcoding, cross-platform voice-note format) need research before planning.
 
@@ -106,5 +107,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-10-09T09:23:17.455Z
-Stopped at: Completed 01-03-PLAN.md
+Stopped at: Media plane switched to P2P + Cloudflare TURN; next is /gsd-plan-phase 01 (add media-track plans)
 Resume file: None

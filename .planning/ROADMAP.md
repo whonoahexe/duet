@@ -31,12 +31,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
   5. Media track: the duet server mints short-lived Cloudflare TURN credentials for logged-in users, and from a phone on cellular the smoke harness connects peer-to-peer to a second client and reports `bytesReceived > 0`, both with normal ICE and with relay-only TURN forced
 
-**Plans**: 3/5 plans executed (4 waves; app track 01→02→03, ops track 04 in parallel from wave 1, then 05)
+**Plans**: 3 plans executed (app track 01→02→03). **Media track NOT YET PLANNED:** the original SFU plans 01-04/01-05 were superseded on 2026-10-09 (moved to `phases/01-foundation-auth-media-plane/superseded/`). Next: `/gsd-plan-phase 01` to add the P2P + Cloudflare TURN media-track plans (INFR-03, INFR-04). Phase 1 is not complete until they are executed.
 
 Plans:
 **Wave 1**
 - [x] 01-01-PLAN.md — Walking skeleton: package gate, preset scaffold + one Fastify process + SQLite (migrations proven live) + seed; login screen lists the two people (wave 1)
-- [ ] 01-04-PLAN.md — SUPERSEDED 2026-10-09 (home is CGNAT; SFU dropped for P2P + Cloudflare TURN) — to be replanned
+- *(01-04 SFU plan superseded 2026-10-09 — see superseded/README.md; media-track plans to be added by re-planning)*
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 01-02-PLAN.md — Auth slice: tap name → password → chat-shaped shell; rate limit + Origin check; 90-day rolling session; logout menu (wave 2)
@@ -45,7 +45,7 @@ Plans:
 - [x] 01-03-PLAN.md — Live at https://duet.brkn.me via Docker + Cloudflare Tunnel with persistent ./data; installable dark PWA; end-of-phase device UAT (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 01-05-PLAN.md — SUPERSEDED 2026-10-09 (SFU dropped for P2P + Cloudflare TURN) — to be replanned
+- *(01-05 SFU smoke plan superseded 2026-10-09 — replaced by the P2P + TURN media-track plans, to be added)*
 
 **UI hint**: yes
 **Notes**: INFR-03/INFR-04 are a parallel, user-gated ops track (new-domain DNS, router UDP/TCP port-forwards, CGNAT check, GitHub Packages token for `@sideby-me/rtc`). Phase 2 does not wait on it; Phase 3 does.
@@ -70,7 +70,7 @@ Plans:
 
 **Goal**: We can call each other by voice or video, peer-to-peer with Cloudflare TURN relay, on Wi-Fi or cellular, with push-to-answer ringing
 **Mode:** mvp
-**Depends on**: Phase 2 (web push for ringing); Phase 1 ops track GREEN (INFR-03/INFR-04 smoke test passed from cellular)
+**Depends on**: Phase 2 (web push for ringing); Phase 1 media track GREEN (INFR-03/INFR-04: Cloudflare TURN credentials + P2P smoke test passed from cellular)
 **Requirements**: CALL-01, CALL-02, CALL-03, CALL-04, CALL-05, CALL-06, CALL-07, CALL-08, CALL-09
 **Success Criteria** (what must be TRUE):
   1. From the chat, either person can start a voice call or a video call and both hear (and see) each other, including with one phone on cellular via TURN relay and the other on Wi-Fi

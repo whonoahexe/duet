@@ -1,3 +1,5 @@
+> **⚠ 2026-10-09: media plane superseded.** Home is CGNAT, so the user dropped the SFU (see `.planning/phases/01-foundation-auth-media-plane/01-CONTEXT.md` D-16). Calls are now 1:1 peer-to-peer WebRTC with Cloudflare TURN, with TURN credentials minted by the duet server and signaling over duet's WebSocket. Anything below about the self-hosted SFU, coturn, `@sideby-me/rtc`, mediasoup-client, SFU join tokens, router port-forwards or sfu./turn. DNS is historical; ignore it when planning. Everything else stands.
+
 # Stack Research
 
 **Domain:** Self-hosted 2-user private chat PWA with 1:1 voice/video calls over an existing mediasoup SFU

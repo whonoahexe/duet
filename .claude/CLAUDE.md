@@ -23,6 +23,9 @@ A private, self-hosted chat app for exactly two people — the owner and their g
 
 ## Technology Stack
 
+> **⚠ Media plane changed 2026-10-09:** no SFU. Calls are 1:1 peer-to-peer WebRTC with Cloudflare TURN (see `.planning/phases/01-foundation-auth-media-plane/01-CONTEXT.md` D-16). In the stack notes below, every row/section about `@sideby-me/rtc`, mediasoup-client, jose join tokens, the SFU integration contract, coturn, GitHub Packages/BuildKit secrets and SFU DNS is **historical** — do not install or build those.
+
+
 ## TL;DR: the stack in one screen
 
 | Layer | Pick | Version (verified 2026-10-08) |
