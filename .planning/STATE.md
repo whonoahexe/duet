@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Foundation, Auth & Media Plane
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-10-08T18:38:22.921Z"
-last_activity: 2026-10-08
-last_activity_desc: Roadmap revised to 3 phases (Rich Media merged into Phase 2), 37/37 v1 requirements mapped
-state_head: 60ff4e510d4100bc9a710d20bf4c3dc1ef4f9f99
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-10-09T08:58:08.664Z"
+last_activity: 2026-10-09
+last_activity_desc: Completed 01-01 walking skeleton
+state_head: 8f5283e38cb8b5c1ca0c8f89d3a51bfcbaa25ea6
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 5
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 20
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-08)
 
 **Core value:** The two of us can reliably message and call each other — on both phones, including over cellular — on infrastructure we fully control.
-**Current focus:** Phase 1 — Foundation, Auth & Media Plane
+**Current focus:** Phase 01 — Foundation, Auth & Media Plane
 
 ## Current Position
 
-Phase: 01 (Foundation, Auth & Media Plane) — READY TO EXECUTE
-Plan: 0 of TBD in current phase
-Status: Ready to execute
-Last activity: 2026-10-08 — Roadmap revised to 3 phases (Rich Media merged into Phase 2), 37/37 v1 requirements mapped
+Phase: 01 (Foundation, Auth & Media Plane) — EXECUTING
+Plan: 2 of 5
+Status: Executing Phase 01
+Last activity: 2026-10-09 — Completed 01-01 walking skeleton
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
@@ -52,6 +52,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 9min | 3 tasks | 65 files |
 
 ## Accumulated Context
 
@@ -64,6 +69,10 @@ Recent decisions affecting current work:
 - [Roadmap]: Rich media (MDIA-01..05) is merged into Phase 2 alongside chat and push. There is no standalone media phase.
 - [Roadmap]: SHEL-03 (iOS onboarding + test-push button) lives in Phase 2 alongside web push, not Phase 1.
 - [Roadmap]: Calls (Phase 3) come last, after chat/media/push (ringing needs push).
+- [Phase 01]: 01-01: Kept next 16.3.8 emitted by the shadcn 4.21.4 template (patch bump within the scaffold pin)
+- [Phase 01]: 01-01: forcedTheme=dark alone neutralizes the scaffold d-key hotkey; theme-provider.tsx unchanged
+- [Phase 01]: 01-01: Seed keeps the stored hash when the password is unchanged (byte-identical re-runs); length counted in NFC code points
+- [Phase 01]: 01-01: Commits land on master as dispatched although git.base-branch flags it protected; consider git.allow_default_branch_commits: true
 
 ### Pending Todos
 
@@ -87,6 +96,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-08T17:39:47.489Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-foundation-auth-media-plane/01-CONTEXT.md
+Last session: 2026-10-09T08:58:08.642Z
+Stopped at: Completed 01-01-PLAN.md
+Resume file: None

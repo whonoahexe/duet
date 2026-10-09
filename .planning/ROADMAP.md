@@ -31,11 +31,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
   5. Ops track: the home connection is confirmed as non-CGNAT public IPv4, and from a phone on cellular the smoke harness joins an SFU room on this machine and reports `bytesReceived > 0`, both direct and with relay-only TURN forced
 
-**Plans**: 5 plans (4 waves; app track 01→02→03, ops track 04 in parallel from wave 1, then 05)
+**Plans**: 1/5 plans executed (4 waves; app track 01→02→03, ops track 04 in parallel from wave 1, then 05)
 
 Plans:
 **Wave 1**
-- [ ] 01-01-PLAN.md — Walking skeleton: package gate, preset scaffold + one Fastify process + SQLite (migrations proven live) + seed; login screen lists the two people (wave 1)
+- [x] 01-01-PLAN.md — Walking skeleton: package gate, preset scaffold + one Fastify process + SQLite (migrations proven live) + seed; login screen lists the two people (wave 1)
 - [ ] 01-04-PLAN.md — Ops: one human sitting (CGNAT, router, tokens, accounts), then home SFU + coturn + SNI stack with certs, renew/DDNS (wave 1, user-gated)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -88,6 +88,6 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Auth & Media Plane | 0/5 | Planned | - |
+| 1. Foundation, Auth & Media Plane | 1/5 | In Progress | - |
 | 2. Chat, Media & Push | 0/TBD | Not started | - |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |

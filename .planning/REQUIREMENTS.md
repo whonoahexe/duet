@@ -14,14 +14,14 @@
 
 ### Auth
 
-- [ ] **AUTH-01**: Exactly two accounts exist, created by a server seed script; there is no sign-up UI
+- [x] **AUTH-01**: Exactly two accounts exist, created by a server seed script; there is no sign-up UI
 - [ ] **AUTH-02**: User can log in by tapping their name and entering their password (password-only; TOTP dropped 2026-10-08)
 - [ ] **AUTH-03**: User stays logged in across app restarts for a long rolling period (no frequent re-login)
 - [ ] **AUTH-04**: User can log out
 
 ### App Shell
 
-- [ ] **SHEL-01**: UI is built exclusively from shadcn preset `b51GFhBEQ` (scaffolded via `shadcn init -p b51GFhBEQ`, components only via `shadcn add`)
+- [x] **SHEL-01**: UI is built exclusively from shadcn preset `b51GFhBEQ` (scaffolded via `shadcn init -p b51GFhBEQ`, components only via `shadcn add`)
 - [ ] **SHEL-02**: User can install the app to the home screen on iPhone (Safari) and Pixel (Chrome) and it launches standalone
 - [ ] **SHEL-03**: First-run onboarding guides iPhone users to Add to Home Screen and to enable notifications, with a test-push button
 
@@ -120,11 +120,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFR-02 | Phase 1 | Pending |
 | INFR-03 | Phase 1 | Pending |
 | INFR-04 | Phase 1 | Pending |
-| AUTH-01 | Phase 1 | Pending |
+| AUTH-01 | Phase 1 | Complete |
 | AUTH-02 | Phase 1 | Pending |
 | AUTH-03 | Phase 1 | Pending |
 | AUTH-04 | Phase 1 | Pending |
-| SHEL-01 | Phase 1 | Pending |
+| SHEL-01 | Phase 1 | Complete |
 | SHEL-02 | Phase 1 | Pending |
 | SHEL-03 | Phase 2 | Pending |
 | CHAT-01 | Phase 2 | Pending |
