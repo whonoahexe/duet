@@ -1,6 +1,6 @@
 # duet: one Node process (Fastify) serving the static Next export, /api and /healthz.
 # Debian (glibc) base on purpose: better-sqlite3 and @node-rs/argon2 ship prebuilt glibc binaries.
-# No ARG carries a secret. The private SDK's BuildKit npm secret mount is added in plan 01-05.
+# No ARG carries a secret; TURN credentials reach the container only through the compose env_file.
 
 FROM node:24-bookworm-slim AS build
 # better-sqlite3 13.0.3 has no prebuilt binary for this Node ABI, so its install falls back to

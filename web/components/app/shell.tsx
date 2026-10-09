@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { toast } from "sonner"
-import { ChatCircleIcon, DotsThreeVerticalIcon, SignOutIcon } from "@phosphor-icons/react"
+import { ChatCircleIcon, DotsThreeVerticalIcon, PhoneCallIcon, SignOutIcon } from "@phosphor-icons/react"
 import { OkResponse, type MeResponse } from "@duet/shared"
 import { initials } from "@/components/app/login-tiles"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -60,6 +60,11 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
               <DotsThreeVerticalIcon weight="bold" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto">
+              {/* The installed app has no URL bar, so the hidden call test is reached from here (Pitfall M6). */}
+              <DropdownMenuItem onClick={() => window.location.assign("/debug/call/")}>
+                <PhoneCallIcon />
+                Call test
+              </DropdownMenuItem>
               <DropdownMenuItem disabled={loggingOut} onClick={() => void handleLogout()}>
                 <SignOutIcon />
                 Log out

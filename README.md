@@ -44,11 +44,11 @@ Secrets live outside the repo in `${DUET_SECRETS_DIR:-~/.config/duet}`, mode 600
 
 | File | Used by |
 |---|---|
-| `cloudflare.ini` (`dns_cloudflare_api_token = ...`) | `deploy/cloudflared/setup.sh` (and Cloudflare TURN key setup) |
+| `cloudflare.ini` (`dns_cloudflare_api_token = ...`) | tunnel setup and TURN key creation (`deploy/cloudflared/setup.sh`, `deploy/cloudflare/turn-key.sh`) |
 | `cloudflare.env` (`CF_ACCOUNT_ID=...`) | `setup.sh` (the account that owns the tunnel) |
 | `seed-users.json` | one-off seeding; shred it afterwards |
 
-In the repo, `.env` (copied from `.env.example`) holds `APP_ORIGIN`, `COOKIE_SECURE` and `LOG_LEVEL`. The public domain lives only there. `.env`, `data/` and the tunnel credentials are gitignored and dockerignored.
+In the repo, `.env` (copied from `.env.example`) holds `APP_ORIGIN`, `COOKIE_SECURE`, `LOG_LEVEL` and the TURN variables `CF_TURN_KEY_ID` / `CF_TURN_KEY_API_TOKEN` (optional: `TURN_CREDENTIAL_TTL_SECONDS`). They reach the container only through the compose `env_file`. The public domain lives only there. `.env`, `data/` and the tunnel credentials are gitignored and dockerignored.
 
 ## Deploy
 
@@ -77,10 +77,32 @@ docker compose exec -T duet node --import tsx server/scripts/seed-users.ts --std
 shred -u ~/.config/duet/seed-users.json
 ```
 
+## Calls: TURN and the call test
+
+Calls are 1:1 peer-to-peer WebRTC. Signaling (offer/answer/ICE) rides duet's own `/ws` socket, and Cloudflare TURN relays the media when no direct path works (the home connection is CGNAT). The media is DTLS-SRTP encrypted end to end, and the duet server never carries it.
+
+```bash
+bash deploy/cloudflare/turn-key.sh   # once (idempotent): create or reuse the Cloudflare TURN key "duet"
+docker compose up -d --build         # the container reads the TURN vars from the env file
+```
+
+- `turn-key.sh` uses the Cloudflare API only, with the `cloudflare.ini` token. It writes `CF_TURN_KEY_ID` / `CF_TURN_KEY_API_TOKEN` into `.env` and never prints them. Exit code 3 means Cloudflare refused for a billing or plan reason. To rotate the key, remove those two lines from `.env` and re-run: a new key is created and the old key named `duet` is deleted.
+- `POST /api/rtc/ice-servers` mints short-lived TURN credentials for a logged-in user (30/min, `Cache-Control: no-store`). With no key configured it answers 503 `turn_unconfigured`; it never falls back to a STUN-only list.
+- **Call test:** header menu → "Call test" (works inside the installed app, which has no URL bar), or open `/debug/call/` directly. Open it on both devices with the same room, tap Start on both, and wait for PASS: a connected peer with growing inbound bytes. `?room=<id>` presets the room and `?relay=1` turns on "Force relay (TURN only)", which only passes when the selected local candidate is `relay`. Each run reports its first PASS and its final state to `POST /api/debug/call-report`, which writes one `call_smoke` line to the server log.
+
+```bash
+TURN_SMOKE=1 bash scripts/smoke-local.sh   # local server mints real TURN credentials
+bash scripts/smoke-call.sh                  # two headless Chrome peers, normal + forced relay, real TURN
+bash scripts/check-call-smoke.sh            # INFR-04 gate: reads call_smoke lines from the deployed log
+```
+
+`check-call-smoke.sh` passes when, in normal mode and in forced-relay mode, one room has PASS reports from two distinct clients and at least one of them comes from an IP other than the home egress IP (a phone on cellular). In forced-relay mode every PASS report must have local candidate `relay`. It prints rooms, counts and candidate types, never IP addresses.
+
 ## Smoke scripts
 
 ```bash
-bash scripts/smoke-public.sh          # via APP_ORIGIN: /healthz, dark login, /api/me 401, 2 users, headers
+bash scripts/smoke-public.sh          # via APP_ORIGIN: /healthz, dark login, /api/me 401, 2 users, headers,
+                                      #   ice-servers / call-report 401, /ws upgrade 401 (Origin) / 403 (no Origin)
 DUET_SEED_FILE=~/.config/duet/seed-users.json bash scripts/smoke-public.sh   # + real login/me/logout
 bash scripts/smoke-persistence.sh     # docker compose down/up keeps users, sessions and a sentinel
 bash scripts/check-live-db.sh --existing ./data   # schema/WAL/migrations check on the live volume

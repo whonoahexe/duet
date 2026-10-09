@@ -56,6 +56,21 @@ cp "$tmp/body" "$tmp/users.json"
 get -X POST -H "Origin: $BASE" "$BASE/api/rtc/ice-servers"
 [ "$status" = "401" ] || die "POST /api/rtc/ice-servers without a session returned $status, expected 401"
 
+# 4c. the /ws signaling upgrade is login-gated (INFR-04): Origin + no cookie -> 401, no Origin -> 403.
+#     A WebSocket upgrade needs HTTP/1.1; a 404 or 101 here means /ws is missing or open.
+ws_upgrade() {
+  get --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+    -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" "$@" "$BASE/ws"
+}
+ws_upgrade -H "Origin: $BASE"
+[ "$status" = "401" ] || die "GET /ws upgrade with Origin and no session returned $status, expected 401"
+ws_upgrade
+[ "$status" = "403" ] || die "GET /ws upgrade without Origin returned $status, expected 403"
+
+# 4d. the call-test report endpoint is login-gated: no cookie -> 401
+get -X POST -H "Origin: $BASE" -H 'Content-Type: application/json' --data '{}' "$BASE/api/debug/call-report"
+[ "$status" = "401" ] || die "POST /api/debug/call-report without a session returned $status, expected 401"
+
 # 5. optional real login round-trip
 if [ -n "${DUET_SEED_FILE:-}" ]; then
   [ -r "$DUET_SEED_FILE" ] || die "DUET_SEED_FILE is not readable"
