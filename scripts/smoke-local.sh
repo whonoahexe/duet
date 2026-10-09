@@ -51,6 +51,20 @@ echo "$users_json" | jq -e '
   and ([.. | objects | keys[] | select(test("password"; "i"))] | length == 0)
 ' >/dev/null || { echo "smoke-local: unexpected /api/users payload" >&2; exit 1; }
 
+# Login round-trip through the real server process: tile id + password -> cookie -> /api/me.
+ada_id="$(echo "$users_json" | jq -r '.users[] | select(.username == "smoke-ada") | .id')"
+[ -n "$ada_id" ] || { echo "smoke-local: smoke-ada missing from /api/users" >&2; exit 1; }
+jar="$tmp/cookies.txt"
+login_status="$(curl -sS -o "$tmp/login.json" -w '%{http_code}' -c "$jar" \
+  -H "Origin: ${BASE}" -H 'Content-Type: application/json' \
+  --data "$(jq -cn --arg id "$ada_id" '{userId: $id, password: "smoke-test-pass-0001"}')" \
+  "${BASE}/api/login")"
+[ "$login_status" = "200" ] || { echo "smoke-local: POST /api/login returned $login_status" >&2; exit 1; }
+grep -q 'duet_session' "$jar" || { echo "smoke-local: login set no duet_session cookie" >&2; exit 1; }
+me_json="$(curl -fsS -b "$jar" "${BASE}/api/me")" || { echo "smoke-local: GET /api/me failed" >&2; exit 1; }
+echo "$me_json" | jq -e '.user.displayName == "Ada Smoke" and .peer.displayName == "Bob Smoke"' >/dev/null \
+  || { echo "smoke-local: unexpected /api/me payload" >&2; exit 1; }
+
 status="$(curl -sS -o "$tmp/index.html" -w '%{http_code}' "${BASE}/")"
 [ "$status" = "200" ] || { echo "smoke-local: GET / returned $status" >&2; exit 1; }
 grep -Eq '<html[^>]*class="[^"]*\bdark\b' "$tmp/index.html" \

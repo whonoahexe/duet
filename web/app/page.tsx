@@ -2,34 +2,57 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { CloudSlashIcon, UsersIcon } from "@phosphor-icons/react"
-import { UsersResponse, type UserSummary } from "@duet/shared"
+import { MeResponse, UsersResponse, type UserSummary } from "@duet/shared"
 import { LoginTiles } from "@/components/app/login-tiles"
+import { PasswordStep } from "@/components/app/password-step"
+import { Shell } from "@/components/app/shell"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
-import { apiGet } from "@/lib/api"
+import { ApiError, apiGet } from "@/lib/api"
 
-type State = { kind: "loading" } | { kind: "error" } | { kind: "ready"; users: UserSummary[] }
+type State =
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "tiles"; users: UserSummary[] }
+  | { kind: "password"; users: UserSummary[]; user: UserSummary }
+  | { kind: "shell"; me: MeResponse }
 
 export default function Page() {
   const [state, setState] = useState<State>({ kind: "loading" })
 
-  const load = useCallback(async () => {
+  const loadTiles = useCallback(async () => {
     setState({ kind: "loading" })
     try {
       const { users } = await apiGet("/api/users", UsersResponse)
-      setState({ kind: "ready", users })
+      setState({ kind: "tiles", users })
     } catch {
       setState({ kind: "error" })
     }
   }, [])
 
+  /** GET /api/me decides between the shell (logged in) and the name tiles (401). */
+  const load = useCallback(async () => {
+    setState({ kind: "loading" })
+    try {
+      const me = await apiGet("/api/me", MeResponse)
+      setState({ kind: "shell", me })
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        await loadTiles()
+      } else {
+        setState({ kind: "error" })
+      }
+    }
+  }, [loadTiles])
+
   useEffect(() => {
     void load()
   }, [load])
 
-  // Plan 01-02 replaces this with the password step for the chosen person.
-  const handleSelect = useCallback((_user: UserSummary) => {}, [])
+  if (state.kind === "shell") {
+    return <Shell me={state.me} />
+  }
 
   return (
     <main className="flex min-h-dvh items-center justify-center p-6">
@@ -57,7 +80,7 @@ export default function Page() {
           </Empty>
         )}
 
-        {state.kind === "ready" && state.users.length === 0 && (
+        {state.kind === "tiles" && state.users.length === 0 && (
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -68,8 +91,19 @@ export default function Page() {
           </Empty>
         )}
 
-        {state.kind === "ready" && state.users.length > 0 && (
-          <LoginTiles users={state.users} onSelect={handleSelect} />
+        {state.kind === "tiles" && state.users.length > 0 && (
+          <LoginTiles
+            users={state.users}
+            onSelect={(user) => setState({ kind: "password", users: state.users, user })}
+          />
+        )}
+
+        {state.kind === "password" && (
+          <PasswordStep
+            user={state.user}
+            onBack={() => setState({ kind: "tiles", users: state.users })}
+            onSuccess={() => void load()}
+          />
         )}
       </div>
     </main>

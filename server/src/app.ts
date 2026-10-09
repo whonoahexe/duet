@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs"
 import Fastify, { type FastifyInstance } from "fastify"
+import fastifyCookie from "@fastify/cookie"
 import fastifyStatic from "@fastify/static"
 import type { Config } from "./config"
 import { openDb, type Db } from "./db/client"
+import { authRoutes } from "./auth/routes"
+import { decorateAuth } from "./auth/session"
 import { usersRoutes } from "./routes/users"
 
 declare module "fastify" {
@@ -22,9 +25,13 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     sqlite.close()
   })
 
+  decorateAuth(app)
+  await app.register(fastifyCookie)
+
   app.get("/healthz", async () => ({ ok: true }))
 
   await app.register(usersRoutes)
+  await app.register(authRoutes)
 
   // Static export (web/out). Skipped when it has not been built (tests, server-only dev).
   const hasStatic = existsSync(config.WEB_OUT)
