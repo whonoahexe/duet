@@ -1,4 +1,556 @@
-> **⚠ 2026-10-09 — partly superseded (D-16 in 01-CONTEXT.md).** The home connection is CGNAT, and the user dropped the SFU. Everything in this file about the self-hosted SFU, coturn, nginx-sni, router port-forwards, sfu./turn.brkn.me DNS/certs, `@sideby-me/rtc`, mediasoup-client and GitHub Packages build secrets is **historical — do not plan from it.** Calls are now 1:1 peer-to-peer WebRTC with Cloudflare TURN (credentials minted by the duet server). The app-track research (Fastify, SQLite, auth, Docker, Cloudflare Tunnel, PWA) remains valid.
+> **⚠ 2026-10-09 — partly superseded (D-16 in 01-CONTEXT.md).** The home connection is CGNAT, and the user dropped the SFU. Everything in this file about the self-hosted SFU, coturn, nginx-sni, router port-forwards, sfu./turn.brkn.me DNS/certs, `@sideby-me/rtc`, mediasoup-client and GitHub Packages build secrets is **historical — do not plan from it.** Calls are now 1:1 peer-to-peer WebRTC with Cloudflare TURN (credentials minted by the duet server).
+>
+> **To plan the media track (INFR-03, INFR-04), read the next section, [Media Track (P2P WebRTC + Cloudflare TURN) — current, 2026-10-09](#media-track-p2p-webrtc--cloudflare-turn--current-2026-10-09). It is self-contained and includes its own Validation Architecture and Security Domain.** The app-track research below it (Fastify, SQLite, auth, Docker, Cloudflare Tunnel, PWA) remains valid, and plans 01-01..01-03 have already executed it. Headings marked *(historical)* below are SFU-era and must not be planned from.
+
+## Media Track (P2P WebRTC + Cloudflare TURN) — current, 2026-10-09
+
+**Researched:** 2026-10-09
+**Domain:** Cloudflare Realtime TURN credential minting, WebSocket signaling on the existing Fastify process, 1:1 `RTCPeerConnection` (perfect negotiation), `getStats()` proof, and an iOS/Android PWA call-test harness
+**Confidence:** HIGH for the Cloudflare API contract (official docs, with this account's token permissions and reachability probed live), the codebase integration points (files read this session) and `@fastify/websocket` (README and tests read from the 11.3.3 tarball). MEDIUM for iOS standalone-PWA media behaviour, which only real devices can prove.
+
+### Media-track constraints (locked; from 01-CONTEXT.md D-16, CLAUDE.md and user memory)
+
+- **D-16 (verbatim):** "CGNAT confirmed … the user chose to **drop the SFU entirely**: calls become **1:1 peer-to-peer WebRTC** with **Cloudflare TURN** as the relay. The duet server mints short-lived TURN credentials (Cloudflare TURN key created via API with the existing account token, which was verified to reach `/accounts/{id}/calls/turn_keys`); signaling (offer/answer/ICE) rides duet's own WebSocket. No router changes, no VPS, no sfu./turn. DNS records, no `@sideby-me/rtc` SDK, no GitHub Packages build secret."
+- **D-12, adapted:** the smoke harness is a hidden, login-gated page inside duet, built only from the locked preset's components. It shows `bytesReceived` and has a **force relay** toggle (`iceTransportPolicy: 'relay'`). Phase 3 reuses the credential endpoint, the WS signaling and the peer wiring. Since there is no SDK, the old `RTCPeerConnection` capture hack is unnecessary: the page owns its `RTCPeerConnection`.
+- **D-03:** all hostnames and keys come from env. Never hard-code them.
+- **All Cloudflare work goes through the API, never the dashboard** (user memory, and the 01-03 pattern in `deploy/cloudflared/setup.sh`). Never print secrets: the auth header goes in a mode-600 temp file passed with `curl -H @file`.
+- **UI:** preset `b51GFhBEQ` only (`base-luma`, Base UI, Phosphor). New components may only arrive through `npx shadcn add`. No lucide and no Radix.
+- **Speed first:** the simplest thing that works, and no new infrastructure.
+- **Out of scope for Phase 1:** ringing/push-to-answer, call UI polish, call history, reconnect-during-call UX. Those are Phase 3.
+
+### Summary
+
+**There is no infrastructure to build.** Cloudflare Realtime TURN is a managed anycast TURN service. Setup is one API call to create a **TURN key**. It has to be created by API because none exists yet: `GET /accounts/{id}/calls/turn_keys` returned `"result": []` this session. The returned key id and 64-character bearer go into duet's `.env`. After that, the duet server mints per-user credentials with one `POST https://rtc.live.cloudflare.com/v1/turn/keys/{keyId}/credentials/generate-ice-servers {"ttl": N}`. The response is a ready-made `iceServers` array (STUN plus six TURN/TURNS URLs on 3478/443/80/5349) that the browser passes straight into `new RTCPeerConnection({ iceServers })` [CITED: developers.cloudflare.com/realtime/turn/generate-credentials]. The account token is active until 2026-12-08 and includes the **`Calls Write`** and **`Realtime Admin`** permission groups, so creating the key will work [VERIFIED: Cloudflare API `GET /accounts/{id}/tokens/{id}` this session, permission names listed]. From this box, UDP 3478 to `stun.cloudflare.com` and TCP 443/5349 to `turn.cloudflare.com` are open, and the STUN reflexive address came back as `103.198.98.x`, the CGNAT egress [VERIFIED: live probe]. The price is $0.05/GB of egress to the TURN client, with 1,000 GB/month free [CITED: realtime/turn/faq]. That is hundreds of hours of relayed video for two people.
+
+**The server work is small and fits the existing code.** `/ws` does not exist yet: `https://duet.brkn.me/ws` returned 404 to an upgrade probe, and no `ws`/`@fastify/websocket` package is installed. This track adds `@fastify/websocket` 11.3.3 and one `GET /ws` route. The route is authenticated by the existing `duet_session` cookie in a **`preHandler` before the upgrade**, plus an explicit `Origin` check, because the existing Origin guard skips GET. It joins "rooms" that hold at most 2 connections and relays zod-validated `rtc.signal` frames to the other member. Two traps are specific to this codebase:
+1. The existing `requireUser` renews the session by re-issuing `Set-Cookie`, and that header is lost on a 101 upgrade response. The WS route therefore needs a **non-renewing** variant, or the 90-day rolling cookie silently stops rolling.
+2. Cloudflare drops WebSockets idle for about 100 s, so the hub must ping every ~25 s.
+
+**The client is about 150 lines with no library.** It is the MDN *perfect negotiation* pattern (polite role = string compare of connection ids), `iceTransportPolicy: forceRelay ? 'relay' : 'all'`, and a `getStats()` sampler that reads `inbound-rtp.bytesReceived` and the selected pair via `transport.selectedCandidatePairId`. I proved the stats path in headless Chrome 153 on this box: a fake-media loopback reported `{"bytes":178009,"pairType":"host"}`. The same headless Chrome, driven by `playwright-core`, can run **two logged-in contexts against a local duet with real Cloudflare TURN and forced relay**. That automatically proves INFR-03 and the relay half of INFR-04 from behind this CGNAT before anyone touches a phone. The human step left is one phone on cellular plus a second client, in both modes.
+
+**Primary recommendation:** Three small plans.
+- **(a) TURN key + credential endpoint:** an API-only `deploy/cloudflare/turn-key.sh`, then `POST /api/rtc/ice-servers` with a mocked-fetch unit test.
+- **(b) WS signaling hub + `/debug/call` harness**, with `injectWS` tests and a headless two-peer forced-relay smoke.
+- **(c) Deploy + cellular UAT:** phone on cellular, normal ICE and forced relay, results reported to the server log.
+
+(a) and the hub part of (b) can run in parallel.
+
+<phase_requirements>
+#### Phase Requirements (media track)
+
+| ID | Description (REQUIREMENTS.md, revised 2026-10-09) | Research Support |
+|----|-----------------------------------------------------|------------------|
+| INFR-03 | "TURN relay is provisioned on Cloudflare (TURN key via API) and the duet server mints short-lived TURN credentials for logged-in users only" | §Cloudflare TURN API contract (create key → `uid` + `key` returned **only at creation**; mint via `generate-ice-servers`; TTL ≤ 48 h; revoke → 204). §Pattern M1 (idempotent API-only key script writing `.env`). §Pattern M2 (`POST /api/rtc/ice-servers`, `requireUser` + Origin guard + rate limit, port-53 filter, 503 when unconfigured). §Validation: `turn.test.ts` (mocked Cloudflare), `smoke-call.sh` (real Cloudflare) |
+| INFR-04 | "A smoke test proves a peer-to-peer WebRTC connection carries media (`bytesReceived > 0`) between two clients with one phone on cellular, both with normal ICE and with relay-only (forced TURN)" | §Pattern M3 (WS signaling rooms). §Pattern M4 (perfect negotiation). §Pattern M5 (`getStats` gate: `inbound-rtp.bytesReceived` + selected local `candidateType`). §Pattern M6 (`/debug/call` harness with Force relay switch, POST report → `call_smoke` log line). §iOS/Android quirks. §Validation: headless two-peer forced-relay smoke + human cellular UAT |
+</phase_requirements>
+
+### What exists today vs. what this track adds (read from the repo this session)
+
+| Fact | Evidence (verbatim) | Consequence |
+|------|---------------------|-------------|
+| No WebSocket support yet | `server/package.json` dependencies list only `@duet/shared`, `@fastify/cookie`, `@fastify/rate-limit`, `@fastify/static`, `@node-rs/argon2`, `better-sqlite3`, `drizzle-orm`, `fastify`, `jose`, `tsx`, `zod` [VERIFIED: server/package.json:15-25]. Live probe: upgrade to `https://duet.brkn.me/ws` → `404` [VERIFIED: curl this session] | Add `@fastify/websocket` and register it **before** the routes |
+| Plugin/route order in `buildApp` | `decorateAuth(app)` / `await app.register(fastifyCookie)` / `await app.register(fastifyRateLimit, { global: false })` / `app.get("/healthz", …)` / `await app.register(usersRoutes)` / `await app.register(authRoutes)` [VERIFIED: server/src/app.ts:51-59] | Insert `await app.register(fastifyWebsocket, { options: { maxPayload: 131072 } })` after the cookie plugin and before the routes. Cookies must be parsed before the WS `preHandler` runs |
+| Env allow-list in config | `const keys = ["NODE_ENV", "HOST", "PORT", "DATA_DIR", "WEB_OUT", "APP_ORIGIN", "COOKIE_SECURE", "LOG_LEVEL"] as const` [VERIFIED: server/src/config.ts:43] | New env vars are **silently ignored** unless added to this array **and** to `EnvSchema` |
+| Session cookie + renewal | `export const COOKIE_NAME = "duet_session"` [VERIFIED: server/src/auth/session.ts:8]. Renewal branch: `if (now - row.lastSeenAt.getTime() > RENEW_AFTER_MS) {` … `setSessionCookie(reply, token, config)` [VERIFIED: server/src/auth/session.ts:129-137] | On a WS upgrade the `Set-Cookie` is lost, but the DB row is still advanced (Pitfall M1). Use a non-renewing check for `/ws` |
+| Origin guard skips GET | `if (!SAFE_METHODS.has(request.method) && isApiUrl(request.url) && request.headers.origin !== config.APP_ORIGIN) {` [VERIFIED: server/src/http/guards.ts:16] | The WS upgrade is a GET to `/ws` (not `/api`), so the global guard never covers it. Check `Origin` in the WS `preHandler` (CSWSH) |
+| Client IP behind the tunnel | `const ip = headerValue(request.headers["cf-connecting-ip"]) ?? request.ip` [VERIFIED: server/src/auth/routes.ts:26] | Reuse for rate-limit keys and for the smoke report's client IP (which proves the phone was off the home network) |
+| Logout route | `app.post("/api/logout", { preHandler: requireUser }, async (request, reply) => {` [VERIFIED: server/src/auth/routes.ts:78] | Hook point for `hub.closeSession(request.session.id)` |
+| Secrets reach the container | `env_file: .env` [VERIFIED: compose.yaml:8]; no published port (comment at compose.yaml:15) | Put `CF_TURN_KEY_ID` / `CF_TURN_KEY_API_TOKEN` in the repo's gitignored `.env`. Redeploy with `docker compose up -d --build` |
+| Dev proxy covers `/api` only | `return [{ source: "/api/:path*", destination: "http://localhost:3100/api/:path*" }]` [VERIFIED: web/next.config.ts:16] | In `next dev` the WS URL must be `ws://localhost:3100/ws`. In production it is same-origin `wss://<host>/ws` |
+| Preset descriptor | `"style": "base-luma",` / `"iconLibrary": "phosphor",` [VERIFIED: web/components.json:3,13]. Installed UI: avatar, button, card, dropdown-menu, empty, field, input, item, label, separator, sonner, spinner [VERIFIED: ls web/components/ui] | Add `switch` and `badge` via the CLI (both exist as `registry/base-luma/ui/{switch,badge}.tsx` [VERIFIED: `npx shadcn@4.21.4 view switch badge`]) |
+| Zone WebSockets | `{"success": true, "value": "on"}` for zone `brkn.me` `settings/websockets` [VERIFIED: Cloudflare API this session] | `wss://duet.brkn.me/ws` will pass through the tunnel with no zone change |
+
+### Architectural Responsibility Map (media track)
+
+| Capability | Primary Tier | Secondary Tier | Rationale |
+|------------|-------------|----------------|-----------|
+| TURN key creation (one-time) | Host ops script → Cloudflare API | — | Uses the broad account token, which never enters the container |
+| TURN credential minting | API / Backend (`POST /api/rtc/ice-servers`) | Cloudflare `rtc.live.cloudflare.com` | The TURN key bearer is a long-term secret and must stay server-side [CITED: generate-credentials] |
+| Signaling relay (offer/answer/ICE) | API / Backend (`GET /ws`, in-memory hub) | — | Auth on upgrade. The server only validates size and shape and forwards; it never interprets SDP |
+| Negotiation, ICE policy, media capture/render | Browser | — | `RTCPeerConnection`, `getUserMedia` and `<video>` exist only in the client |
+| Media transport | Browser ↔ Browser (direct) or ↔ Cloudflare TURN (relay) | — | duet's server never carries media. DTLS-SRTP is end-to-end through TURN [CITED: turn/faq] |
+| Proof metrics (`bytesReceived`, candidate type) | Browser (`getStats`) | API (`/api/debug/call-report` → server log) | The phone displays PASS; the server log gives Claude an untranscribed record |
+| Page gating for `/debug/call` | Browser (UX only) | API (real enforcement: ice-servers and `/ws` return 401) | The static export can't gate HTML (same rule as the app track) |
+
+### Standard Stack (media track additions only)
+
+| Library | Version | Where | Purpose | Why |
+|---------|---------|-------|---------|-----|
+| `@fastify/websocket` | **11.3.3** (published 2026-10-03) | `server` dependency | `GET /ws` upgrade on the existing Fastify process | Official Fastify plugin. Its hooks (`onRequest`/`preValidation`/`preHandler`) run before the upgrade and can reply 401. `injectWS` supports socket-free tests [VERIFIED: README + test/inject.test.js:133 in the npm tarball]. 11.3.2 fixed "handle socket errors during upgrade hooks" and 11.3.3 fixed route typing [VERIFIED: GitHub releases]. Pulls in `ws ^8.16.0` (8.22.0 current) |
+| `playwright-core` | **1.62.1** (published 2026-07-30) | root `devDependencies` | Headless two-peer smoke driving the **system** Chrome (`/usr/bin/google-chrome` 153), so there is no browser download | This exact Playwright version drove Chrome 153 with fake media on this box this session [VERIFIED: executed]. No `postinstall` script [VERIFIED: npm view] |
+| shadcn `switch`, `badge` | via `npx shadcn@4.21.4 add switch badge` (in `web/`) | `web/components/ui` | Force-relay toggle; PASS/candidate-type chips | Preset-native (`base-luma`) [VERIFIED: shadcn view] |
+| *(none)* | — | — | Cloudflare calls use Node 24's global `fetch`; WebRTC, `getUserMedia` and `getStats` are browser built-ins | Don't add a WebRTC helper library (simple-peer, PeerJS, etc.); see Don't Hand-Roll |
+
+**Not used:** `@sideby-me/rtc`, `mediasoup-client`, `jose` for media (jose stays installed but is unused by this track), coturn, Socket.IO.
+
+**Installation:**
+```bash
+npm install -w server @fastify/websocket@11.3.3
+npm install -D playwright-core@1.62.1          # root devDependency; npm prune --omit=dev drops it from the image
+(cd web && npx shadcn@4.21.4 add switch badge) # then: rm -f web/package-lock.json; rm -rf web/node_modules; npm install (Pitfall 1 of the app track)
+```
+
+### Package Legitimacy Audit (media track)
+
+| Package | Registry | Age (latest) | Downloads | Source Repo | Verdict (seam) | Disposition |
+|---------|----------|--------------|-----------|-------------|----------------|-------------|
+| `@fastify/websocket` | npm | 11.3.3: 6 days | ~2.5M/wk | github.com/fastify/fastify-websocket | SUS (`too-new` only) | **Flagged.** The planner adds a `checkpoint:human-verify` package gate, as 01-01 did. Low real risk: official Fastify org, no postinstall, release notes read. Pinning 11.3.1 (21 days) is the fallback if the user rejects a 6-day-old release, but it lacks the upgrade-hook socket-error fix |
+| `playwright-core` | npm | latest 1.64.0: 2 days; **recommended pin 1.62.1: ~10 weeks** | ~121M/wk | github.com/microsoft/playwright | SUS (`too-new`, judged on latest) | **Flagged.** Same human gate. Pin 1.62.1, the version executed this session |
+| `ws` (transitive) | npm | 8.22.0: 13 days | ~283M/wk | github.com/websockets/ws | SUS (`too-new`) | Transitive via `@fastify/websocket` (`^8.16.0`). Covered by the same gate, and the lockfile pins it |
+
+**Packages removed due to [SLOP]:** none. **Packages flagged [SUS]:** `@fastify/websocket`, `playwright-core` (and transitive `ws`). Each is flagged only for publish recency, with no postinstall scripts. The planner must put one `checkpoint:human-verify` package gate before the installs.
+
+### Cloudflare TURN API contract
+
+| Item | Value | Tag |
+|------|-------|-----|
+| Create key | `POST https://api.cloudflare.com/client/v4/accounts/{account_id}/calls/turn_keys` body `{"name": "duet"}` → `result: { uid (32 chars), key (64-char bearer), name, created, modified }` | [CITED: developers.cloudflare.com/api/resources/calls/subresources/turn/methods/create] |
+| **`key` is returned only by create** | List (`GET …/turn_keys`) and get (`GET …/turn_keys/{key_id}`) return `created, modified, name, uid`, and **no `key`** | [CITED: api/resources/calls/subresources/turn] |
+| Other key ops | `PUT …/turn_keys/{key_id}` (update name), `DELETE …/turn_keys/{key_id}` | [CITED: same] |
+| Permission | `Calls Write`. This token has `Calls Write`, `Calls Read`, `Realtime Admin`, and `Realtime Read` | [CITED] + [VERIFIED: token policies read via API] |
+| Existing keys | none (`"result": []`) | [VERIFIED: API this session] |
+| Mint credentials | `POST https://rtc.live.cloudflare.com/v1/turn/keys/{uid}/credentials/generate-ice-servers`, headers `Authorization: Bearer {key}`, `Content-Type: application/json`, body `{"ttl": 86400}` → **201** | [CITED: realtime/turn/generate-credentials, updated 2026-09-25] |
+| Mint response (verbatim URLs) | `{"iceServers":[{"urls":["stun:stun.cloudflare.com:3478"]},{"urls":["turn:turn.cloudflare.com:3478?transport=udp","turn:turn.cloudflare.com:443?transport=udp","turn:turn.cloudflare.com:3478?transport=tcp","turn:turn.cloudflare.com:80?transport=tcp","turns:turn.cloudflare.com:5349?transport=tcp","turns:turn.cloudflare.com:443?transport=tcp"],"username":"…","credential":"…"}]}` | [CITED: same] |
+| Port 53 | "The alternate port 53 is known to be blocked by web browsers … you might want to filter out the URL with port 53". The doc example has no `:53` URL, but the note implies real responses may include one. **Filter it server-side** | [CITED: same]. Whether a live response contains `:53`: [ASSUMED] |
+| Unknown key | `POST …/keys/000…/credentials/generate-ice-servers` → `404 {"error":"cannot find specified key"}` | [VERIFIED: curl this session] |
+| TTL | Max 48 h ("You can set a expiration time for a credential up to 48 hours in the future"). Refresh mid-call with `RTCPeerConnection.setConfiguration()`. If it expires during use: billing stops, then disconnect "after a short delay" | [CITED: realtime/turn/faq] |
+| Revoke | `POST https://rtc.live.cloudflare.com/v1/turn/keys/{uid}/credentials/{username}/revoke` → 204 | [CITED: generate-credentials] |
+| `customIdentifier` | Documented only on `POST …/credentials/generate` (`{"ttl": 864000, "customIdentifier": "user4523958"}`), for per-user analytics. Not needed for 2 users. Whether `generate-ice-servers` accepts it: undocumented | [CITED: realtime/turn/replacing-existing]. [ASSUMED] for generate-ice-servers |
+| Ports/transports | STUN 3478/udp. TURN UDP 3478 (alt 443). TURN TCP 3478 (alt 80). TURN TLS 5349 (alt 443). Anycast to the nearest PoP | [CITED: realtime/turn] |
+| Relay behaviour | Relay addresses are IPv4 only (clients may reach TURN over IPv6). No TCP relaying (RFC 6062). CreatePermission is denied for private/loopback ranges | [CITED: turn/faq] |
+| Pricing | $0.05/GB of Cloudflare → TURN-client egress, including TURN overhead. **1,000 GB/month free**, shared with SFU. STUN free. Ingress free | [CITED: turn/faq, realtime/pricing] |
+| Limits | Per allocation: ~5–10 kpps, ~50–100 Mbps, >5 new unique IPs/s → drops. Up to 1,000 TURN keys per account; unlimited credentials per key | [CITED: realtime/turn, replacing-existing] |
+| Reachability from this box | UDP 3478 STUN → srflx `103.198.98.x`. TCP 443 and 5349 to `turn.cloudflare.com` (141.101.90.1) open. `rtc.live.cloudflare.com:443` reachable | [VERIFIED: probes this session] |
+| Account-token expiry (2026-12-08) | Doesn't affect calls: the server only uses the TURN key's own bearer. The account token is only needed to create, rotate or delete keys | [VERIFIED: token `expires_on` via API]. TURN-key non-expiry: [ASSUMED] (no expiry field in the create response) |
+
+### System Architecture Diagram
+
+```
+ Phone A (cellular, PWA)                           duet server (Docker, behind CF Tunnel)                 Client B (Wi-Fi / phone / laptop)
+ ─────────────────────                             ───────────────────────────────────────                 ─────────────────────────────────
+ tap Start ──► getUserMedia(a+v)
+           ──► POST /api/rtc/ice-servers ───────►  requireUser + Origin guard + rate limit
+                                                    └─► POST rtc.live.cloudflare.com/.../generate-ice-servers {ttl}
+                                                         (Bearer = TURN key; 201 iceServers) ── filter :53 ──┐
+           ◄── { iceServers, ttlSeconds } ◄────────────────────────────────────────────────────────────────┘
+           ──► wss://duet.brkn.me/ws  (cookie) ──►  preHandler: session (no renew) + Origin == APP_ORIGIN
+           ◄── hello {connId}                        hub: conns{connId→user,session,socket}, rooms{room→≤2 connIds}
+           ──► room.join "debug" ──────────────────► room has B? ──► A: room.joined{peers:[B]}   B: room.peer-joined{A}
+ new RTCPeerConnection({iceServers,                                                                       new RTCPeerConnection(...)
+   iceTransportPolicy: relay? 'relay':'all'})                                                             addTrack(...)
+ addTrack → negotiationneeded → offer ──rtc.signal──► forward to the other member only ──rtc.signal──► perfect negotiation
+           ◄──────────── answer / ICE candidates (trickle) ◄── forward ◄──────────────────────────────────┘
+ ICE: host / srflx (stun.cloudflare.com) / relay (turn.cloudflare.com)  ═══ DTLS-SRTP media ═══►  direct, or via Cloudflare TURN
+ every 1 s: pc.getStats() → inbound-rtp.bytesReceived, transport.selectedCandidatePairId → local/remote candidateType
+ PASS (connected && bytes>0 && (!relay || local==relay)) ──► POST /api/debug/call-report ──► log {evt:"call_smoke", cfIp, ua, ...}
+```
+
+### Recommended file layout (new files only)
+
+```
+deploy/cloudflare/turn-key.sh        # API-only, idempotent: create/verify TURN key → .env (CF_TURN_KEY_ID, CF_TURN_KEY_API_TOKEN)
+shared/src/rtc.ts                    # IceServer, IceServersResponse, CallReport (zod)
+shared/src/ws.ts                     # ClientFrame / ServerFrame discriminated unions, SignalData, RoomId
+server/src/rtc/turn.ts               # mintIceServers(deps) — pure, fetch injected
+server/src/rtc/routes.ts             # POST /api/rtc/ice-servers, POST /api/debug/call-report
+server/src/ws/hub.ts                 # in-memory conns + rooms(≤2) + relay + heartbeat + closeSession()
+server/src/ws/routes.ts              # GET /ws { websocket: true, preHandler: requireUserNoRenew + originCheck }
+server/test/turn.test.ts             # mocked Cloudflare fetch
+server/test/ws.test.ts               # injectWS: auth, origin, rooms, relay, full, bad frames, close
+web/lib/ws.ts                        # SignalingClient (same-origin wss / dev ws://localhost:3100/ws, typed frames)
+web/lib/rtc/ice.ts                   # fetchIceServers() → apiPost('/api/rtc/ice-servers')
+web/lib/rtc/peer.ts                  # createPeer({...}) — perfect negotiation, forceRelay, restartIce on failed
+web/lib/rtc/stats.ts                 # sampleCall(pc) → { inboundBytes, localType, remoteType, relayProtocol, rttMs, state }
+web/app/debug/call/page.tsx          # thin 'use client' page → <CallTest/>
+web/components/app/call-test.tsx     # harness UI from preset components
+scripts/smoke-call.sh                # local server + fixture users + real TURN env → node scripts/smoke-call.mjs
+scripts/smoke-call.mjs               # playwright-core + /usr/bin/google-chrome, 2 contexts, fake media, relay=1
+```
+Edits: `server/src/app.ts` (register the plugin, hub and routes), `server/src/config.ts` (new env keys), `server/src/auth/session.ts` (extract the non-renewing check), `server/src/auth/routes.ts` (logout closes sockets), `.env.example` (key names only), `web/components/app/shell.tsx` (a "Call test" menu item, see Pitfall M6), `scripts/smoke-public.sh` (`/ws` without a cookie → 401), `README.md`.
+
+### Pattern M1: TURN key provisioning, API-only and idempotent (INFR-03)
+
+Follow `deploy/cloudflared/setup.sh`: token from `~/.config/duet/cloudflare.ini`, account from `cloudflare.env` `CF_ACCOUNT_ID`, auth header in a mode-600 temp file, `cf()` helper that dies unless `success == true`.
+
+```bash
+# deploy/cloudflare/turn-key.sh  (sketch; reuse setup.sh's token/header/cf() preamble verbatim)
+NAME="${DUET_TURN_KEY_NAME:-duet}"
+ENV_FILE="$ROOT/.env"
+have_id="$(sed -n 's/^CF_TURN_KEY_ID=//p' "$ENV_FILE" | tail -n1)"
+have_tok="$(sed -n 's/^CF_TURN_KEY_API_TOKEN=//p' "$ENV_FILE" | tail -n1)"
+keys="$(cf GET "/accounts/$ACCOUNT/calls/turn_keys")"
+if [ -n "$have_id" ] && [ -n "$have_tok" ] && echo "$keys" | jq -e --arg u "$have_id" '.result[] | select(.uid==$u)' >/dev/null; then
+  : # reuse
+else
+  created="$(cf POST "/accounts/$ACCOUNT/calls/turn_keys" "$(jq -cn --arg n "$NAME" '{name:$n}')")"
+  have_id="$(echo "$created" | jq -r .result.uid)"; have_tok="$(echo "$created" | jq -r .result.key)"
+  # write both lines into .env atomically (umask 077 temp file + mv), replacing old lines; NEVER echo
+  # optionally DELETE stale keys named $NAME whose uid != have_id (their bearer is unrecoverable anyway)
+fi
+# verify: mint a 60 s credential with the TURN bearer (header file, not argv) → expect HTTP 201 and ≥1 turn: URL
+printf 'Authorization: Bearer %s\n' "$have_tok" > "$work/turn.hdr"
+code="$(curl -sS -o "$work/ice.json" -w '%{http_code}' -X POST -H @"$work/turn.hdr" -H 'Content-Type: application/json' \
+  --data '{"ttl":60}' "https://rtc.live.cloudflare.com/v1/turn/keys/$have_id/credentials/generate-ice-servers")"
+[ "$code" = 201 ] && jq -e '[.iceServers[].urls[]?] | map(select(startswith("turn"))) | length > 0' "$work/ice.json" >/dev/null || die "mint check failed ($code)"
+echo "turn-key ok"
+```
+- The `key` can't be read back later [CITED]. If `.env` loses it, the script must create a new key (and may delete the stale one). Re-running with a healthy `.env` is a no-op plus a mint check.
+- Accept 200 or 201 from the mint check (the docs say 201).
+- Agent tooling here blocks reading `.env` with a secret-read hook (observed this session). Executors must verify through the script's own `turn-key ok` and through `smoke-call.sh`, never by cat-ing `.env`.
+
+### Pattern M2: Credential endpoint `POST /api/rtc/ice-servers` (INFR-03)
+
+- **POST, not GET:** the existing Origin guard covers it automatically, it is a side-effecting mint, and the response must never be cached. Set `Cache-Control: no-store`.
+- `preHandler: requireUser`. Rate limit with `config.rateLimit { max: 30, timeWindow: "1 minute", keyGenerator: CF-Connecting-IP }`, which stops a client loop from burning credentials.
+- If unconfigured (no key id or token): `503 {error:"turn_unconfigured"}`. If Cloudflare fails or times out (5 s): `502 {error:"turn_unavailable"}`. **Never fall back to STUN-only.** A silent fallback would let the smoke "pass" without TURN.
+- TTL from `TURN_CREDENTIAL_TTL_SECONDS` (default **86400**, zod `.max(172800)`). That covers an overnight call. Calls longer than that refresh with `setConfiguration()` in Phase 3.
+- Don't log `username`/`credential`. Log only `{evt:"turn_mint", userId, ok}`.
+
+```ts
+// server/src/rtc/turn.ts
+import { z } from "zod"
+const CfIce = z.object({ iceServers: z.array(z.object({
+  urls: z.union([z.string(), z.array(z.string())]),
+  username: z.string().optional(), credential: z.string().optional(),
+})).min(1) })
+export class TurnError extends Error { constructor(readonly code: "turn_unconfigured" | "turn_unavailable") { super(code) } }
+export interface TurnDeps { fetch: typeof fetch; apiBase: string; keyId?: string; apiToken?: string; ttlSeconds: number }
+
+export async function mintIceServers(d: TurnDeps) {
+  if (!d.keyId || !d.apiToken) throw new TurnError("turn_unconfigured")
+  let res: Response
+  try {
+    res = await d.fetch(`${d.apiBase}/v1/turn/keys/${encodeURIComponent(d.keyId)}/credentials/generate-ice-servers`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${d.apiToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ttl: d.ttlSeconds }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch { throw new TurnError("turn_unavailable") }
+  if (!res.ok) throw new TurnError("turn_unavailable")
+  const parsed = CfIce.safeParse(await res.json().catch(() => null))
+  if (!parsed.success) throw new TurnError("turn_unavailable")
+  const iceServers = parsed.data.iceServers
+    .map((s) => ({ ...s, urls: (Array.isArray(s.urls) ? s.urls : [s.urls]).filter((u) => !/:53(\?|$)/.test(u)) }))
+    .filter((s) => s.urls.length > 0)
+  return { iceServers, ttlSeconds: d.ttlSeconds }
+}
+```
+Inject `fetch` and `apiBase` through `buildApp(config, deps?)` (default `globalThis.fetch` and `config.CF_TURN_API_BASE`, which defaults to `https://rtc.live.cloudflare.com`). Tests then pass a fake fetch with no network and no global stubbing.
+
+**New env (add to `EnvSchema` *and* the `keys` array at config.ts:43):** `CF_TURN_KEY_ID` (optional string), `CF_TURN_KEY_API_TOKEN` (optional string), `TURN_CREDENTIAL_TTL_SECONDS` (coerce int, 60..172800, default 86400), `CF_TURN_API_BASE` (url, default above). Keep the TURN vars **optional** so the app track still boots without them, and log one `warn` at boot when they are missing. Add the key **names** (no values) to `.env.example`.
+
+### Pattern M3: WS signaling hub on the existing Fastify process (INFR-04, reused by Phase 3)
+
+```ts
+// server/src/ws/routes.ts (shape)
+app.get("/ws", {
+  websocket: true,
+  preHandler: [requireUserNoRenew, wsOriginCheck],   // both run BEFORE the 101; a 401/403 reply aborts the upgrade
+}, (socket, request) => hub.attach(socket, request.user!, request.session!.id))
+// wsOriginCheck: if (request.headers.origin !== app.config.APP_ORIGIN) return reply.code(403).send({ error: "bad_origin" })
+```
+- **Rooms of ≤ 2 connections, keyed by a client-chosen `RoomId` (`/^[a-z0-9-]{1,64}$/`).** Any authenticated connection may join, including two connections of the **same** user. The owner can then run the cellular test alone (phone + laptop). A third join gets `room.full`. In Phase 3 the room id becomes the call id and invite/accept frames are added on top. The relay primitive doesn't change.
+- **Frames (shared/src/ws.ts, zod discriminated union on `t`):**
+  - Client → server: `room.join {room}`, `room.leave {room}`, `rtc.signal {room, data}`.
+  - Server → client: `hello {connId, userId}`, `room.joined {room, peers:[{connId,userId}]}`, `room.peer-joined {room, peer}`, `room.peer-left {room, connId}`, `room.full {room}`, `rtc.signal {room, from, data}`, `error {code}`.
+  - `SignalData = { description?: {type: "offer"|"answer"|"pranswer"|"rollback", sdp?: string ≤ 65536}, candidate?: {candidate ≤ 2048, sdpMid?, sdpMLineIndex?, usernameFragment?} | null }`.
+- **The server only forwards** `rtc.signal` to the *other* member of a room the sender is in. Clients can't address arbitrary connIds. Malformed JSON or a schema failure gets `error {code:"bad_frame"}` and the socket stays open. More than ~100 frames/s closes it with 1008.
+- `maxPayload: 131072` (plugin `options`). A video SDP is a few KB. [ASSUMED typical size]
+- **Heartbeat:** `setInterval(25_000)` → `socket.ping()`; terminate if no `pong` since the last tick; `clearInterval` in `onClose`. Cloudflare drops idle WebSockets after ~100 s [CITED: developers.cloudflare.com/support/network/using-cloudflare-with-websockets (heartbeat advice); the 100 s figure is MEDIUM, from community sources]. Browsers answer protocol pings automatically.
+- **Session revocation:** the hub keeps `sessionId` per connection, and `POST /api/logout` calls `hub.closeSession(sessionId)` (close code 4401). That way a logged-out device can't keep signaling.
+- `@fastify/websocket` does **not** run `onSend` hooks for WS routes, and `setErrorHandler` doesn't see errors after the upgrade [VERIFIED: README "Using hooks" / errorHandler sections]. Wrap message handlers in try/catch.
+
+### Pattern M4: 1:1 peer with perfect negotiation (client, reused by Phase 3)
+
+```ts
+// web/lib/rtc/peer.ts — MDN perfect negotiation, adapted
+export function createPeer(o: {
+  iceServers: RTCIceServer[]; forceRelay: boolean; polite: boolean; stream: MediaStream
+  send: (data: SignalData) => void; onRemoteStream: (s: MediaStream) => void
+}) {
+  const pc = new RTCPeerConnection({ iceServers: o.iceServers, iceTransportPolicy: o.forceRelay ? "relay" : "all" })
+  let makingOffer = false, ignoreOffer = false, isSettingRemoteAnswerPending = false
+  pc.onnegotiationneeded = async () => {
+    try { makingOffer = true; await pc.setLocalDescription(); o.send({ description: pc.localDescription!.toJSON() }) }
+    catch (err) { console.error(err) } finally { makingOffer = false }
+  }
+  pc.onicecandidate = ({ candidate }) => { if (candidate) o.send({ candidate: candidate.toJSON() }) }
+  pc.ontrack = ({ track, streams }) => o.onRemoteStream(streams[0] ?? new MediaStream([track]))
+  pc.oniceconnectionstatechange = () => { if (pc.iceConnectionState === "failed") pc.restartIce() }
+  for (const t of o.stream.getTracks()) pc.addTrack(t, o.stream)
+
+  async function handleSignal({ description, candidate }: SignalData) {
+    if (description) {
+      const readyForOffer = !makingOffer && (pc.signalingState === "stable" || isSettingRemoteAnswerPending)
+      const offerCollision = description.type === "offer" && !readyForOffer
+      ignoreOffer = !o.polite && offerCollision
+      if (ignoreOffer) return
+      isSettingRemoteAnswerPending = description.type === "answer"
+      await pc.setRemoteDescription(description)
+      isSettingRemoteAnswerPending = false
+      if (description.type === "offer") { await pc.setLocalDescription(); o.send({ description: pc.localDescription!.toJSON() }) }
+    } else if (candidate) {
+      try { await pc.addIceCandidate(candidate) } catch (err) { if (!ignoreOffer) throw err }
+    }
+  }
+  return { pc, handleSignal, close: () => pc.close() }
+}
+```
+Source: the variables, handlers and collision logic are MDN's code verbatim [CITED: developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation]. Three things are adapted:
+- The null end-of-candidates is skipped.
+- `restartIce()` runs on `failed`.
+- **Polite role:** MDN leaves it to the app. Use `polite = myConnId > peerConnId` (string compare), which is deterministic on both ends with no extra round trip.
+
+**Ordering rule:** fetch ICE servers and `getUserMedia` **before** `room.join`. `createPeer` can then run synchronously inside the `room.joined` (peer present) or `room.peer-joined` handler, ahead of the first incoming `rtc.signal` on the same ordered socket. As a defensive measure, buffer any `rtc.signal` that arrives before the peer exists.
+
+### Pattern M5: Proof from `getStats()` (INFR-04 gate metric)
+
+```ts
+// web/lib/rtc/stats.ts
+export async function sampleCall(pc: RTCPeerConnection) {
+  const r = await pc.getStats()
+  let inboundBytes = 0, pair: any
+  r.forEach((s: any) => {
+    if (s.type === "inbound-rtp") inboundBytes += s.bytesReceived ?? 0          // THE gate metric (audio + video)
+    if (s.type === "transport" && s.selectedCandidatePairId) pair = r.get(s.selectedCandidatePairId)
+  })
+  if (!pair) r.forEach((s: any) => { if (s.type === "candidate-pair" && s.state === "succeeded" && (s.nominated || s.selected)) pair ??= s })
+  const local = pair && r.get(pair.localCandidateId), remote = pair && r.get(pair.remoteCandidateId)
+  return {
+    state: pc.connectionState, inboundBytes,
+    localType: local?.candidateType as string | undefined,   // host | srflx | prflx | relay
+    relayProtocol: local?.relayProtocol as string | undefined, // udp | tcp | tls (client→TURN leg)
+    remoteType: remote?.candidateType as string | undefined,
+    rttMs: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : undefined,
+  }
+}
+// PASS = state === "connected" && inboundBytes > 0 && inboundBytes grew since the last sample && (!forceRelay || localType === "relay")
+```
+- The standard way to find the selected pair is `transport.selectedCandidatePairId`. `candidate-pair.selected` is Firefox-only and non-standard [CITED: MDN RTCIceCandidatePairStats/selected].
+- Chrome 153 populates `selectedCandidatePairId`: the headless loopback on this box returned `pairType: "host"` through it [VERIFIED: executed].
+- Safari populating it is [ASSUMED], so the `nominated`/`succeeded` fallback stays.
+- `relayProtocol` is a standard field per the webrtc-stats spec [ASSUMED, not fetched].
+
+### Pattern M6: `/debug/call` harness (D-12 adapted)
+
+- **Route:** `web/app/debug/call/page.tsx` (`'use client'`). The static export gives `/debug/call/` (`trailingSlash: true`). On mount, `GET /api/me`. On 401, show an `Empty` with a link to `/`.
+- **UI, preset components only:**
+  - `Card` with a `Switch` labelled "Force relay (TURN only)" (disabled while running) and a `Field`/`Input` for the room (default `debug`).
+  - `Button` Start/Stop, and `Spinner` while connecting.
+  - Two `<video>` elements: local `autoPlay playsInline muted`, remote `autoPlay playsInline`.
+  - `Item` rows: connection state, inbound bytes (live), local/remote candidate type, relay protocol, RTT.
+  - A `Badge` that shows PASS/waiting, plus `sonner` toasts for errors.
+  - Phosphor icons only.
+  - Add `data-testid` on the verdict and the candidate type for the headless smoke.
+- **Read `?relay=1` and `?room=` at load** so the smoke and UAT links are one tap.
+- **Report:** on the first PASS, and on Stop, `POST /api/debug/call-report {room, forceRelay, pass, inboundBytes, localType, remoteType, relayProtocol, rttMs, ua}`. The body is zod-validated (strings capped), the route uses `requireUser` with a rate limit of 30/min, and it returns 204. The server logs `request.log.info({ evt: "call_smoke", userId, cfIp: CF-Connecting-IP, ...body })`. `cfIp` proves which side was off the home egress (`103.198.98.196`), so Claude verifies with `docker compose logs duet | grep call_smoke`.
+- **Reach it from the installed PWA:** add a low-key "Call test" `DropdownMenuItem` to the shell header menu (Pitfall M6). Phase 3 can keep it as "Diagnostics" or remove it.
+
+### iOS Safari (home-screen PWA) and Android Chrome quirks
+
+| Quirk | Handling | Confidence |
+|-------|----------|-----------|
+| `getUserMedia` needs a user gesture plus a secure context (HTTPS, or `localhost` in tests) | Call it from the Start button handler. `navigator.mediaDevices` is `undefined` on insecure origins: headless `about:blank` failed this way, and it worked on `http://localhost` | [VERIFIED: executed in headless Chrome] |
+| iOS standalone PWAs re-prompt for camera/mic often, and capture is stopped/reset by navigation (including hash changes) | Keep the whole test on one page with no route or hash changes while capturing. Request **one** stream and reuse it. Expect a prompt on each launch | MEDIUM [CITED: bugs.webkit.org/show_bug.cgi?id=215884; Apple dev forums 788518] |
+| Inline video on iOS | `playsInline` on **both** `<video>` elements, otherwise iOS goes fullscreen. Local preview `muted` | MEDIUM [CITED: webrtchacks guide-to-safari-webrtc] |
+| Autoplay with sound | WebKit lets MediaStream media autoplay when the page is already capturing. Still call `video.play()` after `srcObject` is set and catch `NotAllowedError`, showing a "Tap to play" `Button` | MEDIUM [CITED: webrtchacks; WebKit policy secondhand] |
+| Codecs | Don't set codec preferences. Chrome↔Safari negotiate VP8 or H.264 automatically | [ASSUMED] (well-known; no Phase 1 requirement depends on the codec) |
+| Backgrounding / screen lock stops capture on iOS | Keep the screen on and the app foregrounded during the UAT. Background calls are a Phase 3 topic (push + CallKit-less PWA limits) | [ASSUMED] |
+| Installed iOS app has its own cookie jar (app-track Pitfall 6) | Log in **inside** the installed app before the test, or run the test in a Safari tab logged in there | [VERIFIED in app track] |
+| Earpiece vs speaker routing on iOS | Not a Phase 1 concern. Phase 3 may look at `navigator.audioSession` | LOW [ASSUMED] |
+| Cellular IPv6-only carriers (464XLAT) | Fine: the client→TURN leg may be IPv6, and the relay is IPv4 | [CITED: turn/faq] |
+
+### Don't Hand-Roll
+
+| Problem | Don't Build | Use Instead | Why |
+|---------|-------------|-------------|-----|
+| TURN server, credentials HMAC | coturn, REST-HMAC minting | Cloudflare `generate-ice-servers` | Managed, anycast, revocable. That's the whole point of D-16 |
+| WebSocket framing/upgrade | raw `http` upgrade handling | `@fastify/websocket` (ws) | Hooks run before the upgrade (auth), plus `maxPayload` and `injectWS` tests |
+| Glare / offer collision handling | ad-hoc "caller/callee" with retries | MDN perfect negotiation (~30 lines) | Handles simultaneous `negotiationneeded` on both ends. Phase 3 renegotiation (camera on/off) needs it too |
+| Selected-candidate detection | parsing SDP or candidate strings | `getStats()` `transport.selectedCandidatePairId` → `local-candidate.candidateType` | Standard, and works in Chrome (verified) |
+| Browser automation for the 2-peer smoke | raw CDP over WS | `playwright-core` + system Chrome | Fake devices, two isolated cookie jars (contexts), auto-wait |
+| WebRTC wrapper libs (simple-peer, PeerJS) | — | plain `RTCPeerConnection` | Unmaintained or old abstractions, and they hide `iceTransportPolicy`/`getStats`. Not needed for 1:1 |
+
+### Common Pitfalls (media track)
+
+**Pitfall M1 — The WS upgrade silently breaks the rolling session.** The existing `requireUser` advances `lastSeenAt`/`expiresAt` in the DB **and** calls `setSessionCookie` (session.ts:129-137). On a WebSocket route, the 101 response is written by `ws`, not by `reply`, so the `Set-Cookie` never reaches the browser while the DB row says "renewed". For the next 24 h no HTTP request re-issues the cookie. If the WS (Phase 2 connects it on app load) keeps winning the daily renewal race, the browser cookie expires on day 90 despite daily use. **Fix:** factor the lookup into `resolveSession(request, reply, { renew })` and use `renew: false` on `/ws`. `requireUser` stays as-is for HTTP. **Warning sign:** session.test still passes, but no test covers WS + renewal. Add one: an injectWS connect with a session older than 24 h must leave `lastSeenAt` unchanged.
+
+**Pitfall M2 — Cross-site WebSocket hijacking.** The global Origin guard only covers non-GET `/api/*` (guards.ts:16). The `SameSite=Lax` cookie is *probably* not sent on a cross-site WS handshake, but don't rely on it. Check `Origin === APP_ORIGIN` in the WS `preHandler`, and test it with injectWS (`origin: "https://evil.example"` → `Unexpected server response: 403`).
+
+**Pitfall M3 — Silent STUN-only fallback.** If the credential endpoint quietly returns only STUN when TURN is misconfigured, "normal ICE" may still pass on Wi-Fi and hide the problem. Return 503/502, and have the harness show the error.
+
+**Pitfall M4 — Forced relay "passes" without being relayed.** Gate the relay mode on `localType === "relay"` for the selected pair on **both** clients, not only on `bytesReceived > 0`. With `iceTransportPolicy: "relay"` there should be no other candidate types; asserting it catches a toggle that was never applied (for example, the switch changed after the PC was created). Disable the switch while running.
+
+**Pitfall M5 — Port-53 TURN URL stalls ICE gathering.** Cloudflare warns that browsers block it. Filter `:53` server-side (Pattern M2). This is harmless if absent.
+
+**Pitfall M6 — The installed iOS PWA has no URL bar.** A "hidden" `/debug/call` page can't be typed into a standalone app. Either add a menu item ("Call test") in the shell's header menu, or run the test in a Safari tab with a separate login. The menu item is recommended because it tests the real Phase 3 environment.
+
+**Pitfall M7 — Async gap between `room.joined` and `createPeer`.** If ICE servers are fetched *after* joining, the other side's offer can arrive before the PC exists and get dropped. Fetch ICE servers and media first, then join, and buffer early signals.
+
+**Pitfall M8 — WS idle drop through Cloudflare (~100 s).** During a test, media flows P2P while signaling sits idle, so the WS dies mid-call without the server heartbeat. The P2P media survives a WS drop, but Phase 3 hang-up/renegotiation would not. Ping every 25 s.
+
+**Pitfall M9 — The TURN bearer is shown once.** If `turn-key.sh` crashes after create but before writing `.env`, the key is orphaned. Write `.env` immediately after create (temp file + `mv`), then verify. Delete orphaned keys named `duet` on the next run.
+
+**Pitfall M10 — "Normal ICE" across two CGNATs may select relay anyway.** Home (CGNAT) ↔ cellular (CGNAT, often symmetric) frequently can't hole-punch, so the normal-mode run may report `localType: relay`. That still satisfies INFR-04 (`bytesReceived > 0` with normal ICE). Record the candidate type: it tells Phase 3 how much traffic will be billed TURN egress.
+
+**Pitfall M11 — Same-LAN second client hides nothing, by design.** For the cellular test the second client should be on home Wi-Fi (or anywhere). Only the phone must have Wi-Fi **off**. The `cfIp` in the report confirms it (not `103.198.98.196`).
+
+**Pitfall M12 — `shadcn add` recreates `web/package-lock.json` and `web/node_modules`** (app-track Pitfall 1, seen again in 01-01). Delete them before the root `npm install`, then run `bash scripts/check-preset.sh`.
+
+### Environment Availability (media track)
+
+| Dependency | Required By | Available | Version | Fallback |
+|------------|------------|-----------|---------|----------|
+| Cloudflare account token with `Calls Write` | TURN key creation | ✓ | active, expires 2026-12-08 | — |
+| Cloudflare TURN key | credential minting | ✗ (none exist yet) | — | Created by `turn-key.sh` (Plan a) |
+| Outbound UDP 3478 / TCP 443, 5349 to Cloudflare | TURN from the box (headless smoke) | ✓ | srflx `103.198.98.x` | TURNS 443 (TCP) if UDP is ever blocked |
+| `rtc.live.cloudflare.com:443` from the box/container | mint endpoint | ✓ from host (container uses the default bridge, so outbound HTTPS is expected) | — | — |
+| Zone WebSockets (`brkn.me`) | `wss://duet.brkn.me/ws` | ✓ `on` | — | — |
+| Google Chrome (system) | headless 2-peer smoke | ✓ | 153.0.8010.52 at `/usr/bin/google-chrome` | Playwright browsers in `~/.cache/ms-playwright` (chromium-1243) |
+| Playwright | headless smoke | global `@playwright/test@1.62.1` ✓; project-local `playwright-core` ✗ | — | Add `playwright-core@1.62.1` (root devDep) |
+| Node (host, tests) | vitest, smoke scripts | ✓ | v22.23.1 (container: Node 24) | — |
+| Docker compose stack `duet` | deploy | ✓ `duet-duet-1` healthy, `duet-cloudflared-1` up | — | — |
+| Real iPhone + Pixel, cellular data | INFR-04 human UAT | human | — | Owner alone: one phone on cellular + laptop browser (rooms allow the same user twice) |
+
+**Missing with no fallback:** none. **Missing with fallback:** the TURN key and `playwright-core`, both created or installed by the plans.
+
+### Validation Architecture (media track)
+
+> `workflow.nyquist_validation` is `false` in config. The orchestrator asked for this subsection anyway. It **supersedes the INFR-03/INFR-04 and "SFU token" rows** in the historical Validation Architecture further down.
+
+#### Test Framework
+| Property | Value |
+|----------|-------|
+| Framework | Vitest 5.0.3 (server, `pool: "forks"`), `fastify.inject()` + `fastify.injectWS()`; `playwright-core` 1.62.1 + system Chrome for the 2-peer smoke |
+| Config file | `server/vitest.config.ts` (exists: `include: ["test/**/*.test.ts"]`, `testTimeout: 20_000`) |
+| Quick run command | `npm test -w server` |
+| Full suite command | `npm test -w server && npm run typecheck && NEXT_EXPORT=1 npm run build -w web && bash scripts/check-preset.sh && bash scripts/smoke-local.sh && SKIP_BUILD=1 bash scripts/smoke-call.sh` |
+
+#### Phase Requirements → Test Map
+| Req ID | Behavior | Test Type | Automated Command | File Exists? |
+|--------|----------|-----------|-------------------|-------------|
+| INFR-03 | Mint calls `…/keys/{id}/credentials/generate-ice-servers` with `Bearer` + `{ttl}`; returns iceServers with `:53` removed; 201/200 accepted; non-2xx, timeout or bad JSON → `turn_unavailable`; missing env → `turn_unconfigured` | unit (fake fetch) | `npx vitest run test/turn.test.ts` | ❌ Wave 0 |
+| INFR-03 | `POST /api/rtc/ice-servers`: 401 without session; 403 without Origin; 503 when unconfigured; 200 + `Cache-Control: no-store` + body matches `IceServersResponse`; 31st call/min → 429 | integration (inject) | `npx vitest run test/turn.test.ts` | ❌ Wave 0 |
+| INFR-03 | Real Cloudflare: key exists, a 60 s credential mints (201, has `turn:` URLs) | live smoke | `bash deploy/cloudflare/turn-key.sh` → `turn-key ok` | ❌ Wave 0 |
+| INFR-03/04 | `/ws`: no cookie → `Unexpected server response: 401`; bad Origin → 403; `hello` has connId; 2 sockets join `r1` → peer-joined/joined; `rtc.signal` reaches **only** the other member; 3rd join → `room.full`; bad JSON → `error bad_frame` and the socket stays open; close → `room.peer-left`; logout closes that session's sockets; WS connect does not renew the session (Pitfall M1) | integration (injectWS) | `npx vitest run test/ws.test.ts` | ❌ Wave 0 |
+| INFR-04 (mechanics) | Two headless Chrome contexts (fixture users alice/bob) on local duet with **real** TURN env open `/debug/call/?room=smoke-<ts>&relay=1`, click Start, both reach PASS with `localType=relay` and inbound bytes > 0 within 30 s | e2e (headless, real TURN) | `bash scripts/smoke-call.sh` → `smoke-call ok` | ❌ Wave 0 |
+| INFR-04 (public wiring) | Deployed `/ws` upgrade without cookie → 401 (not 404); `POST /api/rtc/ice-servers` without session → 401 | smoke | `bash scripts/smoke-public.sh` (extended) | ✅ exists, extend |
+| INFR-04 (gate) | Phone on cellular (Wi-Fi off) + second client: PASS in normal mode **and** forced-relay mode, on both clients | **manual UAT**, auto-reported | Run `/debug/call/` then `/debug/call/?relay=1`; Claude checks `docker compose logs duet \| grep call_smoke` for ≥ 4 PASS lines (2 per mode), with one `cfIp` ≠ `103.198.98.196` and `localType=relay` on both relay lines | — (human) |
+| UI lock | No lucide/Radix; switch/badge came from the CLI | static | `bash scripts/check-preset.sh` | ✅ exists |
+
+`smoke-call.sh` shape: reuse `smoke-local.sh` (temp `DATA_DIR`, seed 2 fixture users via `--stdin`, start the server on 127.0.0.1:31xx with `APP_ORIGIN=http://127.0.0.1:31xx COOKIE_SECURE=false`). Pass the two TURN vars extracted from `.env` with `sed -n 's/^CF_TURN_KEY_ID=//p'` (never echoed). Then run `node scripts/smoke-call.mjs "$BASE"`. The `.mjs` script:
+- launches `chromium.launch({ executablePath: process.env.CHROME ?? "/usr/bin/google-chrome", args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] })`;
+- creates 2 `newContext()`s, logs each in with `ctx.request.post("/api/login", { data, headers: { Origin: BASE } })` (context-shared cookies [ASSUMED]);
+- then `page.goto`, clicks Start, and `expect`s/polls the `data-testid` verdict on both pages.
+
+If `.env` has no TURN vars, it prints `smoke-call skipped (no TURN key)` and exits non-zero only in CI-like strict mode. Forced relay with **both** peers on the same host still hairpins through Cloudflare relay addresses (public IPv4), which Cloudflare permits (it only denies private ranges [CITED]). That this works end to end is [ASSUMED] until the first run.
+
+#### Sampling Rate
+- **Per task commit:** `npm test -w server`
+- **Per wave merge:** full suite command above (smoke-call needs the TURN key from Plan a)
+- **Phase gate:** full suite green + `smoke-public.sh` against the redeployed container + the human cellular UAT (both modes), with `call_smoke` lines in the logs, before `/gsd-verify-work`. The app-track device UAT from 01-03 (install, stay logged in, logout) can run in the same phone session.
+
+#### Wave 0 Gaps
+- [ ] `server/test/turn.test.ts`, `server/test/ws.test.ts` (extend `test/helpers.ts`: `buildApp(config, { fetch })` injection and a `loginCookie(app, user)` helper)
+- [ ] `scripts/smoke-call.sh` + `scripts/smoke-call.mjs`
+- [ ] `deploy/cloudflare/turn-key.sh`
+- [ ] Installs: `@fastify/websocket@11.3.3` (server), `playwright-core@1.62.1` (root dev), `shadcn add switch badge` (behind the package gate)
+
+### Security Domain (media track)
+
+`security_enforcement: true`, ASVS L1, block on high.
+
+| ASVS Category | Applies | Standard Control |
+|---------------|---------|-----------------|
+| V2 Authentication | yes (reuse) | No new auth. `/ws` and the credential/report endpoints reuse the `duet_session` check |
+| V3 Session Management | yes | `/ws` uses a non-renewing check (Pitfall M1). Logout closes that session's sockets |
+| V4 Access Control | yes | `requireUser` on `POST /api/rtc/ice-servers`, `POST /api/debug/call-report`, `GET /ws`. Signals relay only within a room the sender joined (≤ 2 members). No addressing of arbitrary connIds |
+| V5 Input Validation | yes | zod `ClientFrame` for every WS frame. SDP ≤ 64 KiB, candidate ≤ 2 KiB, `maxPayload` 128 KiB, RoomId regex. Report body zod with string caps |
+| V6 Cryptography | yes (delegated) | No hand-rolled crypto. TURN creds are minted by Cloudflare. Media is DTLS-SRTP end-to-end, and Cloudflare relays only encrypted packets [CITED: turn/faq] |
+| V12/V14 Config & secrets | yes | TURN bearer only in the gitignored `.env` (`.dockerignore` excludes `.env`, so it never enters the image). Account token stays on the host (`~/.config/duet`), never in the container. Scripts never echo secrets (header file, not argv) |
+| CSRF / CSWSH | yes | Origin guard covers `POST /api/rtc/*` and `/api/debug/*` automatically. Explicit Origin check on `/ws` |
+
+| Threat | STRIDE | Mitigation |
+|--------|--------|------------|
+| Outsider mints TURN creds and uses Cloudflare bandwidth on the owner's bill | Elevation / DoS (cost) | Login required. Rate limit 30/min/IP. TTL 24 h (max 48 h). Revocation endpoint available. Free tier is 1,000 GB/mo. Optional TURN usage check via the GraphQL analytics API (Phase 3) |
+| TURN key bearer leak | Info disclosure | Server-side only. Not logged. Rotate with `turn-key.sh` (create a new key, delete the old one) |
+| Cross-site WebSocket hijack | Spoofing | Origin check before the upgrade. `SameSite=Lax` cookie |
+| Signal injection into someone else's call | Tampering | Rooms capped at 2. Relay only to the room peer. Phase 3 binds rooms to the two user ids |
+| WS resource exhaustion | DoS | `maxPayload`, per-socket frame rate cap, heartbeat terminates dead sockets, rooms ≤ 2 |
+| IP address exposure to the peer (normal ICE) | Info disclosure | Accepted (two partners). Forced relay hides it if ever wanted |
+| Smoke report log contains client IP + UA | Privacy | Own server log, two users. Only the CF-Connecting-IP and UA (≤ 300 chars) |
+
+### Assumptions Log (media track)
+
+| # | Claim | Section | Risk if Wrong |
+|---|-------|---------|---------------|
+| MA1 | Live `generate-ice-servers` responses may include a `:53` URL (implied by the doc note, absent from the doc example) | API contract, M2 | None: the filter is a no-op if absent |
+| MA2 | `generate-ice-servers` accepts the same `ttl` semantics as `/generate`, and TURN keys don't expire on their own | API contract | Low: `turn-key.sh` re-verifies by minting. Re-run it if keys ever expire |
+| MA3 | TURN works on this account without adding a payment method (free tier usage) | API contract | Medium: key creation or mint could fail with a billing error. `turn-key.sh` surfaces Cloudflare's error. Then the user must enable billing (decision checkpoint) |
+| MA4 | Safari exposes `transport.selectedCandidatePairId`; `relayProtocol` is present on local candidates | M5 | Low: the fallback to `nominated` + `succeeded` pairs covers it. relayProtocol is informational |
+| MA5 | Forced relay with both peers on this one host connects through Cloudflare (relay ↔ relay hairpin) | Validation | Medium: if it doesn't, run smoke-call with one peer forced-relay and the other `all`. The gate still proves TURN allocation + media through Cloudflare |
+| MA6 | Playwright `context.request` shares cookies with the context's pages | Validation | Low: fall back to logging in through the UI, or `context.addCookies` from a curl login |
+| MA7 | The Cloudflare idle WebSocket timeout is ~100 s | M3, M8 | Low: a 25 s heartbeat is safe for any timeout above 30 s |
+| MA8 | Chrome↔Safari codec negotiation needs no preference tweaks; iOS stops capture when backgrounded | quirks | Low for Phase 1 (foreground UAT) |
+| MA9 | A typical video SDP is ≪ 64 KiB | M3 | Low: raise the caps if a real SDP is rejected (the test logs `bad_frame`) |
+| MA10 | ~0.9 GB/h per relayed client at ~2 Mbps, so the 1,000 GB free tier ≈ 500+ h/month of fully relayed video | Summary | Low: informational |
+
+### Open Questions (media track)
+
+1. **Does the Cloudflare account need billing enabled for TURN?**
+   - What we know: the token has the permissions, and the free tier exists.
+   - What's unclear: whether a payment method is a prerequisite.
+   - Recommendation: Plan (a) Task 1 runs `turn-key.sh`. If Cloudflare returns a billing error, stop at a `checkpoint:decision` for the user.
+2. **Harness entry point: a menu item vs. Safari-only.**
+   - Recommendation: a "Call test" item in the header menu (it makes the installed PWA testable). It is low-key, login-gated, and trivially removable in Phase 3. This is the planner's call, not a locked decision.
+3. **Second client for the cellular UAT.**
+   - Recommendation: whichever is at hand. The room model allows owner-phone + owner-laptop (the same account twice), so the test doesn't need both people present.
+
+### Suggested Plan Shape (media track; replaces the superseded 01-04/01-05)
+
+- **01-04 — TURN credentials (INFR-03)** (wave 4, parallel with 01-05's hub tasks):
+  1. Package gate (`checkpoint:human-verify`: @fastify/websocket 11.3.3, playwright-core 1.62.1, shadcn switch/badge).
+  2. `deploy/cloudflare/turn-key.sh`, run it (`turn-key ok`). On a billing error, a decision checkpoint.
+  3. `turn.ts` + `POST /api/rtc/ice-servers` + config/env + `turn.test.ts` (TDD).
+- **01-05 — Signaling + harness + proof (INFR-04)** (wave 4→5):
+  1. Non-renewing session check + `/ws` hub + `ws.test.ts` (TDD).
+  2. `web/lib/{ws,rtc/*}` + `/debug/call` UI + report endpoint + menu item.
+  3. `smoke-call.sh` headless forced-relay run with the real TURN key (`smoke-call ok`).
+  4. Redeploy (`docker compose up -d --build`) + extended `smoke-public.sh`.
+  5. `checkpoint:human-verify`: cellular UAT, both modes, plus the pending app-track device UAT. Claude confirms the `call_smoke` log lines.
+
+### Sources (media track)
+
+**Primary (HIGH):**
+- Cloudflare docs, fetched as markdown 2026-10-09:
+  - [Generate Credentials](https://developers.cloudflare.com/realtime/turn/generate-credentials/) (updated 2026-09-25)
+  - [TURN FAQ](https://developers.cloudflare.com/realtime/turn/faq/) (updated 2026-07-14)
+  - [Replacing existing TURN servers](https://developers.cloudflare.com/realtime/turn/replacing-existing/)
+  - [TURN overview](https://developers.cloudflare.com/realtime/turn/)
+  - [Realtime pricing](https://developers.cloudflare.com/realtime/pricing/)
+  - [API: create TURN key](https://developers.cloudflare.com/api/resources/calls/subresources/turn/methods/create/)
+  - [API: TURN key methods](https://developers.cloudflare.com/api/resources/calls/subresources/turn/)
+- [MDN: Perfect negotiation](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation); [MDN: RTCIceCandidatePairStats.selected](https://developer.mozilla.org/en-US/docs/Web/API/RTCIceCandidatePairStats/selected)
+- `@fastify/websocket@11.3.3` npm tarball: README (hooks, errorHandler, injectWS), `index.js` (injectWS implementation), `test/inject.test.js:133`. GitHub releases v11.3.0–v11.3.3
+- Executed this session:
+  - Cloudflare API: `turn_keys` list (empty), token verify plus policies (Calls Write, Realtime Admin; expires 2026-12-08), zone `websockets` = on
+  - `generate-ice-servers` with an unknown key → 404 JSON
+  - STUN UDP probe → srflx 103.198.98.x; TCP 443/5349 to turn.cloudflare.com
+  - Public `/ws` upgrade → 404
+  - Headless Chrome 153 + Playwright 1.62.1 fake-media loopback → bytes 178009, `transport.selectedCandidatePairId` → host
+  - `npx shadcn@4.21.4 view switch badge`
+  - `npm view` versions/dates; package-legitimacy seam
+- Repo files read this session: `server/src/{app,config,index}.ts`, `server/src/auth/{session,routes}.ts`, `server/src/http/guards.ts`, `server/test/helpers.ts`, `server/vitest.config.ts`, `server/package.json`, `web/{package.json,next.config.ts,components.json}`, `web/app/{page,layout}.tsx`, `web/components/app/{shell,sw-register}.tsx`, `web/lib/api.ts`, `web/public/sw.js`, `shared/src/{api,index}.ts`, `compose.yaml`, `Dockerfile`, `.dockerignore`, `.env.example`, `deploy/cloudflared/setup.sh`, `scripts/{smoke-local,check-preset}.sh`
+
+**Secondary (MEDIUM):**
+- [Cloudflare: using Cloudflare with WebSockets](https://developers.cloudflare.com/support/network/using-cloudflare-with-websockets/) (heartbeat advice). The ~100 s figure comes from [Cloudflare community](https://community.cloudflare.com/t/cloudflare-websocket-timeout/5865) and [websocket.org guide](https://websocket.org/guides/infrastructure/cloudflare/)
+- [WebKit bug 215884](https://bugs.webkit.org/show_bug.cgi?id=215884) (standalone PWA capture reset on navigation); [Apple forums 788518](https://developer.apple.com/forums/thread/788518) (repeated camera prompts)
+- [webrtcHacks: Guide to Safari WebRTC](https://webrtchacks.com/guide-to-safari-webrtc/) (playsinline, autoplay while capturing)
+
+**Valid until:** 2026-11-08 (Cloudflare Realtime docs change monthly; re-check the mint response shape on first run).
+
+---
 
 # Phase 1: Foundation, Auth & Media Plane - Research
 
@@ -53,8 +605,8 @@
 |----|-------------|------------------|
 | INFR-01 | duet reachable at an HTTPS URL on the new domain via Cloudflare Tunnel to this machine | §Cloudflare Tunnel for duet.brkn.me: a locally-managed named tunnel `duet` running as a compose service with `user: "1000:1000"`; CNAME created via the API, not `tunnel route dns` |
 | INFR-02 | App, SQLite, media in Docker on a persistent volume | §Container layout: `./data:/data` bind mount, uid 1000, WAL SQLite, migrate on boot; restart-persistence test |
-| INFR-03 | SFU + coturn on this machine, publicly reachable (DNS, port-forwards, non-CGNAT IPv4) | §Home SFU deployment (env, turnserver.conf, nginx-sni.conf, sfu0 sidecar, certs), §CGNAT check procedure, §Port-forward checklist |
-| INFR-04 | Smoke test proves `bytesReceived > 0` from a phone on cellular, direct and forced-relay | §Smoke harness design: an RTCPeerConnection wrapper forces relay **and** captures PCs for `inbound-rtp` stats; two sessions on one phone; results POSTed to the server log |
+| INFR-03 | *(historical — see Media Track section at the top)* SFU + coturn on this machine, publicly reachable (DNS, port-forwards, non-CGNAT IPv4) | §Home SFU deployment (env, turnserver.conf, nginx-sni.conf, sfu0 sidecar, certs), §CGNAT check procedure, §Port-forward checklist |
+| INFR-04 | *(historical — see Media Track section at the top)* Smoke test proves `bytesReceived > 0` from a phone on cellular, direct and forced-relay | §Smoke harness design: an RTCPeerConnection wrapper forces relay **and** captures PCs for `inbound-rtp` stats; two sessions on one phone; results POSTed to the server log |
 | AUTH-01 | Exactly two accounts from a seed script; no sign-up UI | §Seed script pattern (upsert by username, ≥12 chars, revoke sessions on reset); no register route exists |
 | AUTH-02 | Tap name + password login | §Login API + UI composition (Item/Avatar tiles → Field/Input/Button), argon2id defaults verified |
 | AUTH-03 | Long rolling session | §Session pattern: sha256-hashed opaque token, 90 d, **re-set the cookie on renewal**; iOS home-screen storage notes |
@@ -69,7 +621,7 @@
 - **Speed:** prefer the simplest thing that works; the phase must not drag on.
 - **Hosting:** self-hosted on this machine in Docker; DB and media on local disk.
 - **Platforms:** iPhone Safari PWA and Pixel Chrome PWA.
-- **Media plane:** use the SFU + coturn (now self-hosted at home); no P2P/mesh.
+- ~~**Media plane:** use the SFU + coturn (now self-hosted at home); no P2P/mesh.~~ **Superseded 2026-10-09 (D-16):** 1:1 P2P WebRTC + Cloudflare TURN; see Media Track section.
 - **Transport:** HTTPS/WSS everywhere.
 - **Stack (from the CLAUDE.md table):** Next static export (`output: 'export'`) served by **one** Fastify 5 process; better-sqlite3 + Drizzle 0.45 (not 1.0 rc); `@node-rs/argon2`; `@fastify/cookie`, `@fastify/rate-limit`, `@fastify/static`; zod 4 in `shared/`; `tsx` runtime; `node:24-bookworm-slim` (no Alpine); `typescript@^5` (not TS 7); mediasoup-client **exactly 3.20.0** via the SDK only; `jose` for HS256; never call the SFU admin API; **no Serwist**; no `next/image` loader; no Server Actions.
 - **Superseded by D-05:** the CLAUDE.md rows for TOTP, otplib, qrcode and input-otp. Do not install them.
@@ -435,7 +987,7 @@ secrets: { npm_token: { environment: NODE_AUTH_TOKEN } }
 # Dockerfile: RUN --mount=type=secret,id=npm_token NODE_AUTH_TOKEN="$(cat /run/secrets/npm_token)" npm ci
 ```
 
-### Pattern 7: Home SFU stack (INFR-03), separate compose project `duet-sfu`
+### Pattern 7 (historical — SFU, do not plan): Home SFU stack (INFR-03), separate compose project `duet-sfu`
 
 **Env (`ops/sfu/.env`).** The names are verbatim from `sfu.sideby.me/src/config.ts:74-91`:
 ```
@@ -573,7 +1125,7 @@ docker run --rm -v "$PWD/letsencrypt:/etc/letsencrypt" -v "$PWD/cloudflare.ini:/
 ```
 For renewal, add a weekly user crontab entry (no sudo): run `certbot renew` in the same container. If `fullchain.pem`'s sha256 changed, then `docker kill -s USR2 duet-sfu-coturn-1 && docker restart duet-sfu-sfu-1`. The repo's `--deploy-hook` approach can't work here, because the hook would run inside the certbot container, which has no docker access.
 
-### Pattern 8: Smoke harness `/debug/sfu` (INFR-04, D-12)
+### Pattern 8 (historical — superseded by Media Track Pattern M6): Smoke harness `/debug/sfu` (INFR-04, D-12)
 
 The token contract is verbatim from `rtc-types/src/token.ts:27-33`:
 ```
@@ -649,7 +1201,7 @@ Harness flow on **one phone** (on cellular, Wi-Fi off), mode chosen by `?relay=1
 
 Never use the SDK `networkQuality` bytes as the gate. It does `totals.bytesReceived += typeof report.bytesReceived === 'number' ? report.bytesReceived : 0;` over **every** stats report (`rtc/src/connect.ts:545`), which includes DTLS and transport bytes.
 
-### Anti-Patterns to Avoid
+### Anti-Patterns to Avoid (SFU/nginx/coturn items are historical)
 - **Wildcard `listen 443` in nginx-sni.** It fails next to Tailscale's `100.97.55.101:443`.
 - **No CPU limit on the SFU container.** You get 16 workers and 16 ports to forward.
 - **Using the repo's `turnserver.conf` "historical/0.0.0.0" forms.** coturn would own every host IP and refuse to relay to the SFU.
@@ -708,7 +1260,7 @@ Never use the SDK `networkQuality` bytes as the gate. It does `totals.bytesRecei
 **What goes wrong:** The build fails with "Only intrinsic elements are supported inside <svg>".
 **How to avoid:** Generate the icon PNGs offline (Pattern 5).
 
-### Pitfall 9: SFU worker/port explosion and bind conflicts
+### Pitfall 9 (historical — SFU era): SFU worker/port explosion and bind conflicts
 **What goes wrong:**
 - 16 workers on 16 ports.
 - nginx `listen 443` → EADDRINUSE.
@@ -716,19 +1268,19 @@ Never use the SDK `networkQuality` bytes as the gate. It does `totals.bytesRecei
 
 **How to avoid:** `cpus: 2`; listen on `192.168.0.132:443`; **DHCP reservation for 192.168.0.132 on the TP-Link** (user checklist item).
 
-### Pitfall 10: Relay leg needs the sfu0 dummy interface
+### Pitfall 10 (historical — SFU era): Relay leg needs the sfu0 dummy interface
 **What goes wrong:** coturn refuses to relay to its own listening IPs, so forced-relay media never flows (the README's documented failure).
 **How to avoid:** `MEDIASOUP_PRIVATE_IP=10.99.0.1` plus `allowed-peer-ip=10.99.0.1` plus the `relay-iface` sidecar. After a reboot the sidecar and the SFU start concurrently. If sfu0 isn't up yet, the SFU fails to bind and `restart: unless-stopped` retries until it is (self-healing).
 
-### Pitfall 11: Wrong gate metric
+### Pitfall 11 (historical — SFU era): Wrong gate metric
 **What goes wrong:** ICE reaches "connected" or the SDK's `networkQuality` bytes are > 0, yet no RTP flows. The README calls this the classic announcedAddress failure.
 **How to avoid:** Use only `inbound-rtp.bytesReceived` (Pattern 8).
 
-### Pitfall 12: Home Wi-Fi hairpin (Phase 3 risk; observe it now)
+### Pitfall 12 (historical — SFU era): Home Wi-Fi hairpin (Phase 3 risk; observe it now)
 **What goes wrong:** Phones on home Wi-Fi dial 103.198.98.196. Through double NAT without loopback, both the direct path and TURN fail.
 **How to avoid / detect:** After forwards are in place, run `curl -sv --resolve sfu.brkn.me:443:103.198.98.196 https://sfu.brkn.me/` **from the box**. A TLS handshake there means hairpin works. Record the result. If it fails, Phase 3 needs either an extra LAN listenInfo (SFU patch) or router NAT loopback. It is not a Phase 1 gate (cellular is).
 
-### Pitfall 13: PPPoE address changes
+### Pitfall 13 (historical — SFU era): PPPoE address changes
 **What goes wrong:** `MEDIASOUP_ANNOUNCED_IP`, coturn `external-ip` and the A records go stale after a reconnect.
 **How to avoid:** Ask whether the IP is static (Open Question 2). If it isn't, add `ops/sfu/scripts/ddns.sh`, run from cron every 5 min:
 1. Compare `curl -4 api.ipify.org` with `.env`.
@@ -736,7 +1288,7 @@ Never use the SDK `networkQuality` bytes as the gate. It does `totals.bytesRecei
 3. Re-render `.env` and `turnserver.conf`.
 4. `docker compose up -d --force-recreate sfu coturn`.
 
-### Pitfall 14: npm token handling
+### Pitfall 14 (historical — SFU era): npm token handling
 **Facts:**
 - The `.npmrc` `${NODE_AUTH_TOKEN}` line does **not** break unrelated installs when the variable is unset (verified with npm 10.9.8).
 - Adding `@sideby-me/rtc` to `package.json` **does** break `npm ci` without the token.
@@ -840,7 +1392,9 @@ The shell uses:
 **Missing dependencies with no fallback:** the GitHub `read:packages` token (ops track only); router access plus a non-CGNAT IP (ops track only).
 **Missing dependencies with fallback:** sudo (sidecar / router translation); the Cloudflare API token (manual dashboard steps).
 
-## Validation Architecture
+## Validation Architecture (app track; INFR-03/04 and SFU-token rows are historical)
+
+> **2026-10-09:** for INFR-03/INFR-04 use **Media Track → Validation Architecture** at the top of this file. The INFR-03, INFR-04 and "SFU token" rows below are SFU-era and must not be planned from. The app-track rows were executed by plans 01-01..01-03.
 
 > `workflow.nyquist_validation` is `false` in config, but the orchestrator explicitly requested this section.
 
@@ -884,7 +1438,7 @@ The shell uses:
 - [ ] `ops/sfu/scripts/check-local.sh`
 - [ ] Framework install: `npm i -w server -D vitest@5.0.3`
 
-## Security Domain
+## Security Domain (app track; SFU/coturn/token rows are historical — see Media Track → Security Domain)
 
 `security_enforcement: true`, ASVS level 1, block on high.
 
@@ -914,7 +1468,7 @@ The shell uses:
 | Home IP exposure via sfu./turn. A records | Info disclosure | Accepted (D-02); forward only the minimal port set |
 | Secret leakage in the image | Info disclosure | BuildKit secret mount (verified), never `ARG`; `.dockerignore` excludes `.env*`, `data/`, `ops/sfu/letsencrypt` |
 
-## Suggested Plan Shape (coarse, for the planner)
+## Suggested Plan Shape (historical — app-track items 1-3 were executed as 01-01..01-03; item 4 is SFU-era and replaced by Media Track → Suggested Plan Shape)
 1. **Scaffold + server skeleton** (wave 1): workspaces, preset init with the nested `.git`/lockfile removed, forced dark, icons, manifest, minimal SW, Fastify static + `/healthz`, Drizzle schema/migrate, Wave 0 test infra.
 2. **Auth + shell UI** (wave 2): seed script, login/me/logout, rate limit, Origin check, login tiles, password step, chat-shaped empty shell with a logout menu.
 3. **Docker + tunnel + device UAT** (wave 3): Dockerfile, compose with cloudflared, tunnel create, CNAME via API, smoke scripts, install on both phones (checkpoint).
