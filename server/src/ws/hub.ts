@@ -13,6 +13,8 @@ import type { AuthUser } from "../auth/session"
 
 /** Members per room: a call is 1:1. */
 const ROOM_CAPACITY = 2
+/** A visible presence counts as "viewing" only this long after the connection was last heard from. */
+const VIEWING_FRESH_MS = 45_000
 
 /**
  * In-memory signaling hub (D-16). It addresses connections, not users: one person may have several
@@ -28,7 +30,11 @@ export interface Hub {
    * accounts sharing one conversation, so a chat change goes to everyone (CHAT-01).
    */
   broadcast(frame: ServerFrame): void
-  /** RED stub (02-01 Task 2). */
+  /**
+   * D-15: true while this person has an open connection whose last presence frame said visible and
+   * which sent a frame or answered a ping less than VIEWING_FRESH_MS ago (a frozen iOS socket stops
+   * counting within 45 s). Push is suppressed for them while this holds.
+   */
   isViewing(userId: string, now?: number): boolean
   /** Stop the heartbeat and terminate every socket (app shutdown). */
   close(): void
@@ -43,6 +49,10 @@ interface Conn {
   closing: boolean
   windowStart: number
   frames: number
+  /** Last presence frame said the app is in the foreground (D-15). */
+  visible: boolean
+  /** Last inbound frame or pong (epoch ms). */
+  lastSeenAt: number
 }
 
 export interface HubOptions {
@@ -121,6 +131,7 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
     if (conn.closing) return
 
     const now = Date.now()
+    conn.lastSeenAt = now
     if (now - conn.windowStart >= 1000) {
       conn.windowStart = now
       conn.frames = 0
@@ -164,6 +175,12 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
         if (other) sendTo(other, { t: "rtc.signal", room: frame.room, from: connId, data: frame.data })
         return
       }
+      case "ping":
+        send(conn, { t: "pong" })
+        return
+      case "presence":
+        conn.visible = frame.visible
+        return
     }
   }
 
@@ -211,11 +228,14 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
         closing: false,
         windowStart: Date.now(),
         frames: 0,
+        visible: false,
+        lastSeenAt: Date.now(),
       }
       conns.set(connId, conn)
 
       socket.on("pong", () => {
         conn.alive = true
+        conn.lastSeenAt = Date.now()
       })
       // Errors after the upgrade bypass Fastify's error handler; ws closes the socket itself
       // (e.g. 1009 on an oversized message), so only the listener is needed to avoid a crash.
@@ -253,7 +273,12 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
       for (const conn of conns.values()) send(conn, frame)
     },
 
-    isViewing() {
+    isViewing(userId, now = Date.now()) {
+      for (const conn of conns.values()) {
+        if (conn.userId === userId && !conn.closing && conn.visible && now - conn.lastSeenAt < VIEWING_FRESH_MS) {
+          return true
+        }
+      }
       return false
     },
 

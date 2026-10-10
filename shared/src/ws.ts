@@ -46,6 +46,10 @@ export const ClientFrame = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("room.join"), room: RoomId }),
   z.strictObject({ t: z.literal("room.leave"), room: RoomId }),
   z.strictObject({ t: z.literal("rtc.signal"), room: RoomId, data: SignalData }),
+  /** App-level liveness check after a resume (Pitfall 8). The server answers { t: "pong" }. */
+  z.strictObject({ t: z.literal("ping") }),
+  /** Whether this client is in the foreground (D-15: no push while viewing). */
+  z.strictObject({ t: z.literal("presence"), visible: z.boolean() }),
 ])
 export type ClientFrame = z.infer<typeof ClientFrame>
 
@@ -67,6 +71,7 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("room.full"), room: RoomId }),
   z.object({ t: z.literal("rtc.signal"), room: RoomId, from: z.uuid(), data: SignalData }),
   z.object({ t: z.literal("error"), code: WsErrorCode }),
+  z.object({ t: z.literal("pong") }),
   /** A new or changed message (CHAT-01): the client inserts or replaces it by seq. */
   z.object({ t: z.literal("msg"), message: MessageDto }),
 ])

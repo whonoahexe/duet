@@ -32,15 +32,16 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   }, [onLoggedOut])
 
   useEffect(() => {
-    chatStore.init(me)
+    // A 401 from any chat request or a 4401 close: this device is logged out.
+    const sessionGone = () => {
+      stopRealtime()
+      chatStore.reset()
+      loggedOutRef.current()
+    }
+    chatStore.init(me, { onLoggedOut: sessionGone })
     if (!me.peer) return
     void chatStore.loadLatest()
-    startRealtime({
-      onLoggedOut: () => {
-        chatStore.reset()
-        loggedOutRef.current()
-      },
-    })
+    startRealtime({ onLoggedOut: sessionGone })
     return () => stopRealtime()
   }, [me])
 
@@ -68,6 +69,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
       if (me.peer) {
         startRealtime({
           onLoggedOut: () => {
+            stopRealtime()
             chatStore.reset()
             loggedOutRef.current()
           },

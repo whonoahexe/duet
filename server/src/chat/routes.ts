@@ -1,10 +1,17 @@
 import type { FastifyInstance } from "fastify"
-import { MessagesQuery, SendMessageBody, type MessagesPage, type SendMessageResponse } from "@duet/shared"
+import {
+  MessagesQuery,
+  SendMessageBody,
+  SyncQuery,
+  type MessagesPage,
+  type SendMessageResponse,
+  type SyncResponse,
+} from "@duet/shared"
 import { requireUser } from "../auth/session"
-import { ChatError, currentCursor, latestPage, readCursors, sendMessage, toDtos } from "./service"
+import { ChatError, currentCursor, latestPage, readCursors, sendMessage, syncSince, toDtos } from "./service"
 
 /**
- * Chat REST (CHAT-01, CHAT-02). Durable writes go over HTTP, then fan out over /ws (Pattern 1).
+ * Chat REST (CHAT-01, CHAT-02, CHAT-05). Durable writes go over HTTP, then fan out over /ws (Pattern 1).
  * Non-GET requests are already Origin-checked by the global originGuard. Logs carry evt names, ids,
  * seqs and counts only: never a message body (T-02-03). Reads are never cached (T-02-04).
  */
@@ -49,5 +56,15 @@ export async function chatRoutes(app: FastifyInstance) {
       reads: readCursors(app.db),
     }
     return page
+  })
+
+  /** Catch-up after a resume or reconnect: every message changed after the client's cursor. */
+  app.get("/api/sync", { preHandler: requireUser }, async (request, reply) => {
+    reply.header("Cache-Control", "no-store")
+    const parsed = SyncQuery.safeParse(request.query)
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_query" })
+    const { rows, hasMore, cursor } = syncSince(app.db, parsed.data.since)
+    const body: SyncResponse = { messages: toDtos(app.db, rows), reads: readCursors(app.db), cursor, hasMore }
+    return body
   })
 }

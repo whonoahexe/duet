@@ -1,5 +1,5 @@
-import { asc, desc, eq, inArray, lt, sql } from "drizzle-orm"
-import type { AttachmentDto, MessageDto, ReadCursor, SendMessageBody } from "@duet/shared"
+import { asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm"
+import { SYNC_MAX, type AttachmentDto, type MessageDto, type ReadCursor, type SendMessageBody } from "@duet/shared"
 import type { Db } from "../db/client"
 import { attachments, messages, reactions, readState } from "../db/schema"
 
@@ -165,6 +165,25 @@ export function latestPage(db: DbOrTx, { before, limit }: { before?: number; lim
     .all()
   const hasMore = rows.length > limit
   return { rows: rows.slice(0, limit).reverse(), hasMore }
+}
+
+/**
+ * Change feed (CHAT-05): messages with updated_seq > since, ascending by updated_seq, at most
+ * SYNC_MAX. cursor = where the next sync should start: the last returned updated_seq when more
+ * changes exist, otherwise the current max (which also resets a client cursor that is ahead).
+ */
+export function syncSince(db: DbOrTx, since: number) {
+  const rows = db
+    .select()
+    .from(messages)
+    .where(gt(messages.updatedSeq, since))
+    .orderBy(asc(messages.updatedSeq))
+    .limit(SYNC_MAX + 1)
+    .all()
+  const hasMore = rows.length > SYNC_MAX
+  const page = rows.slice(0, SYNC_MAX)
+  const cursor = hasMore ? page[page.length - 1].updatedSeq : currentCursor(db)
+  return { rows: page, hasMore, cursor }
 }
 
 /** Every person's read cursor (empty until someone has read something). */
