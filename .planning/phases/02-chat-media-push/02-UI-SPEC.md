@@ -1,7 +1,8 @@
 ---
 phase: "02"
 slug: "chat-media-push"
-status: draft
+status: approved
+reviewed_at: "2026-10-10"
 shadcn_initialized: true
 preset: "b51GFhBEQ"
 created: "2026-10-10"
@@ -98,7 +99,7 @@ Declared values (all multiples of 4, Tailwind units in brackets):
 | Token | Value | Usage |
 |-------|-------|-------|
 | xs | 4px (`1`) | Gap between consecutive bubbles in one sender group, gap between album grid tiles, icon-to-text gap inside the status line |
-| sm | 8px (`2`) | Gap between composer controls, gap inside the reaction row, quote-block inner padding, header avatar-to-name gap (`gap-3` from Phase 1 is kept as is) |
+| sm | 8px (`2`) | Gap between composer controls, gap inside the reaction row, quote-block inner padding, header avatar-to-name gap. **Exception:** the Phase 1 header keeps its `gap-3` (12px) unchanged, because it is inherited and not new Phase 2 spacing. |
 | md | 16px (`4`) | Message list horizontal padding (`px-4`), gap between sender groups, composer horizontal padding, drawer body padding |
 | lg | 24px (`6`) | Vertical space around day/time markers, onboarding card padding, onboarding step list gap |
 | xl | 32px (`8`) | Top padding above the first message and below the "beginning of conversation" marker |
@@ -239,6 +240,7 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
   - Top bar (`h-14`, safe-area top): close button (`XIcon`, ghost, `aria-label="Close viewer"`) on the left and the counter "2 / 5" (12px) in the center. The counter is hidden for single items.
   - Images use the display copy, `object-contain`, filling the viewport.
   - Videos use `<video controls playsInline preload="metadata" poster>` at `object-contain`. They do not autoplay.
+  - If an image or video fails to load in the viewer, that slide shows a centered `ImageBrokenIcon` (or `VideoCameraIcon`) with "Couldn't load" (14px, `text-muted-foreground`). Tapping it retries. The other slides and the counter are unaffected.
   - Swipe left/right moves between items. Closing uses the X button or Escape. Arrow keys work on desktop. The caption, if present, shows at the bottom (16px, `text-foreground`, max 3 lines, `bg-background/60`).
 
 ### 3. Voice notes (D-10..D-12)
@@ -374,7 +376,7 @@ Tone: short, plain, second person, no exclamation marks. Use the typographic ell
 
 ## UI Considerations
 
-Applicable state considerations resolved: 22 covered, 3 backstop, 0 unresolved.
+Applicable state considerations resolved: 26 covered, 3 backstop, 0 unresolved.
 
 | Category | Element(s) | Status | Resolution / Reason |
 |----------|------------|--------|---------------------|
@@ -399,6 +401,10 @@ Applicable state considerations resolved: 22 covered, 3 backstop, 0 unresolved.
 | empty | Album tile without a thumbnail (HEIC in Chrome preview) | ✅ covered | The preview falls back to an icon tile plus the file name |
 | loading | Voice note | ✅ covered | The play button shows `Spinner` until the audio can play |
 | error | Voice note | ✅ covered | A load failure shows `WarningCircleIcon` + "Couldn't load", and tapping retries |
+| error | Full-screen viewer slide | ✅ covered | A failed image or video load shows a centered icon + "Couldn't load" on that slide, and tapping retries |
+| error | Voice-note recorder (mic permission) | ✅ covered | Denied mic permission shows the "Mic permission denied" toast from the Copywriting Contract, and the composer returns to idle |
+| loading | Header connection state | ✅ covered | The subline shows "Connecting…" (WS down for more than 2 seconds) or "Offline", and is hidden when live |
+| loading | Typing indicator | ✅ covered | Three static or pulsing dots in a `muted` bubble. It hides 5 seconds after the last typing frame or when their message arrives |
 | error | Notifications card / drawer | ✅ covered | Denied permission shows the "Notifications are blocked" copy for the platform. A failed subscribe or test push shows its toast |
 | long-text | Voice-note duration over 1 hour | 🧪 backstop | Timer and duration render "1:00:00"-style without breaking the 288px bubble layout (`tabular-nums`, no wrap) |
 | overflow | Full-screen viewer with a 10-item mixed album | 🧪 backstop | Swiping through all 10 items works on iPhone and Pixel. The counter reads "n / 10", videos do not autoplay, and closing returns to the same scroll position |
@@ -418,12 +424,12 @@ No third-party registries are declared. Vetting gate: not applicable.
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
-- [ ] Dimension 7 Inventory Provenance: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS (FLAG on header `gap-3` resolved by declaring it an inherited exception)
+- [x] Dimension 6 Registry Safety: PASS
+- [x] Dimension 7 Inventory Provenance: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-10-10
