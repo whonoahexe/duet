@@ -11,7 +11,7 @@ Every finding starts as `open`. Change one to `fixed`, `accepted`, `deferred` or
 | ID | Severity | Finding | Disposition | Note |
 |----|----------|---------|-------------|------|
 | CR-01 | Critical | Origin (CSRF) guard bypassed by percent-encoding the path | fixed | 26c7cfa |
-| WR-01 | Warning | Login rate limit keyed only on (client IP, userId) can be bypassed by rotating IPs | fixed | c743038 — needs human check: per-account lockout trade-off |
+| WR-01 | Warning | Login rate limit keyed only on (client IP, userId) can be bypassed by rotating IPs | fixed | c743038 — owner accepted the per-account lockout trade-off as-is (2026-10-10 UAT test 31) |
 | WR-02 | Warning | Revoked or expired sessions keep their /ws sockets open indefinitely | fixed | 69d114d — needs human check |
 | WR-03 | Warning | APP_ORIGIN is not normalized, so a trailing slash, uppercase host or path locks out every POST and /ws | fixed | e859d42 |
 | IN-01 | Info | Unhandled 5xx errors echo internal error messages to the client | open | |
