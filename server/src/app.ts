@@ -9,7 +9,7 @@ import type { Config } from "./config"
 import { openDb, type Db } from "./db/client"
 import { authRoutes } from "./auth/routes"
 import { decorateAuth } from "./auth/session"
-import { originGuard, securityHeaders } from "./http/guards"
+import { isApiPath, originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
 import { rtcRoutes } from "./rtc/routes"
 import { createHub, type Hub } from "./ws/hub"
@@ -114,7 +114,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   }
 
   app.setNotFoundHandler((req, reply) => {
-    if (req.url === "/api" || req.url.startsWith("/api/") || req.url.startsWith("/api?")) {
+    if (isApiPath(req.url)) {
       return reply.code(404).send({ error: "not_found" })
     }
     if (hasStatic && existsSync(`${config.WEB_OUT}/404.html`)) {

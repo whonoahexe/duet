@@ -3,17 +3,32 @@ import type { Config } from "../config"
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
-function isApiUrl(url: string): boolean {
-  return url === "/api" || url.startsWith("/api/") || url.startsWith("/api?")
+/**
+ * True when the request path is /api or under /api/. Percent-decodes the path first, because the
+ * router decodes it before matching: classifying on the raw URL let `/%61pi/logout` skip a path check
+ * while still reaching the /api/logout handler (CR-01). An undecodable path is treated as API.
+ */
+export function isApiPath(url: string): boolean {
+  const q = url.indexOf("?")
+  const raw = q === -1 ? url : url.slice(0, q)
+  let path: string
+  try {
+    path = decodeURIComponent(raw)
+  } catch {
+    return true
+  }
+  return path === "/api" || path.startsWith("/api/")
 }
 
 /**
- * CSRF guard (T-01-08): every state-changing /api/* request must carry Origin === APP_ORIGIN.
- * A missing Origin is rejected too. Runs onRequest, before body parsing and any handler.
+ * CSRF guard (T-01-08): every state-changing request must carry Origin === APP_ORIGIN. A missing
+ * Origin is rejected too. It is deliberately not scoped by path: the server has no state-changing
+ * routes outside /api, and a path check can be dodged with percent-encoding (CR-01). Runs onRequest,
+ * before body parsing and any handler.
  */
 export function originGuard(config: Config): onRequestHookHandler {
   return function originGuardHook(request: FastifyRequest, reply: FastifyReply, done) {
-    if (!SAFE_METHODS.has(request.method) && isApiUrl(request.url) && request.headers.origin !== config.APP_ORIGIN) {
+    if (!SAFE_METHODS.has(request.method) && request.headers.origin !== config.APP_ORIGIN) {
       reply.code(403).send({ error: "bad_origin" })
       return
     }

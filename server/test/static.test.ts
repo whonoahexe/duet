@@ -104,3 +104,20 @@ describe("cache headers", () => {
     expect(res.headers["cache-control"]).toContain("immutable")
   })
 })
+
+describe("404 handling", () => {
+  it("an unknown non-API path gets the HTML 404 page", async () => {
+    const res = await app.inject({ method: "GET", url: "/nope-not-a-page" })
+    expect(res.statusCode).toBe(404)
+    expect(res.headers["content-type"]).toContain("text/html")
+  })
+
+  // CR-01: the router percent-decodes paths, so /%61pi/... is an /api path and gets the JSON 404.
+  for (const url of ["/api/nope", "/%61pi/nope", "/%61%70%69/nope?x=1"]) {
+    it(`${url} is the JSON 404, not the HTML one`, async () => {
+      const res = await app.inject({ method: "GET", url })
+      expect(res.statusCode).toBe(404)
+      expect(res.json()).toEqual({ error: "not_found" })
+    })
+  }
+})

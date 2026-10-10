@@ -163,4 +163,21 @@ describe("POST /api/logout", () => {
     expect(res.json()).toEqual({ error: "bad_origin" })
     expect(sessionRow(t.app, token)).toBeDefined()
   })
+
+  // CR-01: the router percent-decodes the path, so /%61pi/logout reaches the /api/logout handler.
+  // The Origin guard must not be dodged by that encoding.
+  for (const url of ["/%61pi/logout", "/%61%70%69/logout", "/api%2Flogout"]) {
+    it(`is 403 for ${url} with a foreign Origin, and the session survives`, async () => {
+      const token = await loginAs(t.app, "alice")
+      const res = await t.app.inject({
+        method: "POST",
+        url,
+        headers: { origin: "https://evil.example", cookie: `duet_session=${token}` },
+        payload: {},
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ error: "bad_origin" })
+      expect(sessionRow(t.app, token)).toBeDefined()
+    })
+  }
 })
