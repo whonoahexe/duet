@@ -28,6 +28,8 @@ export interface Hub {
    * accounts sharing one conversation, so a chat change goes to everyone (CHAT-01).
    */
   broadcast(frame: ServerFrame): void
+  /** RED stub (02-01 Task 2). */
+  isViewing(userId: string, now?: number): boolean
   /** Stop the heartbeat and terminate every socket (app shutdown). */
   close(): void
 }
@@ -249,6 +251,10 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
 
     broadcast(frame) {
       for (const conn of conns.values()) send(conn, frame)
+    },
+
+    isViewing() {
+      return false
     },
 
     close() {

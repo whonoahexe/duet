@@ -282,3 +282,133 @@ describe("privacy (T-02-03)", () => {
     expect(logLines.join("")).not.toContain(secret)
   })
 })
+
+describe("GET /api/sync (CHAT-05 change cursor)", () => {
+  let fresh: TestApp
+  let cookie: string
+
+  beforeAll(async () => {
+    fresh = await makeTestApp({ seed: true })
+    cookie = await loginCookie(fresh.app, "alice")
+  })
+  afterAll(async () => {
+    await fresh.close()
+  })
+
+  function sync(query: string, c: string | null = cookie) {
+    return fresh.app.inject({ method: "GET", url: `/api/sync?${query}`, headers: c ? { cookie: c } : {} })
+  }
+
+  it("returns the messages changed after the cursor, ascending by updatedSeq", async () => {
+    const ids: string[] = []
+    for (let i = 1; i <= 3; i++) {
+      const id = randomUUID()
+      ids.push(id)
+      const res = await send(cookie, { id, body: `s${i}` }, TEST_ORIGIN, fresh.app)
+      expect(res.statusCode).toBe(200)
+    }
+    const res = await sync("since=1")
+    expect(res.statusCode).toBe(200)
+    expect(res.headers["cache-control"]).toBe("no-store")
+    const body = res.json()
+    expect(body.messages.map((m: { id: string }) => m.id)).toEqual(ids.slice(1))
+    expect(body.messages.map((m: { updatedSeq: number }) => m.updatedSeq)).toEqual([2, 3])
+    expect(body.cursor).toBe(3)
+    expect(body.hasMore).toBe(false)
+    expect(body.reads).toEqual([])
+  })
+
+  it("returns nothing new at the current cursor", async () => {
+    const body = (await sync("since=3")).json()
+    expect(body).toEqual({ messages: [], reads: [], cursor: 3, hasMore: false })
+  })
+
+  it("caps a delta at SYNC_MAX (500) and sets hasMore", async () => {
+    for (let i = 4; i <= 501; i++) {
+      const res = await send(cookie, { id: randomUUID(), body: `s${i}` }, TEST_ORIGIN, fresh.app)
+      expect(res.statusCode).toBe(200)
+    }
+    const body = (await sync("since=0")).json()
+    expect(body.messages).toHaveLength(500)
+    expect(body.hasMore).toBe(true)
+    const seqs = body.messages.map((m: { updatedSeq: number }) => m.updatedSeq)
+    expect(seqs).toEqual([...seqs].sort((a: number, b: number) => a - b))
+    // Resuming from the returned cursor yields the rest.
+    const rest = (await sync(`since=${body.cursor}`)).json()
+    expect(rest.messages).toHaveLength(1)
+    expect(rest.hasMore).toBe(false)
+    expect(rest.cursor).toBe(501)
+  })
+
+  it("rejects a negative or missing cursor with 400 and answers 401 without a session", async () => {
+    expect((await sync("since=-1")).statusCode).toBe(400)
+    expect((await sync("since=abc")).statusCode).toBe(400)
+    expect((await sync("")).statusCode).toBe(400)
+    expect((await sync("since=0", null)).statusCode).toBe(401)
+  })
+})
+
+describe("/ws ping and presence (D-15, Pitfall 8)", () => {
+  let fresh: TestApp
+  let cookie: string
+  let id: string
+
+  beforeAll(async () => {
+    fresh = await makeTestApp({ seed: true })
+    cookie = await loginCookie(fresh.app, "alice")
+    id = fresh.app.db.select({ id: users.id }).from(users).where(eq(users.username, "alice")).get()!.id
+  })
+  afterAll(async () => {
+    await fresh.close()
+  })
+
+  async function connectFresh(): Promise<WsTestClient> {
+    const c = await openWs(fresh.app, cookie, TEST_ORIGIN)
+    expect((await c.next()).t).toBe("hello")
+    return c
+  }
+
+  /** Round-trip a ping so every earlier frame has been processed. */
+  async function settle(c: WsTestClient) {
+    c.send({ t: "ping" })
+    expect(await c.next()).toEqual({ t: "pong" })
+  }
+
+  it("answers ping with pong", async () => {
+    const c = await connectFresh()
+    c.send({ t: "ping" })
+    expect(await c.next()).toEqual({ t: "pong" })
+    c.ws.terminate()
+  })
+
+  it("tracks presence: visible makes isViewing true, hidden makes it false", async () => {
+    const c = await connectFresh()
+    expect(fresh.app.hub.isViewing(id)).toBe(false)
+    c.send({ t: "presence", visible: true })
+    await settle(c)
+    expect(fresh.app.hub.isViewing(id)).toBe(true)
+    c.send({ t: "presence", visible: false })
+    await settle(c)
+    expect(fresh.app.hub.isViewing(id)).toBe(false)
+    c.ws.terminate()
+  })
+
+  it("expires a visible presence after 45 s without frames", async () => {
+    const c = await connectFresh()
+    c.send({ t: "presence", visible: true })
+    await settle(c)
+    const now = Date.now()
+    expect(fresh.app.hub.isViewing(id, now)).toBe(true)
+    expect(fresh.app.hub.isViewing(id, now + 46_000)).toBe(false)
+    c.ws.terminate()
+  })
+
+  it("rejects an unknown key on presence with error bad_frame", async () => {
+    const c = await connectFresh()
+    c.send({ t: "presence", visible: true, extra: 1 })
+    expect(await c.next()).toEqual({ t: "error", code: "bad_frame" })
+    c.send({ t: "ping", extra: 1 })
+    expect(await c.next()).toEqual({ t: "error", code: "bad_frame" })
+    c.ws.terminate()
+  })
+})

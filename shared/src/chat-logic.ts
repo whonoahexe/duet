@@ -14,3 +14,36 @@ export function codePointLength(s: string): number {
 export function isBlankBody(s: string): boolean {
   return s.trim().length === 0
 }
+
+// --- RED stubs (02-01 Task 2): signatures only, replaced by the implementation in the next commit.
+import type { AttachmentKind, MessageDto } from "./chat"
+
+export function mediaLabel(_kinds: AttachmentKind[], _opts: { emoji: boolean }): string {
+  return ""
+}
+
+export function messageLabel(_m: Pick<MessageDto, "kind" | "body" | "attachments">): string {
+  return ""
+}
+
+export function truncateGraphemes(s: string, _max: number): string {
+  return s
+}
+
+export function mergeMessages(list: MessageDto[], _incoming: MessageDto[], _oldestSeq: number | null): MessageDto[] {
+  return list
+}
+
+export interface OutboxEntryState {
+  attempts: number
+  state: "sending" | "failed"
+}
+
+export type OutboxOutcome =
+  | { kind: "ok" }
+  | { kind: "network"; connected: boolean }
+  | { kind: "http"; status: number; connected: boolean }
+
+export function nextOutboxState<T extends OutboxEntryState>(entry: T, _outcome: OutboxOutcome): T | null {
+  return entry
+}
