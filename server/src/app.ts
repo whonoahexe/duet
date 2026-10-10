@@ -12,6 +12,8 @@ import { decorateAuth, isSessionLive } from "./auth/session"
 import { isApiPath, originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
 import { rtcRoutes } from "./rtc/routes"
+import { chatRoutes } from "./chat/routes"
+import { createChatEvents, type ChatEvents } from "./chat/events"
 import { createHub, type Hub } from "./ws/hub"
 import { wsRoutes } from "./ws/routes"
 
@@ -21,6 +23,8 @@ declare module "fastify" {
     config: Config
     /** In-memory /ws signaling hub. */
     hub: Hub
+    /** "A new message was stored" seam (push subscribes in plan 02-03). */
+    chatEvents: ChatEvents
   }
 }
 
@@ -85,11 +89,14 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     hub.close()
   })
 
+  app.decorate("chatEvents", createChatEvents(app.log))
+
   app.get("/healthz", async () => ({ ok: true }))
 
   await app.register(usersRoutes)
   await app.register(authRoutes)
   await app.register(rtcRoutes, { fetch: deps.fetch ?? globalThis.fetch, timeoutMs: deps.turnTimeoutMs ?? 5000 })
+  await app.register(chatRoutes)
   await app.register(wsRoutes)
 
   // One line at boot so a deploy without TURN is visible in the logs (never the key id or bearer).

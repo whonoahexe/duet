@@ -23,6 +23,11 @@ export interface Hub {
   attach(socket: WebSocket, user: AuthUser, sessionId: string): void
   /** Close every socket of this session with WS_CLOSE_LOGGED_OUT. Returns how many were closed. */
   closeSession(sessionId: string): number
+  /**
+   * Send one frame to every open connection (both people, every device). There are exactly two
+   * accounts sharing one conversation, so a chat change goes to everyone (CHAT-01).
+   */
+  broadcast(frame: ServerFrame): void
   /** Stop the heartbeat and terminate every socket (app shutdown). */
   close(): void
 }
@@ -240,6 +245,10 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
         count += 1
       }
       return count
+    },
+
+    broadcast(frame) {
+      for (const conn of conns.values()) send(conn, frame)
     },
 
     close() {

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { MessageDto } from "./chat"
 
 /**
  * /ws signaling protocol (D-16: offer/answer/ICE ride duet's own WebSocket).
@@ -66,5 +67,7 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("room.full"), room: RoomId }),
   z.object({ t: z.literal("rtc.signal"), room: RoomId, from: z.uuid(), data: SignalData }),
   z.object({ t: z.literal("error"), code: WsErrorCode }),
+  /** A new or changed message (CHAT-01): the client inserts or replaces it by seq. */
+  z.object({ t: z.literal("msg"), message: MessageDto }),
 ])
 export type ServerFrame = z.infer<typeof ServerFrame>
