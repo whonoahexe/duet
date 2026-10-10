@@ -151,7 +151,7 @@ Preset dark tokens, converted from OKLCH in `web/app/globals.css` `.dark`. Use t
 
 Accent (`--primary`, solid) is reserved for:
 1. The composer Send button (`InputGroupButton` with `variant="default"`) and the mic button while it is recording or locked.
-2. The primary button in the media preview drawer ("Send").
+2. The primary button in the media preview drawer (count-aware "Send photo" / "Send 3 photos", etc.).
 3. The primary button on the "Turn on notifications" card ("Enable notifications").
 4. The voice-note play/pause button (`Button variant="default"` round, `size-11`).
 5. The 2px left bar of a quote block, both inside a reply bubble and in the "Replying to" chip above the composer (`border-l-2 border-primary`).
@@ -175,6 +175,8 @@ Waveform colors: played bars `bg-foreground` (fill `currentColor` with `text-for
 ### 1. Chat screen (extends the Phase 1 `Shell`)
 
 Structure, top to bottom: header (Phase 1) → optional notifications card → `MessageScroller` (flex-1) → reply chip (only while replying) → composer.
+
+**Primary anchor:** the newest message at the bottom of the list, just above the composer. The list opens scrolled to it, and it is where the eye lands. The composer is secondary: it is always present but quiet (muted input surface, ghost attach and mic buttons). Accent appears in the composer only once there is something to send (the Send button) or while recording. The header is tertiary (`border-b`, 14px name, no accent).
 
 **Header (Phase 1 D-11, extended)**
 - Avatar + peer name, as in Phase 1. Under the name, a 12px `text-muted-foreground` subline appears only while the connection is not live: "Connecting…" (WS down for more than 2 seconds) or "Offline" (`navigator.onLine === false`). It is hidden when connected. The header stays `h-14`: name and subline stack in a `flex-col`.
@@ -215,10 +217,11 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
 - **Attach** opens the hidden `<input type="file" accept="image/*,video/*" multiple>`. The OS picker provides Take Photo/Video, Photo Library and Files. There are no other buttons.
 - **Preview drawer (D-06):** `Drawer` with a swipe handle, about 85dvh tall.
   - `DrawerTitle` = count label: "1 photo", "1 video", "3 photos", "2 videos", or "4 items" (mixed).
-  - Body: one item → a large preview (`object-contain`, max 60dvh, `rounded-3xl`). Several items → an `AttachmentGroup` of `Attachment orientation="vertical"` thumbnails (`AttachmentMedia variant="image"`, video thumbnails overlaid with `VideoCameraIcon` + duration). Each has an `AttachmentAction` `XIcon` with `aria-label="Remove"`. Removing the last item closes the drawer.
+  - Body: one item → a large preview (`object-contain`, max 60dvh, `rounded-3xl`). Several items → an `AttachmentGroup` of `Attachment orientation="vertical"` thumbnails (`AttachmentMedia variant="image"`, video thumbnails overlaid with `VideoCameraIcon` + duration). Each has an `AttachmentAction` `XIcon` with `aria-label="Remove item"`. Removing the last item closes the drawer.
   - If a thumbnail cannot render (for example HEIC in Chrome), use `AttachmentMedia variant="icon"` with `ImageIcon`/`VideoCameraIcon` and the file name in `AttachmentTitle`.
   - Caption: `Textarea` with placeholder "Add a caption…", 16px, 1–4 lines.
-  - `DrawerFooter`: "Send" (`variant="default"`, full width, `size="lg"`) above "Cancel" (`variant="ghost"`). Swiping the drawer down or tapping Cancel discards the selection with no confirmation (nothing was sent).
+  - `DrawerFooter`: the primary send button (`variant="default"`, full width, `size="lg"`) above the "Discard selection" button (`variant="ghost"`, full width). The primary label counts the items and uses the same nouns as the title: "Send photo", "Send video", "Send 3 photos", "Send 2 videos", "Send 4 items" (mixed). It updates live as items are removed. "Discard selection" is the Cancel action from D-06 under a specific label. Swiping the drawer down or tapping "Discard selection" discards the selection with no confirmation (nothing was sent).
+  - **Primary anchor:** the preview itself (the large single preview, or the thumbnail strip), with the full-width accent send button as the one action that draws the eye. The caption field and "Discard selection" are visually secondary (ghost).
   - Limits are checked on pick, before the drawer opens: more than 10 items → keep the first 10 and show a toast. A video over 200 MB or over 3 minutes is removed from the selection and a toast is shown. If nothing is left, the drawer does not open.
 - **Album bubble (D-07):** `Bubble variant="ghost"` (no padding), `w-72` (288px, capped at 80%), `rounded-3xl overflow-hidden`. The grid uses a 4px gap:
   - 1 item: natural aspect ratio clamped between 3:4 and 4:3, full width.
@@ -233,7 +236,7 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
 - **Video processing (D-08):** after upload, video tiles show a muted surface with `Spinner` + "Processing…" (12px) until the server's ready event delivers the poster. The recipient receives the message once the upload completes and sees the same processing tile. Images show as soon as the display copy exists.
 - **Failures:** if an upload fails, the message becomes failed ("Not sent. Tap to retry."; retry re-uploads only the items that failed). If a transcode fails, the tile shows `VideoCameraIcon` + "Couldn't process this video" (12px, `text-destructive`) to both people. If an image fails to load, the tile shows `ImageBrokenIcon` + "Couldn't load", and tapping it retries the load.
 - **Full-screen viewer (MDIA-02):** `Dialog` styled full-screen (`fixed inset-0 max-w-none rounded-none bg-background p-0`) with a `Carousel` covering the album's items.
-  - Top bar (`h-14`, safe-area top): close button (`XIcon`, ghost, `aria-label="Close"`) on the left and the counter "2 / 5" (12px) in the center. The counter is hidden for single items.
+  - Top bar (`h-14`, safe-area top): close button (`XIcon`, ghost, `aria-label="Close viewer"`) on the left and the counter "2 / 5" (12px) in the center. The counter is hidden for single items.
   - Images use the display copy, `object-contain`, filling the viewport.
   - Videos use `<video controls playsInline preload="metadata" poster>` at `object-contain`. They do not autoplay.
   - Swipe left/right moves between items. Closing uses the X button or Escape. Arrow keys work on desktop. The caption, if present, shows at the bottom (16px, `text-foreground`, max 3 lines, `bg-background/60`).
@@ -257,6 +260,7 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
 ### 4. Add to Home Screen guide (SHEL-03, D-16)
 
 - **Shown when:** iOS Safari, not standalone (`!navigator.standalone && !matchMedia('(display-mode: standalone)').matches`), and not dismissed in this browser session. It is shown **before** the login tiles, because an iOS home-screen app has storage separate from Safari: logging in first in Safari would be wasted.
+- **Primary anchor:** the 20px heading "Add duet to your Home Screen" followed directly by step 1 (the Share button step). These are the first things read and the first thing to do. The wordmark sits above at its Phase 1 size, and the skip button is ghost at the bottom, so neither competes with them.
 - **Layout:** a full-screen page (`min-h-dvh`, `py-16` plus safe areas, `px-6`, `max-w-sm` centered).
   - The "duet" wordmark as on the login screen (unchanged from Phase 1), then the 20px heading and a 16px muted body. 48px below them, the steps.
   - Steps: three `Item`s in an `ItemGroup` with 24px gaps, each with `ItemMedia variant="icon"` (`ExportIcon`, `PlusSquareIcon`, `DeviceMobileIcon`), an `ItemTitle` (14px medium) and an `ItemDescription`.
@@ -267,9 +271,10 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
 
 - **Shown when:** running standalone on either phone, and the device has no saved push subscription or permission is not `granted`. It sits pinned between the header and the message list, in `px-4 pt-4`.
 - It cannot be dismissed while notifications are off (D-16, "stays until done").
+- **Primary anchor:** the accent "Enable notifications" button, the only solid accent control on screen while the card is shown. Icon, title and body support it. After success the anchor moves to "Send test notification" (outline), and "Hide card" stays ghost.
 - **Card content:** `CardHeader` with `BellRingingIcon` + `CardTitle` + `CardDescription`, and `CardFooter` with the primary button "Enable notifications".
   - Tap → `Notification.requestPermission()` → subscribe → save. While this runs, the button shows a `Spinner` and is disabled.
-- **After success**, in the same card for this session: title "Notifications are on", plus "Send test notification" (`variant="outline"`) and "Done" (`variant="ghost"`, hides the card).
+- **After success**, in the same card for this session: title "Notifications are on", plus "Send test notification" (`variant="outline"`) and "Hide card" (`variant="ghost"`, hides the card).
   - The test button calls the server. Toast on success, toast on error.
 - **Denied:** the title "Notifications are blocked" with platform-specific instructions (see Copywriting). No button, because the permission cannot be requested again from the page.
 
@@ -296,7 +301,11 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
 
 | Element | Copy |
 |---------|------|
-| Primary CTA | Composer: "Send" (`aria-label="Send message"`). Preview drawer: "Send". Voice-note locked mode: `aria-label="Send voice note"` |
+| Primary CTA | Composer: icon-only Send button, `aria-label="Send message"`. Preview drawer: "Send photo" / "Send video" / "Send {n} photos" / "Send {n} videos" / "Send {n} items". Voice-note locked mode: `aria-label="Send voice note"` |
+| Preview drawer secondary | Discard selection |
+| Preview item remove (screen reader) | Remove item |
+| Viewer close (screen reader) | Close viewer |
+| Reply chip close (screen reader) | Cancel reply |
 | Composer placeholder | Message {peer} |
 | Caption placeholder | Add a caption… |
 | Empty state heading | No messages yet |
@@ -336,6 +345,7 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
 | Notifications card body (off) | Get a notification when {peer} messages you while duet is closed. |
 | Notifications CTA | Enable notifications |
 | Notifications card title (on) | Notifications are on |
+| Notifications card dismiss (after success) | Hide card |
 | Test push button | Send test notification |
 | Test push sent toast | Test sent. It should arrive in a few seconds. |
 | Test push failed toast | Couldn't send the test. Check your connection and try again. |
