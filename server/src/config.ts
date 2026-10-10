@@ -7,6 +7,26 @@ export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url
 
 const boolFromEnv = z.enum(["true", "false"]).transform((v) => v === "true")
 
+/** http(s) scheme, a host, and nothing else (a lone trailing slash is allowed and normalized away). */
+function isBareOrigin(value: string): boolean {
+  let u: URL
+  try {
+    u = new URL(value)
+  } catch {
+    return false
+  }
+  return (
+    (u.protocol === "https:" || u.protocol === "http:") &&
+    u.username === "" &&
+    u.password === "" &&
+    u.pathname === "/" &&
+    u.search === "" &&
+    u.hash === "" &&
+    !value.endsWith("?") &&
+    !value.endsWith("#")
+  )
+}
+
 const EnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -14,7 +34,9 @@ const EnvSchema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(3100),
     DATA_DIR: z.string().min(1).default(path.join(REPO_ROOT, "data")),
     WEB_OUT: z.string().min(1).default(path.join(REPO_ROOT, "web", "out")),
-    // D-03: the public origin only ever comes from env; no domain is hard-coded.
+    // D-03: the public origin only ever comes from env; no domain is hard-coded. It is compared
+    // verbatim with the browser's Origin header, so it must be a bare origin (checked below) and is
+    // normalized to the browser's serialization: lowercase host, no trailing slash (WR-03).
     APP_ORIGIN: z.url().optional(),
     COOKIE_SECURE: boolFromEnv.optional(),
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
@@ -30,6 +52,13 @@ const EnvSchema = z
     if (env.NODE_ENV === "production" && !env.APP_ORIGIN) {
       ctx.addIssue({ code: "custom", path: ["APP_ORIGIN"], message: "APP_ORIGIN is required when NODE_ENV=production" })
     }
+    if (env.APP_ORIGIN && !isBareOrigin(env.APP_ORIGIN)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["APP_ORIGIN"],
+        message: "APP_ORIGIN must be a bare http(s) origin like https://duet.example.com (no path, query or credentials)",
+      })
+    }
     if (Boolean(env.CF_TURN_KEY_ID) !== Boolean(env.CF_TURN_KEY_API_TOKEN)) {
       ctx.addIssue({
         code: "custom",
@@ -42,7 +71,7 @@ const EnvSchema = z
     ...env,
     DATA_DIR: path.resolve(env.DATA_DIR),
     WEB_OUT: path.resolve(env.WEB_OUT),
-    APP_ORIGIN: env.APP_ORIGIN ?? "http://localhost:3000",
+    APP_ORIGIN: new URL(env.APP_ORIGIN ?? "http://localhost:3000").origin,
     COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === "production",
   }))
 

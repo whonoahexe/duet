@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { FastifyInstance } from "fastify"
 import { eq } from "drizzle-orm"
 import { buildApp } from "../src/app"
+import { ConfigError } from "../src/config"
 import { users } from "../src/db/schema"
 import { seedUsers } from "../src/db/seed"
 import { ipBucket, LOGIN_ACCOUNT_MAX_FAILURES } from "../src/auth/routes"
@@ -301,6 +302,49 @@ describe("login rate limit across IPs (WR-01)", () => {
         const res = await login(own.app, { userId: alice, password: TEST_USERS.alice.password })
         expect(res.statusCode).toBe(200)
       }
+    } finally {
+      await own.close()
+    }
+  })
+})
+
+describe("APP_ORIGIN normalization (WR-03)", () => {
+  const dir = makeDataDir()
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+  for (const [raw, normalized] of [
+    ["https://duet.example.com", "https://duet.example.com"],
+    ["https://duet.example.com/", "https://duet.example.com"],
+    ["https://Duet.Example.COM", "https://duet.example.com"],
+    ["HTTPS://duet.example.com:443/", "https://duet.example.com"],
+    ["http://localhost:3000/", "http://localhost:3000"],
+  ] as const) {
+    it(`normalizes ${raw} to ${normalized}`, () => {
+      expect(testConfig(dir, { APP_ORIGIN: raw }).APP_ORIGIN).toBe(normalized)
+    })
+  }
+
+  for (const raw of [
+    "https://duet.example.com/app",
+    "https://duet.example.com/?x=1",
+    "https://duet.example.com/#frag",
+    "https://user:pw@duet.example.com",
+    "ftp://duet.example.com",
+  ]) {
+    it(`rejects ${raw} at boot`, () => {
+      expect(() => testConfig(dir, { APP_ORIGIN: raw })).toThrow(ConfigError)
+    })
+  }
+
+  it("a trailing-slash, mixed-case APP_ORIGIN still accepts the browser's Origin", async () => {
+    const own = await makeTestApp({ seed: true, env: { APP_ORIGIN: "https://Duet.Example.com/" } })
+    try {
+      const res = await login(
+        own.app,
+        { userId: userId(own.app, "alice"), password: TEST_USERS.alice.password },
+        { origin: "https://duet.example.com" },
+      )
+      expect(res.statusCode).toBe(200)
     } finally {
       await own.close()
     }
