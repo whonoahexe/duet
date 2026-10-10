@@ -8,7 +8,7 @@ import { WS_MAX_PAYLOAD } from "@duet/shared"
 import type { Config } from "./config"
 import { openDb, type Db } from "./db/client"
 import { authRoutes } from "./auth/routes"
-import { decorateAuth } from "./auth/session"
+import { decorateAuth, isSessionLive } from "./auth/session"
 import { isApiPath, originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
 import { rtcRoutes } from "./rtc/routes"
@@ -75,7 +75,11 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   await app.register(fastifyRateLimit, { global: false })
   // Must be registered before any route. maxPayload: larger messages close the socket with 1009.
   await app.register(fastifyWebsocket, { options: { maxPayload: WS_MAX_PAYLOAD } })
-  const hub = createHub({ log: app.log, heartbeatMs: deps.heartbeatMs ?? 25_000 })
+  const hub = createHub({
+    log: app.log,
+    heartbeatMs: deps.heartbeatMs ?? 25_000,
+    isSessionLive: (sessionId) => isSessionLive(db, sessionId),
+  })
   app.decorate("hub", hub)
   app.addHook("onClose", async () => {
     hub.close()

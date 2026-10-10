@@ -317,6 +317,47 @@ describe("heartbeat", () => {
       await hb.close()
     }
   })
+
+  // WR-02: a session revoked out of process (seed CLI password reset deletes the rows) or past its
+  // expiry must not keep its socket. The heartbeat re-checks the session and closes with 4401.
+  it("closes a socket with 4401 once its session row is deleted, and leaves other sessions open", async () => {
+    const hb = await makeTestApp({ seed: true, heartbeatMs: 50 })
+    try {
+      const aliceC = await loginCookie(hb.app, "alice")
+      const bobC = await loginCookie(hb.app, "bob")
+      const a = await openWs(hb.app, aliceC, TEST_ORIGIN)
+      const b = await openWs(hb.app, bobC, TEST_ORIGIN)
+      expect((await a.next()).t).toBe("hello")
+      expect((await b.next()).t).toBe("hello")
+
+      hb.app.db.delete(sessions).where(eq(sessions.id, hashToken(tokenOf(aliceC)))).run()
+      expect(await a.closed).toEqual({ code: 4401 })
+
+      await new Promise((r) => setTimeout(r, 150))
+      expect(b.ws.readyState).toBe(b.ws.OPEN)
+      b.ws.terminate()
+    } finally {
+      await hb.close()
+    }
+  })
+
+  it("closes a socket with 4401 once its session has expired", async () => {
+    const hb = await makeTestApp({ seed: true, heartbeatMs: 50 })
+    try {
+      const cookie = await loginCookie(hb.app, "alice")
+      const c = await openWs(hb.app, cookie, TEST_ORIGIN)
+      expect((await c.next()).t).toBe("hello")
+
+      hb.app.db
+        .update(sessions)
+        .set({ expiresAt: new Date(Date.now() - 1000) })
+        .where(eq(sessions.id, hashToken(tokenOf(cookie))))
+        .run()
+      expect(await c.closed).toEqual({ code: 4401 })
+    } finally {
+      await hb.close()
+    }
+  })
 })
 
 describe("logging", () => {

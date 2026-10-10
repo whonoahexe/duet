@@ -42,9 +42,16 @@ export interface HubOptions {
   log: FastifyBaseLogger
   /** Ping interval; a socket that missed the previous pong is terminated (Pitfall M8). */
   heartbeatMs: number
+  /**
+   * Re-checked for every open socket on each heartbeat (WR-02). The session is otherwise only checked
+   * at upgrade, so a session revoked out of process (seed CLI password reset) or past its expiry would
+   * keep its socket forever. False closes the socket with WS_CLOSE_LOGGED_OUT. Injected so the hub
+   * stays DB-free.
+   */
+  isSessionLive: (sessionId: string) => boolean
 }
 
-export function createHub({ log, heartbeatMs }: HubOptions): Hub {
+export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub {
   const conns = new Map<string, Conn>()
   const rooms = new Map<string, Set<string>>()
 
@@ -153,8 +160,24 @@ export function createHub({ log, heartbeatMs }: HubOptions): Hub {
     }
   }
 
+  /** Whether the session behind this socket still exists and has not expired. A lookup error keeps it. */
+  function sessionStillLive(conn: Conn): boolean {
+    try {
+      return isSessionLive(conn.sessionId)
+    } catch (err) {
+      log.warn({ evt: "ws_session_check_failed", err: (err as Error).name })
+      return true
+    }
+  }
+
   const heartbeat = setInterval(() => {
     for (const conn of conns.values()) {
+      if (conn.closing) continue
+      if (!sessionStillLive(conn)) {
+        conn.closing = true
+        conn.socket.close(WS_CLOSE_LOGGED_OUT, "logged_out")
+        continue
+      }
       if (!conn.alive) {
         conn.socket.terminate()
         continue

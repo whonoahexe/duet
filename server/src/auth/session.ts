@@ -87,6 +87,15 @@ export function issueSession(
 }
 
 /**
+ * True when the sessions row still exists and has not expired. Used by the /ws hub to drop sockets
+ * whose session was revoked or expired after the upgrade (WR-02). Read-only: it never renews.
+ */
+export function isSessionLive(db: Db, sessionId: string, now: number = Date.now()): boolean {
+  const row = db.select({ expiresAt: sessions.expiresAt }).from(sessions).where(eq(sessions.id, sessionId)).get()
+  return row !== undefined && row.expiresAt.getTime() > now
+}
+
+/**
  * preHandler for authenticated routes. Missing or unknown session: 401.
  * Expired session: the row is deleted, the cookie cleared, 401.
  * Rolling renewal: more than RENEW_AFTER_MS after the last renewal, expires_at moves to
