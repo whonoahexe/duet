@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { isIPv6 } from "node:net"
 import { asc, eq, ne } from "drizzle-orm"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import { LoginBody, type MeResponse, type OkResponse } from "@duet/shared"
@@ -19,18 +20,76 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Rate-limit key: client IP from CF-Connecting-IP (Pitfall 4: req.ip is always cloudflared)
- * plus the userId from the parsed body (Pitfall 3: needs hook "preHandler").
+ * IP part of the login rate-limit key. IPv6 addresses collapse to their /64, because one ordinary
+ * IPv6 allocation is a whole /64 and would otherwise give an attacker ~2^64 separate buckets (WR-01).
+ * IPv4 (including IPv4-mapped IPv6) is used as-is.
+ */
+export function ipBucket(ip: string): string {
+  const addr = ip.split("%")[0]!.toLowerCase() // drop any zone id
+  if (!isIPv6(addr)) return ip
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(addr)
+  if (mapped) return mapped[1]!
+  const [head = "", tail] = addr.split("::")
+  const headGroups = head ? head.split(":") : []
+  const tailGroups = tail ? tail.split(":") : []
+  // An embedded dotted IPv4 tail (e.g. 64:ff9b::1.2.3.4) fills two 16-bit groups.
+  const tailLength = tailGroups.reduce((n, g) => n + (g.includes(".") ? 2 : 1), 0)
+  const groups =
+    tail === undefined ? headGroups : [...headGroups, ...Array(Math.max(0, 8 - headGroups.length - tailLength)).fill("0"), ...tailGroups]
+  const prefix = groups.slice(0, 4).map((g) => (Number.parseInt(g, 16) || 0).toString(16))
+  while (prefix.length < 4) prefix.push("0")
+  return `${prefix.join(":")}::/64`
+}
+
+/**
+ * Rate-limit key: client IP from CF-Connecting-IP (Pitfall 4: req.ip is always cloudflared),
+ * collapsed to /64 for IPv6, plus the userId from the parsed body (Pitfall 3: needs hook "preHandler").
  */
 function loginRateLimitKey(request: FastifyRequest): string {
   const ip = headerValue(request.headers["cf-connecting-ip"]) ?? request.ip
   const body = request.body as { userId?: unknown } | null | undefined
   const userId = typeof body?.userId === "string" && body.userId.length > 0 ? body.userId.slice(0, 64) : "-"
-  return `${ip}:${userId}`
+  return `${ipBucket(ip)}:${userId}`
+}
+
+/** Account-wide cap on failed logins, regardless of client IP (WR-01). */
+export const LOGIN_ACCOUNT_MAX_FAILURES = 20
+export const LOGIN_ACCOUNT_WINDOW_MS = 60 * 60 * 1000
+
+/**
+ * In-memory failed-login log per existing account (so at most two keys). Only failures count, so the
+ * owner's own successful logins never use up the budget. While an account is over the cap every
+ * attempt is refused, the correct password included, so the cap really bounds guessing.
+ */
+function createAccountLimiter(now: () => number = Date.now) {
+  const failures = new Map<string, number[]>()
+  function recent(userId: string): number[] {
+    const cutoff = now() - LOGIN_ACCOUNT_WINDOW_MS
+    const list = (failures.get(userId) ?? []).filter((ts) => ts > cutoff)
+    if (list.length === 0) failures.delete(userId)
+    else failures.set(userId, list)
+    return list
+  }
+  return {
+    /** Seconds until the next attempt is allowed, or 0 when the account is under the cap. */
+    retryAfterSeconds(userId: string): number {
+      const list = recent(userId)
+      if (list.length < LOGIN_ACCOUNT_MAX_FAILURES) return 0
+      const oldest = list[list.length - LOGIN_ACCOUNT_MAX_FAILURES]!
+      return Math.max(1, Math.ceil((oldest + LOGIN_ACCOUNT_WINDOW_MS - now()) / 1000))
+    },
+    recordFailure(userId: string): void {
+      const list = recent(userId)
+      list.push(now())
+      failures.set(userId, list)
+    },
+  }
 }
 
 /** POST /api/login (rate-limited), GET /api/me, POST /api/logout. Request bodies are never logged. */
 export async function authRoutes(app: FastifyInstance) {
+  const accountLimiter = createAccountLimiter()
+
   app.post(
     "/api/login",
     {
@@ -59,7 +118,12 @@ export async function authRoutes(app: FastifyInstance) {
         await verifyPassword(await DUMMY_HASH, password)
         return reply.code(401).send({ error: "wrong_password" })
       }
+      const retryAfterSeconds = accountLimiter.retryAfterSeconds(user.id)
+      if (retryAfterSeconds > 0) {
+        return reply.code(429).header("retry-after", String(retryAfterSeconds)).send({ error: "rate_limited", retryAfterSeconds })
+      }
       if (!(await verifyPassword(user.passwordHash, password))) {
+        accountLimiter.recordFailure(user.id)
         return reply.code(401).send({ error: "wrong_password" })
       }
       issueSession(app.db, reply, user.id, request.headers["user-agent"], app.config)

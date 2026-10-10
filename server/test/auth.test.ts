@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm"
 import { buildApp } from "../src/app"
 import { users } from "../src/db/schema"
 import { seedUsers } from "../src/db/seed"
+import { ipBucket, LOGIN_ACCOUNT_MAX_FAILURES } from "../src/auth/routes"
 import { makeDataDir, makeTestApp, testConfig, TEST_USERS, type TestApp } from "./helpers"
 
 const ORIGIN = "http://localhost:3000"
@@ -234,6 +235,74 @@ describe("Unicode normalization", () => {
     } finally {
       await app.close()
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("ipBucket (login rate-limit IP key)", () => {
+  const cases: Array<[string, string]> = [
+    ["203.0.113.7", "203.0.113.7"],
+    ["::ffff:203.0.113.7", "203.0.113.7"],
+    ["2001:db8:1:2:aaaa:bbbb:cccc:dddd", "2001:db8:1:2::/64"],
+    ["2001:DB8:1:2::1", "2001:db8:1:2::/64"],
+    ["2001:db8::1", "2001:db8:0:0::/64"],
+    ["2001:0db8:0001:0002::", "2001:db8:1:2::/64"],
+    ["::1", "0:0:0:0::/64"],
+    ["1::2:3:4:5:1.2.3.4", "1:0:2:3::/64"],
+    ["fe80::1%eth0", "fe80:0:0:0::/64"],
+  ]
+  for (const [ip, bucket] of cases) {
+    it(`${ip} -> ${bucket}`, () => {
+      expect(ipBucket(ip)).toBe(bucket)
+    })
+  }
+})
+
+describe("login rate limit across IPs (WR-01)", () => {
+  it("addresses in one IPv6 /64 share a bucket", async () => {
+    const bob = userId(t.app, "bob")
+    for (let i = 0; i < 5; i++) {
+      const res = await login(t.app, { userId: bob, password: `wrong-password-${i}` }, { ip: `2001:db8:77:1::${i + 1}` })
+      expect(res.statusCode).toBe(401)
+    }
+    const sixth = await login(t.app, { userId: bob, password: "wrong-password-6" }, { ip: "2001:db8:77:1:ffff::9" })
+    expect(sixth.statusCode).toBe(429)
+    expect(sixth.json()).toMatchObject({ error: "rate_limited" })
+  })
+
+  it(`caps failed logins per account at ${LOGIN_ACCOUNT_MAX_FAILURES} per hour regardless of IP`, async () => {
+    const own = await makeTestApp({ seed: true })
+    try {
+      const alice = userId(own.app, "alice")
+      for (let i = 0; i < LOGIN_ACCOUNT_MAX_FAILURES; i++) {
+        const res = await login(own.app, { userId: alice, password: `wrong-password-${i}` })
+        expect(res.statusCode).toBe(401)
+      }
+      // Fresh IP, correct password: still refused while the account is over the cap.
+      const locked = await login(own.app, { userId: alice, password: TEST_USERS.alice.password })
+      expect(locked.statusCode).toBe(429)
+      expect(locked.json()).toMatchObject({ error: "rate_limited" })
+      expect((locked.json() as { retryAfterSeconds: number }).retryAfterSeconds).toBeGreaterThan(0)
+      expect(locked.headers["set-cookie"]).toBeUndefined()
+
+      // The other account is unaffected.
+      const bob = await login(own.app, { userId: userId(own.app, "bob"), password: TEST_USERS.bob.password })
+      expect(bob.statusCode).toBe(200)
+    } finally {
+      await own.close()
+    }
+  })
+
+  it("successful logins do not count toward the account cap", async () => {
+    const own = await makeTestApp({ seed: true })
+    try {
+      const alice = userId(own.app, "alice")
+      for (let i = 0; i < LOGIN_ACCOUNT_MAX_FAILURES + 2; i++) {
+        const res = await login(own.app, { userId: alice, password: TEST_USERS.alice.password })
+        expect(res.statusCode).toBe(200)
+      }
+    } finally {
+      await own.close()
     }
   })
 })
