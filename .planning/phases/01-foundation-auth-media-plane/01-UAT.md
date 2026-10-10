@@ -1,14 +1,18 @@
 ---
-status: complete
+status: testing
 phase: 01-foundation-auth-media-plane
 source: [01-01-SUMMARY.md, 01-02-SUMMARY.md, 01-03-SUMMARY.md, 01-04-SUMMARY.md, 01-05-SUMMARY.md]
 started: 2026-10-10T12:58:49Z
-updated: 2026-10-10T13:13:58.483Z
+updated: 2026-10-10T13:23:31Z
 ---
 
 ## Current Test
 
-[testing complete]
+number: 30
+name: Re-run TURN key and headless call smoke scripts on the box
+expected: |
+  `bash deploy/cloudflare/turn-key.sh` prints `reused key …`, `turn keys named duet: 1`, `turn-key ok`; then `bash scripts/smoke-call.sh` prints `smoke-call reports ok (8)` and `smoke-call ok`
+awaiting: user response
 
 ## Tests
 
@@ -174,12 +178,24 @@ result: pass
 source: automated
 coverage_id: 01-05/D3
 
+### 30. Re-run TURN key and headless call smoke scripts on the box
+expected: `bash deploy/cloudflare/turn-key.sh` prints `reused key …`, `turn keys named duet: 1`, `turn-key ok` (re-run safe, no duplicate key); then `bash scripts/smoke-call.sh` prints `smoke-call reports ok (8)` and `smoke-call ok`
+result: [pending]
+source: 01-VERIFICATION.md (re-verify 2026-10-10)
+coverage_id: 01-04/T2, 01-05/T3
+
+### 31. Decide WR-01 per-account login lockout policy
+expected: Owner accepts or changes the c743038 behaviour (20 failed logins/hour from any IP locks the account for new logins for up to an hour; existing sessions unaffected; user ids are public via /api/users) and records the decision in 01-REVIEW-DISPOSITION.md
+result: [pending]
+source: 01-VERIFICATION.md (re-verify 2026-10-10)
+coverage_id: 01-02/T2
+
 ## Summary
 
-total: 29
+total: 31
 passed: 29
 issues: 0
-pending: 0
+pending: 2
 skipped: 0
 blocked: 0
 
