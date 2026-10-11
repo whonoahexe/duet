@@ -1,0 +1,16 @@
+TAP version 13
+1..6
+not ok 1 - test/replies.test.ts > replies (CHAT-09, D-02) > builds a ReplyPreview for a text parent # time=7.91ms
+    ---
+    error:
+        name: "AssertionError"
+        message: "{\"error\":\"invalid_body\"}: expected 400 to be 200 // Object.is equality"
+    at: "/home/cinedise/duet/server/test/replies.test.ts:30:36"
+    actual: "400"
+    expected: "200"
+    ...
+ok 2 - test/replies.test.ts > replies (CHAT-09, D-02) > rejects a missing parent with 400 bad_reply and a malformed replyToSeq with 400 invalid_body # SKIP
+ok 3 - test/replies.test.ts > replies (CHAT-09, D-02) > cuts the snippet to 120 graphemes with an ellipsis, never splitting a ZWJ family emoji # SKIP
+ok 4 - test/replies.test.ts > replies (CHAT-09, D-02) > quotes only the direct parent when replying to a reply (no nested replyTo) # SKIP
+ok 5 - test/replies.test.ts > replies (CHAT-09, D-02) > returns the same replyTo from GET /api/messages and /api/sync as from the POST # SKIP
+ok 6 - test/replies.test.ts > replies (CHAT-09, D-02) > labels a captionless photo album parent '3 photos' with its position-0 attachment as the thumb # SKIP

@@ -1,0 +1,10 @@
+{
+ "command": "cd server && npx vitest run test/read-typing.test.ts -t \"advances bob's read cursor forward only\" --reporter=tap-flat",
+ "exitCode": 1,
+ "output": "TAP version 13\n1..5\nok 1 - test/read-typing.test.ts > typing relay (CHAT-06) > relays alice's typing frame to every bob socket and to no alice socket # SKIP\nok 2 - test/read-typing.test.ts > typing relay (CHAT-06) > rejects a typing frame with an extra key as bad_frame # SKIP\nnot ok 3 - test/read-typing.test.ts > POST /api/read (CHAT-07, D-03) > advances bob's read cursor forward only, broadcasting each advance, and clamps to the newest seq # time=20.12ms\n    ---\n    error:\n        name: \"AssertionError\"\n        message: \"expected 404 to be 200 // Object.is equality\"\n    at: \"/home/cinedise/duet/server/test/read-typing.test.ts:84:30\"\n    actual: \"404\"\n    expected: \"200\"\n    ...\nok 4 - test/read-typing.test.ts > POST /api/read (CHAT-07, D-03) > returns the read cursors from GET /api/messages and /api/sync # SKIP\nok 5 - test/read-typing.test.ts > POST /api/read (CHAT-07, D-03) > rejects seq 0, a missing seq and extra keys with 400 invalid_body, and answers 401 without a cookie # SKIP",
+ "targetTest": "test/read-typing.test.ts > POST /api/read (CHAT-07, D-03) > advances bob's read cursor forward only, broadcasting each advance, and clamps to the newest seq",
+ "targetFile": "server/test/read-typing.test.ts",
+ "expected": "POST /api/read {seq: 2} answers 200 {ok: true} and both sockets get {t: 'read', userId: bob, seq: 2, at}",
+ "actual": "expected 404 to be 200: the /api/read route does not exist yet",
+ "semanticAssessment": "Target executed and failed on its first planned assertion (status 200) because POST /api/read is not implemented; no load, syntax or fixture fault. The full RED run of read-typing.test.ts failed 4 of 5 behavior tests (typing relay timed out waiting for the relayed frame, read cursor 404, reads empty, validation 404); the extra-key bad_frame guard already passes because the typing frame is unknown to the current ClientFrame."
+}

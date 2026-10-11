@@ -1,0 +1,15 @@
+TAP version 13
+1..5
+ok 1 - test/read-typing.test.ts > typing relay (CHAT-06) > relays alice's typing frame to every bob socket and to no alice socket # SKIP
+ok 2 - test/read-typing.test.ts > typing relay (CHAT-06) > rejects a typing frame with an extra key as bad_frame # SKIP
+not ok 3 - test/read-typing.test.ts > POST /api/read (CHAT-07, D-03) > advances bob's read cursor forward only, broadcasting each advance, and clamps to the newest seq # time=20.12ms
+    ---
+    error:
+        name: "AssertionError"
+        message: "expected 404 to be 200 // Object.is equality"
+    at: "/home/cinedise/duet/server/test/read-typing.test.ts:84:30"
+    actual: "404"
+    expected: "200"
+    ...
+ok 4 - test/read-typing.test.ts > POST /api/read (CHAT-07, D-03) > returns the read cursors from GET /api/messages and /api/sync # SKIP
+ok 5 - test/read-typing.test.ts > POST /api/read (CHAT-07, D-03) > rejects seq 0, a missing seq and extra keys with 400 invalid_body, and answers 401 without a cookie # SKIP

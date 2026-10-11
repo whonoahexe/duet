@@ -1,0 +1,10 @@
+{
+ "command": "cd server && npx vitest run test/replies.test.ts -t \"builds a ReplyPreview for a text parent\" --reporter=tap-flat",
+ "exitCode": 1,
+ "output": "TAP version 13\n1..6\nnot ok 1 - test/replies.test.ts > replies (CHAT-09, D-02) > builds a ReplyPreview for a text parent # time=7.91ms\n    ---\n    error:\n        name: \"AssertionError\"\n        message: \"{\\\"error\\\":\\\"invalid_body\\\"}: expected 400 to be 200 // Object.is equality\"\n    at: \"/home/cinedise/duet/server/test/replies.test.ts:30:36\"\n    actual: \"400\"\n    expected: \"200\"\n    ...\nok 2 - test/replies.test.ts > replies (CHAT-09, D-02) > rejects a missing parent with 400 bad_reply and a malformed replyToSeq with 400 invalid_body # SKIP\nok 3 - test/replies.test.ts > replies (CHAT-09, D-02) > cuts the snippet to 120 graphemes with an ellipsis, never splitting a ZWJ family emoji # SKIP\nok 4 - test/replies.test.ts > replies (CHAT-09, D-02) > quotes only the direct parent when replying to a reply (no nested replyTo) # SKIP\nok 5 - test/replies.test.ts > replies (CHAT-09, D-02) > returns the same replyTo from GET /api/messages and /api/sync as from the POST # SKIP\nok 6 - test/replies.test.ts > replies (CHAT-09, D-02) > labels a captionless photo album parent '3 photos' with its position-0 attachment as the thumb # SKIP",
+ "targetTest": "test/replies.test.ts > replies (CHAT-09, D-02) > builds a ReplyPreview for a text parent",
+ "targetFile": "server/test/replies.test.ts",
+ "expected": "POST /api/messages {body: 'answer', replyToSeq: 1} answers 200 with replyTo {seq 1, senderId alice, kind text, snippet 'original', attachmentCount 0, thumb null}",
+ "actual": "expected 400 to be 200: SendMessageBody is strict and has no replyToSeq yet, so the reply is rejected as invalid_body",
+ "semanticAssessment": "Target executed and failed on its planned status assertion because replyToSeq is not part of the send contract yet; no load, syntax or fixture fault. The full RED run of replies.test.ts failed all 6 behavior tests on assertions (5 on status 200, 1 on error code bad_reply)."
+}
