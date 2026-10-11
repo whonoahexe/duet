@@ -1,6 +1,7 @@
 "use client"
 
 import { useSyncExternalStore } from "react"
+import { toast } from "sonner"
 import {
   MessagesPage,
   PAGE_SIZE_DEFAULT,
@@ -9,9 +10,10 @@ import {
   mergeMessages,
   type MeResponse,
   type MessageDto,
+  type Reaction,
   type UserSummary,
 } from "@duet/shared"
-import { ApiError, apiGet, apiPost } from "@/lib/api"
+import { ApiError, apiGet, apiPost, apiPut } from "@/lib/api"
 import { createOutbox, type OutboxEntry } from "./outbox"
 
 export type { OutboxEntry } from "./outbox"
@@ -230,6 +232,23 @@ export const chatStore = {
   /** Tap on a failed message: retry with the same client id. */
   retry(id: string): void {
     outbox.retry(id)
+  },
+
+  /**
+   * Set, replace (another emoji) or remove (null) your reaction on a message (D-04). The returned
+   * message is merged at once; the other phone gets it through the WS msg frame.
+   */
+  async react(seq: number, emoji: Reaction | null): Promise<void> {
+    const gen = generation
+    try {
+      const res = await apiPut(`/api/messages/${seq}/reaction`, { emoji }, SendMessageResponse)
+      if (gen !== generation) return
+      chatStore.applyMessages([res.message])
+    } catch (err) {
+      if (gen !== generation) return
+      if (isLoggedOutError(err)) return loggedOut()
+      toast.error("Couldn't react. Try again.")
+    }
   },
 
   setConnection(connection: ConnectionState): void {

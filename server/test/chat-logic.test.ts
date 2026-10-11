@@ -4,6 +4,7 @@ import {
   mergeMessages,
   messageLabel,
   nextOutboxState,
+  reactionSummary,
   truncateGraphemes,
   type AttachmentDto,
   type AttachmentKind,
@@ -163,5 +164,42 @@ describe("nextOutboxState (CHAT-03, CHAT-04)", () => {
   it("keeps the other fields of the entry", () => {
     const entry = { id: "x", body: "hi", createdAt: 1, attempts: 0, state: "sending" as const }
     expect(nextOutboxState(entry, { kind: "network", connected: true })).toEqual({ ...entry, attempts: 1 })
+  })
+})
+
+describe("reactionSummary (D-04)", () => {
+  const BOB = "22222222-2222-4222-8222-222222222222"
+
+  it("is empty when nobody reacted", () => {
+    expect(reactionSummary([], ALICE)).toEqual([])
+  })
+
+  it("groups by emoji in REACTIONS order with counts and a mine flag", () => {
+    const summary = reactionSummary(
+      [
+        { userId: BOB, emoji: "😭" },
+        { userId: ALICE, emoji: "💕" },
+        { userId: BOB, emoji: "💕" },
+      ],
+      ALICE,
+    )
+    expect(summary).toEqual([
+      { emoji: "💕", count: 2, mine: true },
+      { emoji: "😭", count: 1, mine: false },
+    ])
+  })
+
+  it("puts stored emoji outside the current set after the known ones", () => {
+    const summary = reactionSummary(
+      [
+        { userId: ALICE, emoji: "👍" },
+        { userId: BOB, emoji: "😘" },
+      ],
+      BOB,
+    )
+    expect(summary).toEqual([
+      { emoji: "😘", count: 1, mine: true },
+      { emoji: "👍", count: 1, mine: false },
+    ])
   })
 })

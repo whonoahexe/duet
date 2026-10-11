@@ -1,4 +1,4 @@
-// Headless two-browser chat e2e (CHAT-01..05): two Chrome contexts, two fixture accounts.
+// Headless two-browser chat e2e (CHAT-01..09): two Chrome contexts, two fixture accounts.
 // Usage: node scripts/smoke-chat.mjs <base-url> [scenario ...]   (driven by scripts/smoke-chat.sh)
 // No scenario names runs every scenario in registry order. Prints only scenario names and verdicts.
 import { randomUUID } from "node:crypto"
@@ -57,6 +57,30 @@ async function waitForStatus(page, expected, timeout) {
 
 function viewport(page) {
   return page.locator('[data-slot="message-scroller-viewport"]')
+}
+
+/** The bubble (data-slot="bubble") whose content is exactly `text`. */
+function bubbleOf(page, text) {
+  return page.locator('[data-slot="bubble"]').filter({ has: bubbles(page, text) })
+}
+
+/** Poll `fn` until it returns true; throws `message` after `timeout` ms. */
+async function until(fn, timeout, message) {
+  const deadline = Date.now() + timeout
+  for (;;) {
+    if (await fn()) return
+    if (Date.now() > deadline) throw new Error(message)
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
+/** Open the long-press menu on a bubble with a right-click (contextmenu) and pick a reaction. */
+async function reactTo(page, text, emoji) {
+  await bubbleOf(page, text).click({ button: "right" })
+  const option = page.getByRole("button", { name: `React ${emoji}` })
+  await option.waitFor({ state: "visible", timeout: 3_000 })
+  await option.click()
+  await option.waitFor({ state: "hidden", timeout: 3_000 })
 }
 
 /** name -> async ({ ada, bob }) => void. Each prints "scenario <name> ok" on success. */
@@ -164,6 +188,26 @@ const scenarios = {
     blocked = false
     for (const text of texts) await expectExactlyOnce(bob, text, 10_000)
     await bob.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {})
+  },
+
+  /** CHAT-08 / D-04: Bob reacts 💕 to Ada's message from the menu; Ada sees the chip; picking it again removes it. */
+  async react({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const text = uniqueText("react to this")
+    await sendFromComposer(ada, BOB.displayName, text)
+    await expectExactlyOnce(bob, text, 5_000)
+
+    const chip = bubbleOf(ada, text).getByTestId("reaction-chip")
+    await reactTo(bob, text, "💕")
+    await until(async () => (await chip.count()) === 1 && (await chip.textContent())?.includes("💕"), 5_000,
+      "Ada never saw Bob's 💕 chip")
+    // Bob's own row marks his current reaction.
+    await bubbleOf(bob, text).click({ button: "right" })
+    const current = bob.getByRole("button", { name: "React 💕" })
+    await current.waitFor({ state: "visible", timeout: 3_000 })
+    if ((await current.getAttribute("aria-pressed")) !== "true") throw new Error("Bob's current reaction is not highlighted")
+    await current.click()
+    await until(async () => (await chip.count()) === 0, 5_000, "Ada's chip did not disappear after Bob removed his reaction")
   },
 }
 

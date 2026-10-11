@@ -52,3 +52,7 @@ export function apiGet<S extends z.ZodType>(path: string, schema: S): Promise<z.
 export function apiPost<S extends z.ZodType>(path: string, body: unknown, schema: S): Promise<z.output<S>> {
   return request(path, { method: "POST", body: JSON.stringify(body ?? {}) }, schema)
 }
+
+export function apiPut<S extends z.ZodType>(path: string, body: unknown, schema: S): Promise<z.output<S>> {
+  return request(path, { method: "PUT", body: JSON.stringify(body ?? {}) }, schema)
+}

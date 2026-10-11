@@ -45,6 +45,21 @@ export const AttachmentDto = z.object({
 })
 export type AttachmentDto = z.infer<typeof AttachmentDto>
 
+/**
+ * The couple's fixed reaction set (D-04), in display order. Each is one code point with no variation
+ * selector, so validation is exact string equality. Stored emoji are returned as stored, so a reaction
+ * stays readable if this set changes later (ReactionDto.emoji is a plain string).
+ */
+export const REACTIONS = ["💕", "💔", "😋", "😝", "😘", "😭"] as const
+export const Reaction = z.enum(REACTIONS)
+export type Reaction = z.infer<typeof Reaction>
+
+/** PUT /api/messages/:seq/reaction body. null removes your reaction (a no-op when you have none). */
+export const ReactionBody = z.strictObject({
+  emoji: Reaction.nullable(),
+})
+export type ReactionBody = z.infer<typeof ReactionBody>
+
 export const ReactionDto = z.object({
   userId: z.uuid(),
   emoji: z.string(),

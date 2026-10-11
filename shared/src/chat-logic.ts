@@ -1,4 +1,4 @@
-import type { AttachmentKind, MessageDto } from "./chat"
+import { REACTIONS, type AttachmentKind, type MessageDto, type ReactionDto } from "./chat"
 
 /**
  * Pure chat helpers shared by the server and the web client (no DOM, no I/O), unit-tested from the
@@ -52,6 +52,34 @@ export function messageLabel(m: Pick<MessageDto, "kind" | "body" | "attachments"
     { emoji: true },
   )
   return m.body ? `${label} · ${m.body}` : label
+}
+
+export interface ReactionSummaryItem {
+  emoji: string
+  count: number
+  /** You are one of the people who picked this emoji. */
+  mine: boolean
+}
+
+/**
+ * The reaction chip (D-04): each distinct emoji once with how many picked it and whether you did.
+ * Known emoji come in REACTIONS order; stored emoji outside the current set follow in first-seen order.
+ */
+export function reactionSummary(reactions: ReactionDto[], meId: string | null | undefined): ReactionSummaryItem[] {
+  const byEmoji = new Map<string, ReactionSummaryItem>()
+  for (const r of reactions) {
+    const item = byEmoji.get(r.emoji) ?? { emoji: r.emoji, count: 0, mine: false }
+    item.count += 1
+    if (meId && r.userId === meId) item.mine = true
+    byEmoji.set(r.emoji, item)
+  }
+  const known: readonly string[] = REACTIONS
+  const rank = (e: string) => {
+    const i = known.indexOf(e)
+    return i === -1 ? known.length : i
+  }
+  // Array.prototype.sort is stable, so unknown emoji keep their first-seen order.
+  return [...byEmoji.values()].sort((a, b) => rank(a.emoji) - rank(b.emoji))
 }
 
 let segmenter: Intl.Segmenter | null = null

@@ -1,4 +1,4 @@
-import { asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm"
+import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm"
 import { SYNC_MAX, type AttachmentDto, type MessageDto, type ReadCursor, type SendMessageBody } from "@duet/shared"
 import type { Db } from "../db/client"
 import { attachments, messages, reactions, readState } from "../db/schema"
@@ -68,6 +68,46 @@ export function sendMessage(
       .returning()
       .get()
     return { row, created: true }
+  })
+}
+
+/**
+ * Set, replace or remove this person's reaction on one message (D-04, CHAT-08). One synchronous
+ * transaction: a missing message is a 404 not_found; emoji null deletes the (seq, user) row (a no-op
+ * when there is none); otherwise the row is inserted or replaced. When anything changed the message's
+ * updated_seq is bumped so offline phones receive it through /api/sync. The emoji was already checked
+ * against REACTIONS by the route. Returns the fresh message row and whether it changed.
+ */
+export function setReaction(
+  db: Db,
+  userId: string,
+  seq: number,
+  emoji: string | null,
+): { row: MessageRow; changed: boolean } {
+  return db.transaction((tx) => {
+    const msg = tx.select().from(messages).where(eq(messages.seq, seq)).get()
+    if (!msg) throw new ChatError("not_found", 404)
+    const mine = and(eq(reactions.messageSeq, seq), eq(reactions.userId, userId))
+    const existing = tx.select({ emoji: reactions.emoji }).from(reactions).where(mine).get()
+
+    let changed = false
+    if (emoji === null) {
+      if (existing) {
+        tx.delete(reactions).where(mine).run()
+        changed = true
+      }
+    } else if (!existing) {
+      tx.insert(reactions).values({ messageSeq: seq, userId, emoji, createdAt: new Date() }).run()
+      changed = true
+    } else if (existing.emoji !== emoji) {
+      tx.update(reactions).set({ emoji, createdAt: new Date() }).where(mine).run()
+      changed = true
+    }
+    if (!changed) return { row: msg, changed }
+
+    const updatedSeq = nextUpdatedSeq(tx)
+    const row = tx.update(messages).set({ updatedSeq }).where(eq(messages.seq, seq)).returning().get()
+    return { row, changed }
   })
 }
 

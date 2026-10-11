@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ArrowDownIcon, ChatCircleIcon, CloudSlashIcon } from "@phosphor-icons/react"
-import { messageLabel, type MessageDto, type UserSummary } from "@duet/shared"
+import { messageLabel, type MessageDto, type ReactionDto, type UserSummary } from "@duet/shared"
 import { Composer } from "@/components/app/composer"
 import { MessageGroupRow, type GroupItem, type RowStatus } from "@/components/app/message-row"
 import { Badge } from "@/components/ui/badge"
@@ -32,12 +32,15 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 interface DisplayMessage {
   id: string
+  /** Server order; null for an outbox entry. */
+  seq: number | null
   senderId: string
   body: string | null
   createdAt: number
   /** Confirmed by the server (has a seq). */
   confirmed: boolean
   failed: boolean
+  reactions: ReactionDto[]
 }
 
 type ListItem =
@@ -259,19 +262,23 @@ export function ChatView({ peer }: { peer: UserSummary }) {
   const display: DisplayMessage[] = [
     ...chat.messages.map((m) => ({
       id: m.id,
+      seq: m.seq,
       senderId: m.senderId,
       body: m.body,
       createdAt: m.createdAt,
       confirmed: true,
       failed: false,
+      reactions: m.reactions,
     })),
     ...chat.pending.map((p) => ({
       id: p.id,
+      seq: null,
       senderId: meId ?? "",
       body: p.body,
       createdAt: p.createdAt,
       confirmed: false,
       failed: p.state === "failed",
+      reactions: [],
     })),
   ]
 
@@ -288,10 +295,12 @@ export function ChatView({ peer }: { peer: UserSummary }) {
     if (m === latestMine && !m.failed) status = m.confirmed ? "sent" : "sending"
     return {
       id: m.id,
+      seq: m.seq,
       body: m.body,
       status,
       failed: m.failed,
       onRetry: m.failed ? () => chatStore.retry(m.id) : undefined,
+      reactions: m.reactions,
     }
   }
 
@@ -328,7 +337,11 @@ export function ChatView({ peer }: { peer: UserSummary }) {
                 {items.map((item) =>
                   item.kind === "group" ? (
                     <MessageScrollerItem key={item.key} messageId={item.messages[0].id}>
-                      <MessageGroupRow mine={item.senderId === meId} items={item.messages.map(toItem)} />
+                      <MessageGroupRow
+                        mine={item.senderId === meId}
+                        items={item.messages.map(toItem)}
+                        meId={meId ?? null}
+                      />
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key}>

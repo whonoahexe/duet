@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import {
   MessagesQuery,
+  ReactionBody,
   SendMessageBody,
   SyncQuery,
   type MessagesPage,
@@ -8,7 +9,23 @@ import {
   type SyncResponse,
 } from "@duet/shared"
 import { requireUser } from "../auth/session"
-import { ChatError, currentCursor, latestPage, readCursors, sendMessage, syncSince, toDtos } from "./service"
+import {
+  ChatError,
+  currentCursor,
+  latestPage,
+  readCursors,
+  sendMessage,
+  setReaction,
+  syncSince,
+  toDtos,
+} from "./service"
+
+/** A :seq path parameter: a positive decimal integer, else null. */
+function parseSeq(raw: unknown): number | null {
+  if (typeof raw !== "string" || !/^[1-9][0-9]{0,15}$/.test(raw)) return null
+  const n = Number(raw)
+  return Number.isSafeInteger(n) ? n : null
+}
 
 /**
  * Chat REST (CHAT-01, CHAT-02, CHAT-05). Durable writes go over HTTP, then fan out over /ws (Pattern 1).
@@ -39,6 +56,34 @@ export async function chatRoutes(app: FastifyInstance) {
     }
     request.log.info({ evt: "msg_sent", userId, seq: message.seq, created: result.created })
     reply.header("Cache-Control", "no-store")
+    const body: SendMessageResponse = { message }
+    return body
+  })
+
+  /**
+   * Set, replace or remove your reaction (D-04, CHAT-08). The reacting person is always the session
+   * user (T-02-09); the emoji must be one of REACTIONS exactly (T-02-10). Every change is broadcast as
+   * a changed message. The emoji itself is never logged.
+   */
+  app.put("/api/messages/:seq/reaction", { preHandler: requireUser }, async (request, reply) => {
+    reply.header("Cache-Control", "no-store")
+    const seq = parseSeq((request.params as { seq?: unknown }).seq)
+    if (seq === null) return reply.code(400).send({ error: "invalid_body" })
+    const parsed = ReactionBody.safeParse(request.body)
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" })
+    const userId = request.user!.id
+
+    let result: ReturnType<typeof setReaction>
+    try {
+      result = setReaction(app.db, userId, seq, parsed.data.emoji)
+    } catch (err) {
+      if (err instanceof ChatError) return reply.code(err.status).send({ error: err.code })
+      throw err
+    }
+
+    const [message] = toDtos(app.db, [result.row])
+    if (result.changed) app.hub.broadcast({ t: "msg", message })
+    request.log.info({ evt: "reaction", userId, seq, changed: result.changed })
     const body: SendMessageResponse = { message }
     return body
   })
