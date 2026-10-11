@@ -181,6 +181,12 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
       case "presence":
         conn.visible = frame.visible
         return
+      case "typing":
+        // CHAT-06: only the other person's devices, never the sender's own (no storage, no logging).
+        for (const other of conns.values()) {
+          if (other.userId !== conn.userId) send(other, { t: "typing", userId: conn.userId })
+        }
+        return
     }
   }
 

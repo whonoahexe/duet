@@ -1,11 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { ArrowDownIcon, ChatCircleIcon, CloudSlashIcon } from "@phosphor-icons/react"
 import { messageLabel, type MessageDto, type ReactionDto, type ReplyPreview, type UserSummary } from "@duet/shared"
 import { Composer } from "@/components/app/composer"
 import { MessageGroupRow, type GroupItem, type RowStatus } from "@/components/app/message-row"
 import { localReplyPreview } from "@/components/app/quote-block"
+import { TypingIndicator } from "@/components/app/typing-indicator"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
@@ -19,6 +20,7 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
   useMessageScrollerScrollable,
+  useMessageScrollerVisibility,
 } from "@/components/ui/message-scroller"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
@@ -161,7 +163,10 @@ function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) 
   const awayRef = useRef(scrollable.end)
   awayRef.current = scrollable.end
   const lastSeenRef = useRef<number | null>(null)
-  const [announcement, setAnnouncement] = useState("")
+  // The announcement is written straight into the live region, not kept in React state: a state update
+  // from this effect on every incoming message cascaded into nested sync re-renders during a burst of
+  // messages (React error #185 at ~150 messages in a row).
+  const liveRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (chat.initial !== "ready") return
@@ -174,7 +179,7 @@ function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) 
     const fresh: MessageDto[] = incoming.filter((m) => m.seq > (lastSeenRef.current ?? 0))
     if (fresh.length === 0) return
     lastSeenRef.current = maxSeq
-    setAnnouncement(`${peer.displayName}: ${messageLabel(fresh[fresh.length - 1])}`)
+    if (liveRef.current) liveRef.current.textContent = `${peer.displayName}: ${messageLabel(fresh[fresh.length - 1])}`
     if (awayRef.current) chatStore.bumpNewWhileAway(fresh.length)
   }, [chat.initial, chat.messages, peer.id, peer.displayName])
 
@@ -193,32 +198,120 @@ function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) 
   }, [scrollToEnd])
 
   return (
-    <div className="sr-only" aria-live="polite" aria-atomic="true">
-      {announcement}
-    </div>
+    <div ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
   )
 }
 
+/** Frames spent re-centering a jumped-to bubble while content-visibility lays out the items around it. */
+const JUMP_SETTLE_FRAMES = 6
+
 /**
- * Lives inside the scroller provider: when a quote jump sets highlightSeq (D-02), scroll the item that
- * holds that message into view (an item is a whole sender group, keyed by its first message id).
+ * Lives inside the scroller provider: when a quote jump sets highlightSeq (D-02), bring the sender
+ * group that holds the message into range with scrollToMessage (an item is a whole group, keyed by its
+ * first message id), then center the bubble itself. A group can be far taller than the screen, and
+ * items outside the viewport only get their real height once rendered, so the bubble is re-centered
+ * for a few frames until it stays put. The jump is instant: a long smooth scroll would outlast the
+ * 1.2 s highlight.
  */
-function JumpFollower({ highlightSeq, itemIdBySeq }: { highlightSeq: number | null; itemIdBySeq: Map<number, string> }) {
+function JumpFollower({
+  highlightSeq,
+  itemIdBySeq,
+  viewportRef,
+}: {
+  highlightSeq: number | null
+  itemIdBySeq: Map<number, string>
+  viewportRef: React.RefObject<HTMLDivElement | null>
+}) {
   const { scrollToMessage } = useMessageScroller()
   const mapRef = useRef(itemIdBySeq)
-  mapRef.current = itemIdBySeq
+  useLayoutEffect(() => {
+    mapRef.current = itemIdBySeq
+  })
 
   useEffect(() => {
     if (highlightSeq === null) return
     const itemId = mapRef.current.get(highlightSeq)
     if (!itemId) return
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    let raf = 0
+    let frames = 0
+    const settle = () => {
+      const vp = viewportRef.current
+      const el = vp?.querySelector<HTMLElement>(`[data-slot="bubble"][data-seq="${highlightSeq}"]`)
+      if (!vp || !el) return
+      const v = vp.getBoundingClientRect()
+      const r = el.getBoundingClientRect()
+      const offset = r.top + r.height / 2 - (v.top + v.height / 2)
+      if (Math.abs(offset) > 2) vp.scrollTop += offset
+      frames += 1
+      if (frames < JUMP_SETTLE_FRAMES) raf = requestAnimationFrame(settle)
+    }
     // Wait one frame so a just-prepended page is laid out before measuring.
-    const raf = requestAnimationFrame(() => {
-      scrollToMessage(itemId, { align: "center", behavior: reduce ? "auto" : "smooth" })
+    raf = requestAnimationFrame(() => {
+      scrollToMessage(itemId, { align: "start", behavior: "auto" })
+      raf = requestAnimationFrame(settle)
     })
     return () => cancelAnimationFrame(raf)
-  }, [highlightSeq, scrollToMessage])
+  }, [highlightSeq, scrollToMessage, viewportRef])
+
+  return null
+}
+
+/** Wait this long after the visible set settles before sending a read receipt (Pitfall 14). */
+const READ_DEBOUNCE_MS = 500
+
+/**
+ * Read receipts (CHAT-07, Pitfall 14, T-02-11). Only while the page is visible AND focused: among the
+ * scroller's visible items, take the peer messages whose bubble is actually inside the list viewport
+ * and send the highest seq, debounced 500 ms. Re-checks on focus and visibilitychange.
+ */
+function ReadTracker({
+  peerSeqsByItemId,
+  latestPeerSeq,
+  viewportRef,
+}: {
+  peerSeqsByItemId: Map<string, { seq: number }[]>
+  latestPeerSeq: number
+  viewportRef: React.RefObject<HTMLDivElement | null>
+}) {
+  const { visibleMessageIds } = useMessageScrollerVisibility()
+  const latest = useRef({ visibleMessageIds, peerSeqsByItemId })
+  useLayoutEffect(() => {
+    latest.current = { visibleMessageIds, peerSeqsByItemId }
+  })
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const check = () => {
+      if (timer !== null) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        if (document.visibilityState !== "visible" || !document.hasFocus()) return
+        const vp = viewportRef.current
+        if (!vp) return
+        const box = vp.getBoundingClientRect()
+        let max = 0
+        for (const itemId of latest.current.visibleMessageIds) {
+          for (const m of latest.current.peerSeqsByItemId.get(itemId) ?? []) {
+            if (m.seq <= max) continue
+            // The bubble itself (the scroller item that wraps a group also carries data-message-id).
+            const el = vp.querySelector<HTMLElement>(`[data-slot="bubble"][data-seq="${m.seq}"]`)
+            if (!el) continue
+            const r = el.getBoundingClientRect()
+            if (r.height > 0 && r.bottom > box.top && r.top < box.bottom) max = m.seq
+          }
+        }
+        if (max > 0) chatStore.markReadUpTo(max)
+      }, READ_DEBOUNCE_MS)
+    }
+    check()
+    window.addEventListener("focus", check)
+    document.addEventListener("visibilitychange", check)
+    return () => {
+      if (timer !== null) clearTimeout(timer)
+      window.removeEventListener("focus", check)
+      document.removeEventListener("visibilitychange", check)
+    }
+  }, [visibleMessageIds, latestPeerSeq, viewportRef])
 
   return null
 }
@@ -238,6 +331,9 @@ export function ChatView({ peer }: { peer: UserSummary }) {
     // Within one viewport of the top: fetch the next older page.
     if (el.scrollTop < el.clientHeight) {
       const s = chatStore.getSnapshot()
+      // While a quote jump is settling (D-02), a prepend would restore the old scroll position and cut
+      // the jump short; the next scroll after the highlight loads the page instead.
+      if (s.highlightSeq !== null) return
       if (s.hasMore && s.history === "idle") {
         fromBottomRef.current = el.scrollHeight - el.scrollTop
         void chatStore.loadOlder()
@@ -333,14 +429,24 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       break
     }
   }
+  // D-03: "Read" once the other person's cursor reached your latest message.
+  const peerRead = chat.reads[peer.id]
   function toItem(m: DisplayMessage): GroupItem {
     let status: RowStatus = null
-    if (m === latestMine && !m.failed) status = m.confirmed ? "sent" : "sending"
+    let readAt: number | null = null
+    if (m === latestMine && !m.failed) {
+      if (!m.confirmed) status = "sending"
+      else if (m.seq !== null && peerRead && peerRead.seq >= m.seq) {
+        status = "read"
+        readAt = peerRead.at
+      } else status = "sent"
+    }
     return {
       id: m.id,
       seq: m.seq,
       body: m.body,
       status,
+      readAt,
       failed: m.failed,
       onRetry: m.failed ? () => chatStore.retry(m.id) : undefined,
       reactions: m.reactions,
@@ -351,10 +457,23 @@ export function ChatView({ peer }: { peer: UserSummary }) {
 
   const items = buildItems(display, Date.now())
   const itemIdBySeq = new Map<number, string>()
+  const peerSeqsByItemId = new Map<string, { seq: number }[]>()
+  let latestPeerSeq = 0
   for (const item of items) {
     if (item.kind !== "group") continue
-    for (const m of item.messages) if (m.seq !== null) itemIdBySeq.set(m.seq, item.messages[0].id)
+    const itemId = item.messages[0].id
+    for (const m of item.messages) {
+      if (m.seq === null) continue
+      itemIdBySeq.set(m.seq, itemId)
+      if (m.senderId === peer.id) {
+        const list = peerSeqsByItemId.get(itemId) ?? []
+        list.push({ seq: m.seq })
+        peerSeqsByItemId.set(itemId, list)
+        latestPeerSeq = Math.max(latestPeerSeq, m.seq)
+      }
+    }
   }
+  const typing = chat.typingUntil !== null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -371,6 +490,11 @@ export function ChatView({ peer }: { peer: UserSummary }) {
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
+          {typing && (
+            <div className="px-4">
+              <TypingIndicator peerName={peer.displayName} />
+            </div>
+          )}
         </div>
       ) : (
         <MessageScrollerProvider autoScroll>
@@ -402,6 +526,11 @@ export function ChatView({ peer }: { peer: UserSummary }) {
                     </MessageScrollerItem>
                   ),
                 )}
+                {typing && (
+                  <MessageScrollerItem key="typing">
+                    <TypingIndicator peerName={peer.displayName} />
+                  </MessageScrollerItem>
+                )}
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton
@@ -418,7 +547,8 @@ export function ChatView({ peer }: { peer: UserSummary }) {
               )}
             </MessageScrollerButton>
             <ScrollFollower chat={chat} peer={peer} />
-            <JumpFollower highlightSeq={chat.highlightSeq} itemIdBySeq={itemIdBySeq} />
+            <JumpFollower highlightSeq={chat.highlightSeq} itemIdBySeq={itemIdBySeq} viewportRef={viewportRef} />
+            <ReadTracker peerSeqsByItemId={peerSeqsByItemId} latestPeerSeq={latestPeerSeq} viewportRef={viewportRef} />
           </MessageScroller>
         </MessageScrollerProvider>
       )}

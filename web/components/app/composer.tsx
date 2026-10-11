@@ -6,7 +6,11 @@ import { isBlankBody } from "@duet/shared"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
+import { sendTyping } from "@/lib/chat/realtime"
 import { chatStore, useChat } from "@/lib/chat/store"
+
+/** At most one typing frame per this interval while typing (CHAT-06, UI-SPEC). */
+const TYPING_FRAME_INTERVAL_MS = 3000
 
 /** Six 24px lines: the textarea grows to this, then scrolls inside. */
 const MAX_TEXTAREA_PX = 144
@@ -20,6 +24,7 @@ function finePointer(): boolean {
 export function Composer({ peerName }: { peerName: string }) {
   const [text, setText] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
+  const lastTypingRef = useRef(0)
   const canSend = !isBlankBody(text)
   const chat = useChat()
   const meId = chat.me?.id ?? null
@@ -45,6 +50,8 @@ export function Composer({ peerName }: { peerName: string }) {
     chatStore.sendText(text, replyMessage ? replyMessage.seq : null)
     chatStore.setReplyTarget(null)
     setText("")
+    // The next message starts a fresh typing burst.
+    lastTypingRef.current = 0
     // Keep the keyboard up for the next message.
     ref.current?.focus()
   }
@@ -83,7 +90,15 @@ export function Composer({ peerName }: { peerName: string }) {
           ref={ref}
           rows={1}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value
+            setText(value)
+            const now = Date.now()
+            if (!isBlankBody(value) && now - lastTypingRef.current >= TYPING_FRAME_INTERVAL_MS) {
+              lastTypingRef.current = now
+              sendTyping()
+            }
+          }}
           onKeyDown={onKeyDown}
           placeholder={`Message ${peerName}`}
           aria-label={`Message ${peerName}`}

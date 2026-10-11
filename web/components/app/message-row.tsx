@@ -12,8 +12,11 @@ import { chatStore } from "@/lib/chat/store"
 import { mergeHandlers, useLongPress, useSwipeReply } from "@/lib/chat/gestures"
 import { cn } from "@/lib/utils"
 
-/** Status line under your most recent message (D-03). Never "Sent" without a server seq. */
-export type RowStatus = "sending" | "sent" | null
+/**
+ * Status line under your most recent message (D-03): "Sending…" -> "Sent" -> "Read 9:41 PM". Never
+ * "Sent" without a server seq, never "Read" before the other person's cursor reached it.
+ */
+export type RowStatus = "sending" | "sent" | "read" | null
 
 export interface GroupItem {
   id: string
@@ -21,6 +24,8 @@ export interface GroupItem {
   seq: number | null
   body: string | null
   status: RowStatus
+  /** When the other person's read cursor passed this message (status "read"). */
+  readAt: number | null
   failed: boolean
   onRetry?: () => void
   reactions: ReactionDto[]
@@ -71,7 +76,20 @@ function StatusFooter({ item }: { item: GroupItem }) {
     )
   }
   if (!item.status) return null
-  return <MessageFooter data-testid="message-status">{item.status === "sending" ? "Sending…" : "Sent"}</MessageFooter>
+  const label =
+    item.status === "sending"
+      ? "Sending…"
+      : item.status === "read"
+        ? item.readAt !== null
+          ? `Read ${shortTime(item.readAt)}`
+          : "Read"
+        : "Sent"
+  return <MessageFooter data-testid="message-status">{label}</MessageFooter>
+}
+
+/** Device-locale short time ("9:41 PM"). */
+function shortTime(ts: number): string {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(ts)
 }
 
 /** The message text as a React text child only (T-02-06: never HTML). */

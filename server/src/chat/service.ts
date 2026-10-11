@@ -297,6 +297,35 @@ export function syncSince(db: DbOrTx, since: number) {
   return { rows: page, hasMore, cursor }
 }
 
+/**
+ * Move this person's read cursor forward (CHAT-07). One transaction: the target is clamped to the
+ * newest message seq and stored only when it is ahead of last_read_seq (read_at = now). A lower or
+ * equal seq changes nothing. Returns the new cursor when it moved.
+ */
+export function markRead(
+  db: Db,
+  userId: string,
+  seq: number,
+): { changed: true; cursor: { seq: number; at: number } } | { changed: false } {
+  return db.transaction((tx) => {
+    const newest = Number(
+      tx
+        .select({ m: sql<number>`coalesce(max(${messages.seq}), 0)` })
+        .from(messages)
+        .get()?.m ?? 0,
+    )
+    const target = Math.min(seq, newest)
+    const current = tx.select({ seq: readState.lastReadSeq }).from(readState).where(eq(readState.userId, userId)).get()
+    if (target <= (current?.seq ?? 0)) return { changed: false as const }
+    const readAt = new Date()
+    tx.insert(readState)
+      .values({ userId, lastReadSeq: target, readAt })
+      .onConflictDoUpdate({ target: readState.userId, set: { lastReadSeq: target, readAt } })
+      .run()
+    return { changed: true as const, cursor: { seq: target, at: readAt.getTime() } }
+  })
+}
+
 /** Every person's read cursor (empty until someone has read something). */
 export function readCursors(db: DbOrTx): ReadCursor[] {
   return db

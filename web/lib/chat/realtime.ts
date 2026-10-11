@@ -68,6 +68,11 @@ class Realtime {
     this.cleanups.push(() => target.removeEventListener(type, fn))
   }
 
+  /** CHAT-06: tell the other person you are typing (dropped silently while not connected). */
+  sendTyping(): void {
+    this.send({ t: "typing" })
+  }
+
   private send(frame: ClientFrame): boolean {
     return this.live && this.client !== null && this.client.send(frame)
   }
@@ -157,6 +162,12 @@ class Realtime {
       case "msg":
         chatStore.applyMessage(frame.message)
         return
+      case "typing":
+        chatStore.peerTyping(frame.userId)
+        return
+      case "read":
+        chatStore.applyRead({ userId: frame.userId, seq: frame.seq, at: frame.at })
+        return
       case "pong":
         this.clearPong()
         if (navigator.onLine) chatStore.setConnection("live")
@@ -243,6 +254,11 @@ export function startRealtime(opts: RealtimeOptions): void {
   }
   current = new Realtime(opts)
   current.start()
+}
+
+/** Send one typing frame on the tab's connection (the composer throttles it to one per 3 s). */
+export function sendTyping(): void {
+  current?.sendTyping()
 }
 
 /** Close the realtime connection and stop reconnecting. */

@@ -128,6 +128,15 @@ export const SendMessageResponse = z.object({
 })
 export type SendMessageResponse = z.infer<typeof SendMessageResponse>
 
+/** POST /api/read body: the highest seq on screen. The reader always comes from the session. */
+export const ReadBody = z.strictObject({
+  seq: z.number().int().positive(),
+})
+export type ReadBody = z.infer<typeof ReadBody>
+
+export const ReadResponse = z.object({ ok: z.literal(true) })
+export type ReadResponse = z.infer<typeof ReadResponse>
+
 /** GET /api/messages query: the page of messages with seq < before (or the newest page). */
 export const MessagesQuery = z.object({
   before: z.coerce.number().int().positive().optional(),

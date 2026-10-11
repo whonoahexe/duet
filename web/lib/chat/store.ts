@@ -6,11 +6,13 @@ import {
   MessagesPage,
   PAGE_SIZE_DEFAULT,
   PAGE_SIZE_MAX,
+  ReadResponse,
   SendMessageResponse,
   SyncResponse,
   mergeMessages,
   type MeResponse,
   type MessageDto,
+  type ReadCursor,
   type Reaction,
   type UserSummary,
 } from "@duet/shared"
@@ -44,7 +46,14 @@ export interface ChatState {
   replyTarget: number | null
   /** The message just jumped to from a quote; it is highlighted for JUMP_HIGHLIGHT_MS. */
   highlightSeq: number | null
+  /** Read cursors by user id (CHAT-07): the highest seq each person has seen, and when. */
+  reads: Record<string, { seq: number; at: number | null }>
+  /** The other person is typing until this time (epoch ms); null when not typing (CHAT-06). */
+  typingUntil: number | null
 }
+
+/** A peer typing frame keeps the indicator up this long (frames arrive at most every 3 s). */
+export const TYPING_TTL_MS = 5000
 
 /** How long a message jumped to from a quote keeps its accent ring (UI-SPEC accent item 6). */
 export const JUMP_HIGHLIGHT_MS = 1200
@@ -63,6 +72,8 @@ const EMPTY: ChatState = {
   newWhileAway: 0,
   replyTarget: null,
   highlightSeq: null,
+  reads: {},
+  typingUntil: null,
 }
 
 let state: ChatState = EMPTY
@@ -73,6 +84,27 @@ let onLoggedOut: () => void = () => {}
 let syncing = false
 let syncAgain = false
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
+let typingTimer: ReturnType<typeof setTimeout> | null = null
+/** Highest seq already sent to POST /api/read in this session (avoids repeating a receipt). */
+let lastReadSent = 0
+
+/** Merge read cursors, never moving one backwards. Returns the same object when nothing moved. */
+function mergeReads(current: ChatState["reads"], incoming: ReadCursor[]): ChatState["reads"] {
+  let next = current
+  for (const r of incoming) {
+    const have = next[r.userId]
+    if (have && have.seq >= r.seq) continue
+    if (next === current) next = { ...current }
+    next[r.userId] = { seq: r.seq, at: r.at }
+  }
+  return next
+}
+
+function clearTyping(): void {
+  if (typingTimer !== null) clearTimeout(typingTimer)
+  typingTimer = null
+  if (state.typingUntil !== null) set({ typingUntil: null })
+}
 
 function set(patch: Partial<ChatState>): void {
   state = { ...state, ...patch }
@@ -134,6 +166,9 @@ export const chatStore = {
     syncAgain = false
     if (highlightTimer !== null) clearTimeout(highlightTimer)
     highlightTimer = null
+    if (typingTimer !== null) clearTimeout(typingTimer)
+    typingTimer = null
+    lastReadSent = 0
     outbox.clear()
     set(EMPTY)
   },
@@ -151,6 +186,7 @@ export const chatStore = {
       const newer = state.messages.filter((m) => m.seq > lastSeq)
       set({
         messages: mergeMessages(page.messages, newer, null),
+        reads: mergeReads(state.reads, page.reads),
         cursor: page.cursor,
         oldestSeq: page.messages[0]?.seq ?? null,
         hasMore: page.hasMore,
@@ -178,6 +214,7 @@ export const chatStore = {
       const older = page.messages.filter((m) => m.seq < before)
       set({
         messages: mergeMessages(state.messages, older, null),
+        reads: mergeReads(state.reads, page.reads),
         oldestSeq: older[0]?.seq ?? state.oldestSeq,
         hasMore: page.hasMore,
         history: page.hasMore ? "idle" : "done",
@@ -193,6 +230,12 @@ export const chatStore = {
   applyMessages(incoming: MessageDto[]): void {
     if (incoming.length === 0) return
     for (const m of incoming) outbox.confirm(m.id)
+    // Their message arrived: they are no longer typing it (CHAT-06).
+    const peerId = state.peer?.id
+    if (state.typingUntil !== null && peerId && incoming.some((m) => m.senderId === peerId)) {
+      const known = new Set(state.messages.map((m) => m.seq))
+      if (incoming.some((m) => m.senderId === peerId && !known.has(m.seq))) clearTyping()
+    }
     const messages = mergeMessages(state.messages, incoming, state.oldestSeq)
     const cursor = Math.max(state.cursor, ...incoming.map((m) => m.updatedSeq))
     if (messages === state.messages && cursor === state.cursor) return
@@ -228,6 +271,8 @@ export const chatStore = {
           return
         }
         chatStore.applyMessages(res.messages)
+        const reads = mergeReads(state.reads, res.reads)
+        if (reads !== state.reads) set({ reads })
         if (res.cursor !== state.cursor) set({ cursor: res.cursor })
       } while (syncAgain)
     } catch (err) {
@@ -269,6 +314,7 @@ export const chatStore = {
           const older = page.messages.filter((m) => m.seq < before)
           set({
             messages: mergeMessages(state.messages, older, null),
+            reads: mergeReads(state.reads, page.reads),
             oldestSeq: older[0]?.seq ?? state.oldestSeq,
             hasMore: page.hasMore && older.length > 0,
           })
@@ -315,6 +361,42 @@ export const chatStore = {
       if (isLoggedOutError(err)) return loggedOut()
       toast.error("Couldn't react. Try again.")
     }
+  },
+
+  /** A typing frame from the other person: show the indicator for TYPING_TTL_MS more. */
+  peerTyping(userId: string): void {
+    if (!state.peer || userId !== state.peer.id) return
+    if (typingTimer !== null) clearTimeout(typingTimer)
+    const until = Date.now() + TYPING_TTL_MS
+    set({ typingUntil: until })
+    typingTimer = setTimeout(() => {
+      typingTimer = null
+      if (state.typingUntil === until) set({ typingUntil: null })
+    }, TYPING_TTL_MS)
+  },
+
+  /** A read frame: someone's cursor moved forward (never backwards). */
+  applyRead(read: ReadCursor): void {
+    const reads = mergeReads(state.reads, [read])
+    if (reads !== state.reads) set({ reads })
+  },
+
+  /**
+   * Send a read receipt up to seq (CHAT-07). The caller guarantees the message was on a visible,
+   * focused screen (Pitfall 14). Repeats and seqs at or below your cursor are skipped.
+   */
+  markReadUpTo(seq: number): void {
+    const me = state.me
+    if (!me) return
+    if (seq <= Math.max(lastReadSent, state.reads[me.id]?.seq ?? 0)) return
+    lastReadSent = seq
+    const gen = generation
+    apiPost("/api/read", { seq }, ReadResponse).catch((err) => {
+      if (gen !== generation) return
+      if (isLoggedOutError(err)) return loggedOut()
+      // Let the next visible check send it again.
+      if (lastReadSent === seq) lastReadSent = 0
+    })
   },
 
   setConnection(connection: ConnectionState): void {

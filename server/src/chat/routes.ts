@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 import {
   MessagesQuery,
   ReactionBody,
+  ReadBody,
   SendMessageBody,
   SyncQuery,
   type MessagesPage,
@@ -13,6 +14,7 @@ import {
   ChatError,
   currentCursor,
   latestPage,
+  markRead,
   readCursors,
   sendMessage,
   setReaction,
@@ -86,6 +88,23 @@ export async function chatRoutes(app: FastifyInstance) {
     request.log.info({ evt: "reaction", userId, seq, changed: result.changed })
     const body: SendMessageResponse = { message }
     return body
+  })
+
+  /**
+   * Read receipt (CHAT-07, D-03): the client sends the highest seq that was on a visible, focused
+   * screen (T-02-11). The cursor only moves forward; each advance is broadcast to both people.
+   */
+  app.post("/api/read", { preHandler: requireUser }, async (request, reply) => {
+    reply.header("Cache-Control", "no-store")
+    const parsed = ReadBody.safeParse(request.body)
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" })
+    const userId = request.user!.id
+    const result = markRead(app.db, userId, parsed.data.seq)
+    if (result.changed) {
+      app.hub.broadcast({ t: "read", userId, seq: result.cursor.seq, at: result.cursor.at })
+      request.log.info({ evt: "read", userId, seq: result.cursor.seq })
+    }
+    return { ok: true }
   })
 
   app.get("/api/messages", { preHandler: requireUser }, async (request, reply) => {

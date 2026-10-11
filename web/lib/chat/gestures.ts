@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 
 /** Hold this long to open the message menu (D-01). */
 export const LONG_PRESS_MS = 450
@@ -40,7 +40,9 @@ export function useLongPress({ onOpen, disabled = false }: { onOpen: () => void;
   /** The current gesture already opened the menu. */
   const fired = useRef(false)
   const onOpenRef = useRef(onOpen)
-  onOpenRef.current = onOpen
+  useLayoutEffect(() => {
+    onOpenRef.current = onOpen
+  })
 
   const clear = useCallback(() => {
     if (timer.current !== null) {
@@ -146,7 +148,9 @@ export function useSwipeReply({ onReply, disabled = false }: { onReply: () => vo
   const offsetRef = useRef(0)
   const swiped = useRef(false)
   const onReplyRef = useRef(onReply)
-  onReplyRef.current = onReply
+  useLayoutEffect(() => {
+    onReplyRef.current = onReply
+  })
 
   const end = useCallback((commit: boolean) => {
     const s = start.current

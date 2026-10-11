@@ -50,6 +50,8 @@ export const ClientFrame = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("ping") }),
   /** Whether this client is in the foreground (D-15: no push while viewing). */
   z.strictObject({ t: z.literal("presence"), visible: z.boolean() }),
+  /** The composer is non-empty (CHAT-06); sent at most every 3 s. Ephemeral: never stored. */
+  z.strictObject({ t: z.literal("typing") }),
 ])
 export type ClientFrame = z.infer<typeof ClientFrame>
 
@@ -74,5 +76,9 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("pong") }),
   /** A new or changed message (CHAT-01): the client inserts or replaces it by seq. */
   z.object({ t: z.literal("msg"), message: MessageDto }),
+  /** The other person is typing (CHAT-06). Relayed only to the other person's connections. */
+  z.object({ t: z.literal("typing"), userId: z.uuid() }),
+  /** A person's read cursor moved forward to seq at `at` (epoch ms) (CHAT-07). */
+  z.object({ t: z.literal("read"), userId: z.uuid(), seq: z.number().int().nonnegative(), at: z.number().int() }),
 ])
 export type ServerFrame = z.infer<typeof ServerFrame>

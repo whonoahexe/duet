@@ -48,12 +48,16 @@ async function statusTexts(page) {
   return (await page.getByTestId("message-status").allTextContents()).map((t) => t.trim())
 }
 
+/** `expected` is an exact text, or DELIVERED ("Sent", or "Read {time}" once the other page saw it, D-03). */
+const DELIVERED = Symbol("delivered")
+
 async function waitForStatus(page, expected, timeout) {
   const deadline = Date.now() + timeout
   for (;;) {
     const texts = await statusTexts(page)
-    if (texts.length === 1 && texts[0] === expected) return
-    if (Date.now() > deadline) throw new Error(`${page.__name}'s status is [${texts.join(" | ")}], expected "${expected}"`)
+    const ok = expected === DELIVERED ? (t) => t === "Sent" || /^Read \S/.test(t) : (t) => t === expected
+    if (texts.length === 1 && ok(texts[0])) return
+    if (Date.now() > deadline) throw new Error(`${page.__name}'s status is [${texts.join(" | ")}], expected "${String(expected)}"`)
     await new Promise((r) => setTimeout(r, 100))
   }
 }
@@ -113,11 +117,13 @@ const scenarios = {
     const text = uniqueText("hello from ada")
     await sendFromComposer(ada, BOB.displayName, text)
     await expectExactlyOnce(bob, text, 5_000)
-    // D-03: exactly one status line on Ada's side, under her latest message, reading "Sent".
-    await waitForStatus(ada, "Sent", 5_000)
+    // D-03: exactly one status line on Ada's side, under her latest message, reading "Sent" (or already
+    // "Read {time}", because Bob's open, focused page has it on screen).
+    await waitForStatus(ada, DELIVERED, 5_000)
     const sentBubble = ada.locator('[data-slot="bubble"]').filter({ has: bubbles(ada, text) })
     const footer = sentBubble.locator("xpath=following-sibling::*[1]")
-    if ((await footer.getAttribute("data-testid")) !== "message-status" || (await footer.textContent())?.trim() !== "Sent") {
+    const footerText = (await footer.textContent())?.trim() ?? ""
+    if ((await footer.getAttribute("data-testid")) !== "message-status" || !(footerText === "Sent" || footerText.startsWith("Read "))) {
       throw new Error("Ada's status line is not directly under her latest bubble")
     }
     await bob.reload()
@@ -143,7 +149,7 @@ const scenarios = {
       await ada.context().setOffline(false)
     }
     await expectExactlyOnce(bob, text, 10_000)
-    await waitForStatus(ada, "Sent", 10_000)
+    await waitForStatus(ada, DELIVERED, 10_000)
     await expectExactlyOnce(ada, text, 1_000)
   },
 
@@ -202,7 +208,7 @@ const scenarios = {
       await sendFromComposer(ada, BOB.displayName, text)
       await expectExactlyOnce(ada, text, 5_000)
     }
-    await waitForStatus(ada, "Sent", 10_000)
+    await waitForStatus(ada, DELIVERED, 10_000)
     await new Promise((r) => setTimeout(r, 3_000))
     for (const text of texts) {
       if ((await bubbles(bob, text).count()) !== 0) throw new Error("Bob got a message while his socket was down")
@@ -295,6 +301,41 @@ const scenarios = {
       },
       10_000,
       "tapping the quote did not bring the highlighted original into view",
+    )
+  },
+
+  /**
+   * CHAT-06 / CHAT-07 / D-03: Ada typing shows Bob the three dots, which go away after she stops (5 s
+   * TTL) or as soon as her message arrives; once Bob's page is in front with her message on screen,
+   * Ada's status line reads "Read {time}".
+   */
+  async "typing-read"({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const box = ada.getByPlaceholder(`Message ${BOB.displayName}`)
+    const dots = bob.getByLabel(`${ADA.displayName} is typing`, { exact: true })
+
+    await box.fill("still thinking about it")
+    await dots.waitFor({ state: "visible", timeout: 3_000 })
+    await box.fill("")
+    await dots.waitFor({ state: "hidden", timeout: 8_000 })
+
+    // Typing again, then sending: the dots leave with the message, well before their TTL.
+    await box.fill("one more")
+    await dots.waitFor({ state: "visible", timeout: 3_000 })
+    const text = uniqueText("read me")
+    await box.fill(text)
+    await ada.getByRole("button", { name: "Send message" }).click()
+    await expectExactlyOnce(bob, text, 5_000)
+    await dots.waitFor({ state: "hidden", timeout: 2_000 })
+
+    await bob.bringToFront()
+    await until(
+      async () => {
+        const texts = await statusTexts(ada)
+        return texts.length === 1 && /^Read \S/.test(texts[0])
+      },
+      5_000,
+      "Ada's status line never turned into Read {time}",
     )
   },
 }
