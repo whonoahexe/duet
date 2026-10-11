@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import {
   MessagesPage,
   PAGE_SIZE_DEFAULT,
+  PAGE_SIZE_MAX,
   SendMessageResponse,
   SyncResponse,
   mergeMessages,
@@ -34,11 +35,19 @@ export interface ChatState {
   /** Older messages exist on the server. */
   hasMore: boolean
   initial: "loading" | "ready" | "error"
-  history: "idle" | "loading" | "error" | "done"
+  /** "finding" = paging back to a quoted message that is not loaded yet (D-02). */
+  history: "idle" | "loading" | "error" | "done" | "finding"
   connection: ConnectionState
   /** Incoming messages that arrived while the list was scrolled away from the bottom. */
   newWhileAway: number
+  /** The message the composer is replying to (D-01, D-02), or null. */
+  replyTarget: number | null
+  /** The message just jumped to from a quote; it is highlighted for JUMP_HIGHLIGHT_MS. */
+  highlightSeq: number | null
 }
+
+/** How long a message jumped to from a quote keeps its accent ring (UI-SPEC accent item 6). */
+export const JUMP_HIGHLIGHT_MS = 1200
 
 const EMPTY: ChatState = {
   me: null,
@@ -52,6 +61,8 @@ const EMPTY: ChatState = {
   history: "idle",
   connection: "connecting",
   newWhileAway: 0,
+  replyTarget: null,
+  highlightSeq: null,
 }
 
 let state: ChatState = EMPTY
@@ -61,6 +72,7 @@ let generation = 0
 let onLoggedOut: () => void = () => {}
 let syncing = false
 let syncAgain = false
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 function set(patch: Partial<ChatState>): void {
   state = { ...state, ...patch }
@@ -72,7 +84,14 @@ function loggedOut(): void {
 }
 
 const outbox = createOutbox({
-  send: async (entry) => (await apiPost("/api/messages", { id: entry.id, body: entry.body }, SendMessageResponse)).message,
+  send: async (entry) =>
+    (
+      await apiPost(
+        "/api/messages",
+        { id: entry.id, body: entry.body, ...(entry.replyToSeq ? { replyToSeq: entry.replyToSeq } : {}) },
+        SendMessageResponse,
+      )
+    ).message,
   isConnected: () => navigator.onLine && state.connection === "live",
   onChange: (entries) => set({ pending: entries }),
   onConfirmed: (message) => chatStore.applyMessages([message]),
@@ -113,6 +132,8 @@ export const chatStore = {
     generation += 1
     syncing = false
     syncAgain = false
+    if (highlightTimer !== null) clearTimeout(highlightTimer)
+    highlightTimer = null
     outbox.clear()
     set(EMPTY)
   },
@@ -218,10 +239,55 @@ export const chatStore = {
     }
   },
 
-  /** Queue a text message and start sending it. */
-  sendText(body: string): void {
-    outbox.enqueue(body)
+  /** Queue a text message (optionally a reply) and start sending it. */
+  sendText(body: string, replyToSeq: number | null = null): void {
+    outbox.enqueue(body, replyToSeq)
     void outbox.flush()
+  },
+
+  /** Start (seq) or cancel (null) replying to a message; the composer shows the reply chip. */
+  setReplyTarget(seq: number | null): void {
+    if (state.replyTarget !== seq) set({ replyTarget: seq })
+  },
+
+  /**
+   * Jump to a quoted message (D-02): when it is older than the loaded window, page back in steps of
+   * PAGE_SIZE_MAX (history "finding") until it is loaded or history ends, then highlight it for
+   * JUMP_HIGHLIGHT_MS. The list scrolls to highlightSeq.
+   */
+  async jumpTo(seq: number): Promise<void> {
+    if (state.initial !== "ready") return
+    const gen = generation
+    if (state.oldestSeq !== null && seq < state.oldestSeq && state.hasMore) {
+      if (state.history === "loading" || state.history === "finding") return
+      set({ history: "finding" })
+      try {
+        while (state.oldestSeq !== null && seq < state.oldestSeq && state.hasMore) {
+          const before = state.oldestSeq
+          const page = await apiGet(`/api/messages?before=${before}&limit=${PAGE_SIZE_MAX}`, MessagesPage)
+          if (gen !== generation) return
+          const older = page.messages.filter((m) => m.seq < before)
+          set({
+            messages: mergeMessages(state.messages, older, null),
+            oldestSeq: older[0]?.seq ?? state.oldestSeq,
+            hasMore: page.hasMore && older.length > 0,
+          })
+        }
+        set({ history: state.hasMore ? "idle" : "done" })
+      } catch (err) {
+        if (gen !== generation) return
+        if (isLoggedOutError(err)) return loggedOut()
+        set({ history: "error" })
+        return
+      }
+    }
+    if (!state.messages.some((m) => m.seq === seq)) return
+    if (highlightTimer !== null) clearTimeout(highlightTimer)
+    set({ highlightSeq: seq })
+    highlightTimer = setTimeout(() => {
+      highlightTimer = null
+      if (gen === generation && state.highlightSeq === seq) set({ highlightSeq: null })
+    }, JUMP_HIGHLIGHT_MS)
   },
 
   /** Send everything still queued (hello, online). */

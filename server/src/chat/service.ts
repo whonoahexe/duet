@@ -1,5 +1,16 @@
 import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm"
-import { SYNC_MAX, type AttachmentDto, type MessageDto, type ReadCursor, type SendMessageBody } from "@duet/shared"
+import {
+  REPLY_SNIPPET_MAX_GRAPHEMES,
+  SYNC_MAX,
+  mediaLabel,
+  truncateGraphemes,
+  type AttachmentDto,
+  type AttachmentKind,
+  type MessageDto,
+  type ReadCursor,
+  type ReplyPreview,
+  type SendMessageBody,
+} from "@duet/shared"
 import type { Db } from "../db/client"
 import { attachments, messages, reactions, readState } from "../db/schema"
 
@@ -40,18 +51,25 @@ export function nextUpdatedSeq(tx: DbOrTx): number {
 /**
  * Idempotent text send (CHAT-01, CHAT-04). One synchronous transaction: a replayed id from the same
  * sender returns the stored row unchanged (created false); an id owned by the other person is a 409
- * id_conflict and their row is untouched (T-02-02). The body is stored exactly as received.
+ * id_conflict and their row is untouched (T-02-02). The body is stored exactly as received. A
+ * replyToSeq must name an existing message, checked inside the same transaction (400 bad_reply,
+ * T-02-13).
  */
 export function sendMessage(
   db: Db,
   senderId: string,
-  input: Pick<SendMessageBody, "id" | "body">,
+  input: Pick<SendMessageBody, "id" | "body" | "replyToSeq">,
 ): { row: MessageRow; created: boolean } {
   return db.transaction((tx) => {
     const existing = tx.select().from(messages).where(eq(messages.id, input.id)).get()
     if (existing) {
       if (existing.senderId !== senderId) throw new ChatError("id_conflict", 409)
       return { row: existing, created: false }
+    }
+    const replyToSeq = input.replyToSeq ?? null
+    if (replyToSeq !== null) {
+      const parent = tx.select({ seq: messages.seq }).from(messages).where(eq(messages.seq, replyToSeq)).get()
+      if (!parent) throw new ChatError("bad_reply", 400)
     }
     const updatedSeq = nextUpdatedSeq(tx)
     const row = tx
@@ -61,7 +79,7 @@ export function sendMessage(
         senderId,
         kind: "text",
         body: input.body,
-        replyToSeq: null,
+        replyToSeq,
         createdAt: new Date(),
         updatedSeq,
       })
@@ -122,8 +140,57 @@ function parseWaveform(raw: string | null): number[] | null {
 }
 
 /**
+ * Reply previews for the given parent seqs (D-02, CHAT-09): one query for the parents and one for
+ * their attachments. Parents are never expanded further (a preview has no replyTo of its own). A
+ * parent that no longer exists simply has no preview.
+ */
+function replyPreviews(db: DbOrTx, parentSeqs: number[]): Map<number, ReplyPreview> {
+  const out = new Map<number, ReplyPreview>()
+  if (parentSeqs.length === 0) return out
+  const parents = db
+    .select({ seq: messages.seq, senderId: messages.senderId, kind: messages.kind, body: messages.body })
+    .from(messages)
+    .where(inArray(messages.seq, parentSeqs))
+    .all()
+  const atts = db
+    .select({ messageSeq: attachments.messageSeq, id: attachments.id, kind: attachments.kind })
+    .from(attachments)
+    .where(inArray(attachments.messageSeq, parentSeqs))
+    .orderBy(asc(attachments.messageSeq), asc(attachments.position))
+    .all()
+  const attsBySeq = new Map<number, { id: string; kind: AttachmentKind }[]>()
+  for (const a of atts) {
+    if (a.messageSeq === null) continue
+    const list = attsBySeq.get(a.messageSeq) ?? []
+    list.push({ id: a.id, kind: a.kind })
+    attsBySeq.set(a.messageSeq, list)
+  }
+  for (const p of parents) {
+    const list = attsBySeq.get(p.seq) ?? []
+    const text = p.body ?? ""
+    const snippet =
+      p.kind === "text" || text.length > 0
+        ? truncateGraphemes(text, REPLY_SNIPPET_MAX_GRAPHEMES)
+        : mediaLabel(
+            list.map((a) => a.kind),
+            { emoji: false },
+          )
+    const visual = list.find((a) => a.kind === "image" || a.kind === "video")
+    out.set(p.seq, {
+      seq: p.seq,
+      senderId: p.senderId,
+      kind: p.kind,
+      snippet,
+      attachmentCount: list.length,
+      thumb: visual ? { id: visual.id, kind: visual.kind } : null,
+    })
+  }
+  return out
+}
+
+/**
  * Message rows -> MessageDto[] in the same order, with explicit column projection: one query for the
- * attachments of every row (ordered by position) and one for the reactions.
+ * attachments of every row (ordered by position), one for the reactions, and two for reply previews.
  */
 export function toDtos(db: DbOrTx, rows: MessageRow[]): MessageDto[] {
   if (rows.length === 0) return []
@@ -177,6 +244,10 @@ export function toDtos(db: DbOrTx, rows: MessageRow[]): MessageDto[] {
     reactsBySeq.set(r.messageSeq, list)
   }
 
+  const previews = replyPreviews(db, [
+    ...new Set(rows.map((r) => r.replyToSeq).filter((s): s is number => s !== null)),
+  ])
+
   return rows.map((r) => ({
     seq: r.seq,
     id: r.id,
@@ -185,7 +256,7 @@ export function toDtos(db: DbOrTx, rows: MessageRow[]): MessageDto[] {
     body: r.body,
     createdAt: r.createdAt.getTime(),
     updatedSeq: r.updatedSeq,
-    replyTo: null,
+    replyTo: r.replyToSeq !== null ? (previews.get(r.replyToSeq) ?? null) : null,
     attachments: attsBySeq.get(r.seq) ?? [],
     reactions: reactsBySeq.get(r.seq) ?? [],
   }))

@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { ArrowDownIcon, ChatCircleIcon, CloudSlashIcon } from "@phosphor-icons/react"
-import { messageLabel, type MessageDto, type ReactionDto, type UserSummary } from "@duet/shared"
+import { messageLabel, type MessageDto, type ReactionDto, type ReplyPreview, type UserSummary } from "@duet/shared"
 import { Composer } from "@/components/app/composer"
 import { MessageGroupRow, type GroupItem, type RowStatus } from "@/components/app/message-row"
+import { localReplyPreview } from "@/components/app/quote-block"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
@@ -41,6 +42,7 @@ interface DisplayMessage {
   confirmed: boolean
   failed: boolean
   reactions: ReactionDto[]
+  replyTo: ReplyPreview | null
 }
 
 type ListItem =
@@ -100,6 +102,14 @@ function buildItems(messages: DisplayMessage[], now: number): ListItem[] {
 
 /** Top-of-list row: loading / error / beginning of the conversation (CHAT-02). */
 function HistoryMarker({ chat, peerName }: { chat: ChatState; peerName: string }) {
+  if (chat.history === "finding") {
+    return (
+      <Marker className="justify-center">
+        <Spinner />
+        <MarkerContent>Finding message…</MarkerContent>
+      </Marker>
+    )
+  }
   if (chat.history === "loading") {
     return (
       <Marker className="justify-center">
@@ -189,6 +199,30 @@ function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) 
   )
 }
 
+/**
+ * Lives inside the scroller provider: when a quote jump sets highlightSeq (D-02), scroll the item that
+ * holds that message into view (an item is a whole sender group, keyed by its first message id).
+ */
+function JumpFollower({ highlightSeq, itemIdBySeq }: { highlightSeq: number | null; itemIdBySeq: Map<number, string> }) {
+  const { scrollToMessage } = useMessageScroller()
+  const mapRef = useRef(itemIdBySeq)
+  mapRef.current = itemIdBySeq
+
+  useEffect(() => {
+    if (highlightSeq === null) return
+    const itemId = mapRef.current.get(highlightSeq)
+    if (!itemId) return
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    // Wait one frame so a just-prepended page is laid out before measuring.
+    const raf = requestAnimationFrame(() => {
+      scrollToMessage(itemId, { align: "center", behavior: reduce ? "auto" : "smooth" })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [highlightSeq, scrollToMessage])
+
+  return null
+}
+
 /** The conversation: a bottom-anchored message list (the only scroller) above the composer. */
 export function ChatView({ peer }: { peer: UserSummary }) {
   const chat = useChat()
@@ -258,6 +292,13 @@ export function ChatView({ peer }: { peer: UserSummary }) {
     )
   }
 
+  /** Outbox replies are quoted from the loaded original until the server's own preview arrives. */
+  function replyPreviewFor(seq: number | null): ReplyPreview | null {
+    if (seq === null) return null
+    const original = chat.messages.find((m) => m.seq === seq)
+    return original ? localReplyPreview(original) : null
+  }
+
   // Confirmed messages by seq, then the outbox by createdAt (CHAT-04).
   const display: DisplayMessage[] = [
     ...chat.messages.map((m) => ({
@@ -269,6 +310,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       confirmed: true,
       failed: false,
       reactions: m.reactions,
+      replyTo: m.replyTo,
     })),
     ...chat.pending.map((p) => ({
       id: p.id,
@@ -279,6 +321,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       confirmed: false,
       failed: p.state === "failed",
       reactions: [],
+      replyTo: replyPreviewFor(p.replyToSeq ?? null),
     })),
   ]
 
@@ -301,10 +344,17 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       failed: m.failed,
       onRetry: m.failed ? () => chatStore.retry(m.id) : undefined,
       reactions: m.reactions,
+      replyTo: m.replyTo,
+      highlighted: m.seq !== null && m.seq === chat.highlightSeq,
     }
   }
 
   const items = buildItems(display, Date.now())
+  const itemIdBySeq = new Map<number, string>()
+  for (const item of items) {
+    if (item.kind !== "group") continue
+    for (const m of item.messages) if (m.seq !== null) itemIdBySeq.set(m.seq, item.messages[0].id)
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -341,6 +391,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
                         mine={item.senderId === meId}
                         items={item.messages.map(toItem)}
                         meId={meId ?? null}
+                        peerName={peer.displayName}
                       />
                     </MessageScrollerItem>
                   ) : (
@@ -367,6 +418,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
               )}
             </MessageScrollerButton>
             <ScrollFollower chat={chat} peer={peer} />
+            <JumpFollower highlightSeq={chat.highlightSeq} itemIdBySeq={itemIdBySeq} />
           </MessageScroller>
         </MessageScrollerProvider>
       )}

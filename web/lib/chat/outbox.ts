@@ -8,6 +8,8 @@ export interface OutboxEntry extends OutboxEntryState {
   id: string
   body: string
   createdAt: number
+  /** The message this one replies to (D-02), kept across reloads so a retry still quotes it. */
+  replyToSeq?: number | null
 }
 
 /** localStorage key of one person's text outbox (cleared on logout). */
@@ -37,7 +39,8 @@ function isEntry(v: unknown): v is OutboxEntry {
     typeof e.body === "string" &&
     typeof e.createdAt === "number" &&
     typeof e.attempts === "number" &&
-    (e.state === "sending" || e.state === "failed")
+    (e.state === "sending" || e.state === "failed") &&
+    (e.replyToSeq === undefined || e.replyToSeq === null || (Number.isInteger(e.replyToSeq) && (e.replyToSeq as number) > 0))
   )
 }
 
@@ -170,9 +173,16 @@ export function createOutbox(deps: OutboxDeps) {
       return entries
     },
 
-    /** Queue a new text message (shown at once as "Sending…"). */
-    enqueue(body: string): OutboxEntry {
-      const entry: OutboxEntry = { id: crypto.randomUUID(), body, createdAt: Date.now(), attempts: 0, state: "sending" }
+    /** Queue a new text message (shown at once as "Sending…"), optionally replying to a message. */
+    enqueue(body: string, replyToSeq: number | null = null): OutboxEntry {
+      const entry: OutboxEntry = {
+        id: crypto.randomUUID(),
+        body,
+        createdAt: Date.now(),
+        attempts: 0,
+        state: "sending",
+        replyToSeq,
+      }
       commit([...entries, entry])
       return entry
     },

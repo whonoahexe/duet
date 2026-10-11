@@ -1,10 +1,12 @@
 "use client"
 
-import { useLayoutEffect, useRef, useState } from "react"
-import { PaperPlaneRightIcon } from "@phosphor-icons/react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react"
 import { isBlankBody } from "@duet/shared"
+import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
+import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
-import { chatStore } from "@/lib/chat/store"
+import { chatStore, useChat } from "@/lib/chat/store"
 
 /** Six 24px lines: the textarea grows to this, then scrolls inside. */
 const MAX_TEXTAREA_PX = 144
@@ -19,6 +21,15 @@ export function Composer({ peerName }: { peerName: string }) {
   const [text, setText] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
   const canSend = !isBlankBody(text)
+  const chat = useChat()
+  const meId = chat.me?.id ?? null
+  const replyTarget = chat.replyTarget
+  const replyMessage = replyTarget !== null ? chat.messages.find((m) => m.seq === replyTarget) : undefined
+
+  // Starting a reply (swipe or menu) focuses the field so the keyboard comes up (D-01).
+  useEffect(() => {
+    if (replyTarget !== null) ref.current?.focus()
+  }, [replyTarget])
 
   // Grow from one line to six, then scroll (field-sizing is not available on every phone).
   useLayoutEffect(() => {
@@ -31,7 +42,8 @@ export function Composer({ peerName }: { peerName: string }) {
 
   function send() {
     if (!canSend) return
-    chatStore.sendText(text)
+    chatStore.sendText(text, replyMessage ? replyMessage.seq : null)
+    chatStore.setReplyTarget(null)
     setText("")
     // Keep the keyboard up for the next message.
     ref.current?.focus()
@@ -46,6 +58,26 @@ export function Composer({ peerName }: { peerName: string }) {
 
   return (
     <div className="border-t bg-background px-4 py-2 pb-[max(8px,env(safe-area-inset-bottom))]">
+      {replyMessage && (
+        <div className="mb-2 flex items-start gap-2" data-testid="reply-chip">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="text-xs font-medium text-muted-foreground">
+              Replying to {replyMessage.senderId === meId ? "You" : peerName}
+            </span>
+            <QuoteBlock preview={localReplyPreview(replyMessage)} meId={meId} peerName={peerName} />
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Cancel reply"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => chatStore.setReplyTarget(null)}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      )}
       <InputGroup>
         <InputGroupTextarea
           ref={ref}

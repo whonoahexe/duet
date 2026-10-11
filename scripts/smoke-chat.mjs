@@ -18,9 +18,12 @@ function uniqueText(label) {
   return `${label} ${randomUUID().slice(0, 8)}`
 }
 
-/** Bubbles whose whole text is exactly `text` (the aria-live announcement carries a prefix). */
+/**
+ * Message texts that are exactly `text`: the body span of a bubble, never a quote snippet of a reply
+ * and never the aria-live announcement (which carries a prefix).
+ */
 function bubbles(page, text) {
-  return page.locator('[data-slot="bubble-content"]').getByText(text, { exact: true })
+  return page.locator('[data-testid="message-text"]').getByText(text, { exact: true })
 }
 
 async function openChat(page, peerName) {
@@ -81,6 +84,25 @@ async function reactTo(page, text, emoji) {
   await option.waitFor({ state: "visible", timeout: 3_000 })
   await option.click()
   await option.waitFor({ state: "hidden", timeout: 3_000 })
+}
+
+/** Drag a bubble `dx` px to the right with the mouse (pointer events), in 10 px steps. */
+async function swipeRight(page, locator, dx) {
+  await locator.scrollIntoViewIfNeeded()
+  const box = await locator.boundingBox()
+  if (!box) throw new Error("bubble has no box to swipe")
+  const x = box.x + Math.min(24, box.width / 2)
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  for (let moved = 10; moved <= dx; moved += 10) await page.mouse.move(x + moved, y)
+  await page.mouse.up()
+}
+
+/** The element is fully inside the message list's visible area. */
+async function inListView(page, locator) {
+  const [box, vp] = await Promise.all([locator.boundingBox(), viewport(page).boundingBox()])
+  return Boolean(box && vp && box.y >= vp.y - 1 && box.y + box.height <= vp.y + vp.height + 1)
 }
 
 /** name -> async ({ ada, bob }) => void. Each prints "scenario <name> ok" on success. */
@@ -208,6 +230,72 @@ const scenarios = {
     if ((await current.getAttribute("aria-pressed")) !== "true") throw new Error("Bob's current reaction is not highlighted")
     await current.click()
     await until(async () => (await chip.count()) === 0, 5_000, "Ada's chip did not disappear after Bob removed his reaction")
+  },
+
+  /**
+   * CHAT-09 / D-01 / D-02: Bob swipes Ada's message right and answers it; Ada sees the quote with the
+   * answer. After 150 newer messages and a reload, tapping a quote of that (now unloaded) original pages
+   * back ("Finding message…"), scrolls it into view and rings it.
+   */
+  async reply({ ada, bob, base }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const run = randomUUID().slice(0, 8)
+    const original = `quote me ${run}`
+    const answer = `my answer ${run}`
+    await sendFromComposer(ada, BOB.displayName, original)
+    await expectExactlyOnce(bob, original, 5_000)
+
+    await swipeRight(bob, bubbleOf(bob, original), 80)
+    await bob.getByText(`Replying to ${ADA.displayName}`, { exact: true }).waitFor({ state: "visible", timeout: 3_000 })
+    const focused = await bob.evaluate(() => document.activeElement?.getAttribute("placeholder"))
+    if (focused !== `Message ${ADA.displayName}`) throw new Error("the composer was not focused after the swipe")
+    await sendFromComposer(bob, ADA.displayName, answer)
+    await bob.getByTestId("reply-chip").waitFor({ state: "hidden", timeout: 3_000 })
+
+    const replyOnAda = bubbleOf(ada, answer)
+    await replyOnAda.waitFor({ state: "visible", timeout: 5_000 })
+    const quoteText = (await replyOnAda.getByTestId("quote-block").textContent()) ?? ""
+    if (!quoteText.includes(original) || !quoteText.includes("You")) {
+      throw new Error(`Ada's copy of the reply does not quote her message (quote reads "${quoteText}")`)
+    }
+
+    // Push the original out of the newest page, then quote it again from the newest message.
+    const originalSeq = Number(await bubbleOf(ada, original).getAttribute("data-seq"))
+    if (!Number.isInteger(originalSeq) || originalSeq < 1) throw new Error("original bubble has no data-seq")
+    // 150, not 60: the first screen loads two pages of 50, and the original must be beyond both.
+    for (let i = 1; i <= 150; i++) {
+      const res = await ada.context().request.post(`${base}/api/messages`, {
+        data: { id: randomUUID(), body: `filler ${run} ${i}` },
+        headers: { Origin: base },
+      })
+      if (res.status() !== 200) throw new Error(`filler ${i} returned ${res.status()}`)
+    }
+    const again = `again ${run}`
+    const res = await bob.context().request.post(`${base}/api/messages`, {
+      data: { id: randomUUID(), body: again, replyToSeq: originalSeq },
+      headers: { Origin: base },
+    })
+    if (res.status() !== 200) throw new Error(`second reply returned ${res.status()}`)
+
+    await ada.reload()
+    await ada.getByPlaceholder(`Message ${BOB.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
+    const latest = bubbleOf(ada, again)
+    await latest.waitFor({ state: "visible", timeout: 10_000 })
+    if ((await bubbles(ada, original).count()) !== 0) throw new Error("the original is still loaded; the jump would not page back")
+    await latest.getByTestId("quote-block").click()
+
+    const target = bubbleOf(ada, original)
+    let ringed = false
+    await until(
+      async () => {
+        if ((await target.count()) !== 1) return false
+        const cls = (await target.locator('[data-slot="bubble-content"]').getAttribute("class")) ?? ""
+        if (cls.includes("ring-primary")) ringed = true
+        return ringed && (await inListView(ada, target))
+      },
+      10_000,
+      "tapping the quote did not bring the highlighted original into view",
+    )
   },
 }
 

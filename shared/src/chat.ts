@@ -66,7 +66,14 @@ export const ReactionDto = z.object({
 })
 export type ReactionDto = z.infer<typeof ReactionDto>
 
-/** Server-built quote of the message being replied to, so it renders even when the original is not loaded. */
+/** Longest reply snippet, in user-perceived characters (graphemes), before "…". */
+export const REPLY_SNIPPET_MAX_GRAPHEMES = 120
+
+/**
+ * Server-built quote of the message being replied to, so it renders even when the original is not
+ * loaded. Only the direct parent is quoted (never nested). snippet = the parent's text or caption cut
+ * to REPLY_SNIPPET_MAX_GRAPHEMES, or the plain media label ("3 photos", "Voice note") without one.
+ */
 export const ReplyPreview = z.object({
   seq: z.number().int().positive(),
   senderId: z.uuid(),
@@ -109,6 +116,8 @@ export const SendMessageBody = z
   .strictObject({
     id: z.uuid(),
     body: z.string().max(MESSAGE_BODY_MAX_UTF16),
+    /** The message this one answers (D-02); it must exist, else 400 bad_reply. */
+    replyToSeq: z.number().int().positive().optional(),
   })
   .refine((b) => !isBlankBody(b.body), { path: ["body"], message: "blank" })
   .refine((b) => codePointLength(b.body) <= MESSAGE_BODY_MAX_CODE_POINTS, { path: ["body"], message: "too_long" })
