@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 02
 current_phase_name: Chat, Media & Push
 status: executing
-stopped_at: Phase 2 UI-SPEC approved
-last_updated: "2026-10-10T17:30:39.045Z"
-last_activity: 2026-10-09
-last_activity_desc: Completed 01-05 call test harness (headless both modes), deployed; cellular UAT pending
-state_head: 090cba34d77ae820573ca318925d60492bda21a8
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-10-11T07:47:40.529Z"
+last_activity: 2026-10-11
+last_activity_desc: Completed 02-01 real-time text chat (deployed); 02-02 and 02-03 next
+state_head: 4c5f8bfeb1f76195903714b3567423282ff604de
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 10
-  completed_plans: 5
+  completed_plans: 6
   percent: 33
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-08)
 
 **Core value:** The two of us can reliably message and call each other — on both phones, including over cellular — on infrastructure we fully control.
-**Current focus:** Phase 01 — Foundation, Auth & Media Plane
+**Current focus:** Phase 02 — Chat, Media & Push
 
 ## Current Position
 
-Phase: 02 (Chat, Media & Push) — READY TO EXECUTE
-Plan: 5 of 5 (all plans executed; end-of-phase UAT pending)
-Status: Awaiting end-of-phase UAT (cellular call test INFR-04 + 01-03 device install)
-Last activity: 2026-10-09 — Completed 01-05: /debug/call harness + headless smoke (host/host, relay-relay PASS over real Cloudflare TURN), call_smoke reports, "Call test" menu item, redeployed with /ws live; check-call-smoke.sh decides the cellular gate
+Phase: 02 (Chat, Media & Push) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-10-11 — Completed 02-01: text chat with outbox, paging, sync and presence; all Phase 2 tables live; deployed to duet.brkn.me
 
 Progress: [███░░░░░░░] 33%
 
@@ -61,6 +61,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 01 P03 | 12min | 2 tasks | 19 files |
 | Phase 01 P04 | 7h 11m | 3 tasks | 20 files |
 | Phase 01 P05 | 10min | 3 tasks | 21 files |
+| Phase 02 P01 | 50min | 3 tasks | 40 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,10 @@ Recent decisions affecting current work:
 - [Phase 01]: 01-05: Forced relay hairpins through Cloudflare from one host (relay-relay passed first try); MA5 relay-all fallback unused, MA6 cookie sharing works without fallback
 - [Phase 01]: 01-05: callVerdict lives in @duet/shared (failed > not_relayed > pass on growing bytes, relay required when forced > waiting); call reports go through one stopRun path plus the first PASS
 - [Phase 01]: 01-05: INFR-04 cellular gate is decided by scripts/check-call-smoke.sh from call_smoke log lines (two clientIds, one cfIp off the home egress IP, relay-only in forced mode)
+- [Phase 02]: 02-01: No react-query; one useSyncExternalStore chat store with mergeMessages (newer updatedSeq always wins, window floor)
+- [Phase 02]: 02-01: /api/sync cursor = last returned updatedSeq when hasMore else current max; >500 changes drops cache and reloads latest page
+- [Phase 02]: 02-01: Any chat 401 or 4401 resets store+outbox and returns to login; logout stops realtime before POST
+- [Phase 02]: 02-01: Bubble width fix: BubbleGroup w-full + wrap-anywhere on BubbleContent (utility classes only, preset files untouched)
 
 ### Pending Todos
 
@@ -116,6 +121,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-10T14:15:04.418Z
-Stopped at: Phase 2 UI-SPEC approved
-Resume file: .planning/phases/02-chat-media-push/02-UI-SPEC.md
+Last session: 2026-10-11T07:47:40.486Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: None

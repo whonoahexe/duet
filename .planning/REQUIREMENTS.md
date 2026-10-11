@@ -27,11 +27,11 @@
 
 ### Chat
 
-- [ ] **CHAT-01**: User can send and receive text messages in real time
-- [ ] **CHAT-02**: Full message history persists forever and loads with pagination when scrolling up
-- [ ] **CHAT-03**: Sent messages appear instantly and show status: sending / sent / read / failed
-- [ ] **CHAT-04**: Messages composed while offline are queued and sent automatically on reconnect; failed messages can be retried; retries never duplicate
-- [ ] **CHAT-05**: After the app resumes from background or reconnects, it catches up on everything missed
+- [x] **CHAT-01**: User can send and receive text messages in real time
+- [x] **CHAT-02**: Full message history persists forever and loads with pagination when scrolling up
+- [x] **CHAT-03**: Sent messages appear instantly and show status: sending / sent / read / failed
+- [x] **CHAT-04**: Messages composed while offline are queued and sent automatically on reconnect; failed messages can be retried; retries never duplicate
+- [x] **CHAT-05**: After the app resumes from background or reconnects, it catches up on everything missed
 - [ ] **CHAT-06**: User sees a typing indicator when the other person is typing
 - [ ] **CHAT-07**: User sees when the other person has read their messages (read receipts)
 - [ ] **CHAT-08**: User can react to a message with an emoji
@@ -127,11 +127,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SHEL-01 | Phase 1 | Gaps Found |
 | SHEL-02 | Phase 1 | Gaps Found |
 | SHEL-03 | Phase 2 | Pending |
-| CHAT-01 | Phase 2 | Pending |
-| CHAT-02 | Phase 2 | Pending |
-| CHAT-03 | Phase 2 | Pending |
-| CHAT-04 | Phase 2 | Pending |
-| CHAT-05 | Phase 2 | Pending |
+| CHAT-01 | Phase 2 | Complete |
+| CHAT-02 | Phase 2 | Complete |
+| CHAT-03 | Phase 2 | Complete |
+| CHAT-04 | Phase 2 | Complete |
+| CHAT-05 | Phase 2 | Complete |
 | CHAT-06 | Phase 2 | Pending |
 | CHAT-07 | Phase 2 | Pending |
 | CHAT-08 | Phase 2 | Pending |
