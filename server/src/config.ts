@@ -47,6 +47,16 @@ const EnvSchema = z
     // Lifetime of each minted TURN credential. Cloudflare allows at most 48 h.
     TURN_CREDENTIAL_TTL_SECONDS: z.coerce.number().int().min(60).max(172800).default(86400),
     CF_TURN_API_BASE: z.url().default("https://rtc.live.cloudflare.com"),
+    // NOTF-01: Web Push VAPID keypair (written by deploy/vapid-keys.sh). Optional, set together, so
+    // the app still boots without push; the push routes then answer 503 push_unconfigured.
+    VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+    VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+    // Pitfall 4: Apple rejects a VAPID subject that is not an https: URL or mailto:. Defaults to
+    // APP_ORIGIN when that is https (see the transform below).
+    VAPID_SUBJECT: z
+      .string()
+      .refine((v) => v.startsWith("https:") || v.startsWith("mailto:"), "VAPID_SUBJECT must start with https: or mailto:")
+      .optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && !env.APP_ORIGIN) {
@@ -66,14 +76,25 @@ const EnvSchema = z
         message: "CF_TURN_KEY_ID and CF_TURN_KEY_API_TOKEN must be set together",
       })
     }
+    if (Boolean(env.VAPID_PUBLIC_KEY) !== Boolean(env.VAPID_PRIVATE_KEY)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["VAPID_PUBLIC_KEY"],
+        message: "VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set together",
+      })
+    }
   })
-  .transform((env) => ({
-    ...env,
-    DATA_DIR: path.resolve(env.DATA_DIR),
-    WEB_OUT: path.resolve(env.WEB_OUT),
-    APP_ORIGIN: new URL(env.APP_ORIGIN ?? "http://localhost:3000").origin,
-    COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === "production",
-  }))
+  .transform((env) => {
+    const appOrigin = new URL(env.APP_ORIGIN ?? "http://localhost:3000").origin
+    return {
+      ...env,
+      DATA_DIR: path.resolve(env.DATA_DIR),
+      WEB_OUT: path.resolve(env.WEB_OUT),
+      APP_ORIGIN: appOrigin,
+      COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === "production",
+      VAPID_SUBJECT: env.VAPID_SUBJECT ?? (appOrigin.startsWith("https:") ? appOrigin : undefined),
+    }
+  })
 
 export type Config = z.output<typeof EnvSchema>
 
@@ -96,6 +117,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     "CF_TURN_KEY_API_TOKEN",
     "TURN_CREDENTIAL_TTL_SECONDS",
     "CF_TURN_API_BASE",
+    "VAPID_PUBLIC_KEY",
+    "VAPID_PRIVATE_KEY",
+    "VAPID_SUBJECT",
   ] as const
   const picked: Record<string, string | undefined> = {}
   for (const k of keys) {

@@ -4,7 +4,9 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import type { FastifyInstance } from "fastify"
 import { eq } from "drizzle-orm"
+import webpush from "web-push"
 import { buildApp } from "../src/app"
+import type { WebPushSend } from "../src/push/sender"
 import { loadConfig, type Config } from "../src/config"
 import { users } from "../src/db/schema"
 import { seedUsers, type SeedEntry } from "../src/db/seed"
@@ -22,6 +24,15 @@ export const TURN_TEST_ENV = {
   CF_TURN_KEY_ID: "test-key-id-0000",
   CF_TURN_KEY_API_TOKEN: "test-turn-bearer-0000",
 } as const
+
+/**
+ * A fresh VAPID pair plus an https subject (the test APP_ORIGIN is http, so the default would not
+ * apply). Generated per call: never a real deployment key.
+ */
+export function vapidTestEnv(): { VAPID_PUBLIC_KEY: string; VAPID_PRIVATE_KEY: string; VAPID_SUBJECT: string } {
+  const k = webpush.generateVAPIDKeys()
+  return { VAPID_PUBLIC_KEY: k.publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: "https://duet.test" }
+}
 
 export function testConfig(dataDir: string, extraEnv: Record<string, string | undefined> = {}): Config {
   return loadConfig({
@@ -54,6 +65,7 @@ export interface MakeTestAppOptions {
   turnTimeoutMs?: number
   logStream?: NodeJS.WritableStream
   heartbeatMs?: number
+  webPushSend?: WebPushSend
 }
 
 export async function makeTestApp({
@@ -64,9 +76,10 @@ export async function makeTestApp({
   turnTimeoutMs,
   logStream,
   heartbeatMs,
+  webPushSend,
 }: MakeTestAppOptions = {}): Promise<TestApp> {
   const dir = dataDir ?? makeDataDir()
-  const app = await buildApp(testConfig(dir, env), { fetch, turnTimeoutMs, logStream, heartbeatMs })
+  const app = await buildApp(testConfig(dir, env), { fetch, turnTimeoutMs, logStream, heartbeatMs, webPushSend })
   if (seed) {
     await seedUsers(app.db, [TEST_USERS.alice, TEST_USERS.bob])
   }

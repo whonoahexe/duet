@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { ChatCircleIcon, DotsThreeVerticalIcon, PhoneCallIcon, SignOutIcon } from "@phosphor-icons/react"
 import { OkResponse, type MeResponse } from "@duet/shared"
 import { ChatView } from "@/components/app/chat-view"
+import { NotificationsCard } from "@/components/app/notifications-card"
 import { initials } from "@/components/app/login-tiles"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -18,7 +19,9 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Toaster } from "@/components/ui/sonner"
 import { ApiError, apiPost } from "@/lib/api"
 import { startRealtime, stopRealtime } from "@/lib/chat/realtime"
+import { getPushState, prepare, type PushState } from "@/lib/chat/push"
 import { chatStore, useChat } from "@/lib/chat/store"
+import { isStandalone } from "@/lib/platform"
 
 /** Connection subline under the peer name: hidden when live, "Offline", or "Connecting…" after 2 s. */
 function ConnectionSubline() {
@@ -76,6 +79,20 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   const [loggingOut, setLoggingOut] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   useVisualViewportHeight(rootRef)
+  // D-16: the installed app shows the notifications card until push is on (null = not shown).
+  const [cardState, setCardState] = useState<PushState | null>(null)
+
+  useEffect(() => {
+    if (!isStandalone()) return
+    let cancelled = false
+    void prepare()
+    void getPushState().then((state) => {
+      if (!cancelled && state === "off") setCardState(state)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // The realtime manager outlives renders; it always calls the latest callback.
   const loggedOutRef = useRef(onLoggedOut)
@@ -168,6 +185,10 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
           </DropdownMenu>
         </div>
       </header>
+
+      {peer && cardState && (
+        <NotificationsCard peerName={peer.displayName} state={cardState} onStateChange={setCardState} />
+      )}
 
       <main className="flex min-h-0 flex-1 flex-col">
         {peer ? (

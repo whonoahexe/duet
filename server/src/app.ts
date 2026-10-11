@@ -13,6 +13,8 @@ import { isApiPath, originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
 import { rtcRoutes } from "./rtc/routes"
 import { chatRoutes } from "./chat/routes"
+import { pushRoutes } from "./push/routes"
+import type { WebPushSend } from "./push/sender"
 import { createChatEvents, type ChatEvents } from "./chat/events"
 import { createHub, type Hub } from "./ws/hub"
 import { wsRoutes } from "./ws/routes"
@@ -38,6 +40,8 @@ export interface AppDeps {
   logStream?: NodeJS.WritableStream
   /** /ws heartbeat ping interval. Default: 25000 ms (under Cloudflare's ~100 s idle cutoff). */
   heartbeatMs?: number
+  /** web-push send used for every Web Push. Default: webpush.sendNotification (real push services). */
+  webPushSend?: WebPushSend
 }
 
 export async function buildApp(config: Config, deps: AppDeps = {}): Promise<FastifyInstance> {
@@ -97,6 +101,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   await app.register(authRoutes)
   await app.register(rtcRoutes, { fetch: deps.fetch ?? globalThis.fetch, timeoutMs: deps.turnTimeoutMs ?? 5000 })
   await app.register(chatRoutes)
+  await app.register(pushRoutes, { send: deps.webPushSend })
   await app.register(wsRoutes)
 
   // One line at boot so a deploy without TURN is visible in the logs (never the key id or bearer).
@@ -104,6 +109,13 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     app.log.info({ evt: "turn_config", configured: true })
   } else {
     app.log.warn({ evt: "turn_config", configured: false })
+  }
+
+  // Same for Web Push (never a key value).
+  if (config.VAPID_PUBLIC_KEY && config.VAPID_PRIVATE_KEY && config.VAPID_SUBJECT) {
+    app.log.info({ evt: "push_config", configured: true })
+  } else {
+    app.log.warn({ evt: "push_config", configured: false })
   }
 
   // Static export (web/out). Skipped when it has not been built (tests, server-only dev).
