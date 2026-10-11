@@ -25,6 +25,8 @@ export const viewport: Viewport = {
   themeColor: "#090b0c",
   viewportFit: "cover",
   colorScheme: "dark",
+  // Chrome: the keyboard resizes the layout so the composer stays above it (iOS: see Shell).
+  interactiveWidget: "resizes-content",
 }
 
 export default function RootLayout({

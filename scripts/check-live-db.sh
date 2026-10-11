@@ -29,7 +29,12 @@ uri = "file:" + urllib.parse.quote(os.path.abspath(db_path)) + "?mode=ro"
 con = sqlite3.connect(uri, uri=True)
 try:
     tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    missing = {"users", "sessions", "__drizzle_migrations"} - tables
+    required = {
+        "users", "sessions", "__drizzle_migrations",
+        # Phase 2 (migration 0001_chat_media_push, D-07 shape)
+        "messages", "attachments", "reactions", "read_state", "push_subscriptions",
+    }
+    missing = required - tables
     if missing:
         die(f"missing tables: {sorted(missing)}")
     mode = con.execute("PRAGMA journal_mode").fetchone()[0]

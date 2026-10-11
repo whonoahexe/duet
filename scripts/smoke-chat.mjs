@@ -67,6 +67,13 @@ const scenarios = {
     const text = uniqueText("hello from ada")
     await sendFromComposer(ada, BOB.displayName, text)
     await expectExactlyOnce(bob, text, 5_000)
+    // D-03: exactly one status line on Ada's side, under her latest message, reading "Sent".
+    await waitForStatus(ada, "Sent", 5_000)
+    const sentBubble = ada.locator('[data-slot="bubble"]').filter({ has: bubbles(ada, text) })
+    const footer = sentBubble.locator("xpath=following-sibling::*[1]")
+    if ((await footer.getAttribute("data-testid")) !== "message-status" || (await footer.textContent())?.trim() !== "Sent") {
+      throw new Error("Ada's status line is not directly under her latest bubble")
+    }
     await bob.reload()
     await bob.getByPlaceholder(`Message ${ADA.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
     await expectExactlyOnce(bob, text, 10_000)

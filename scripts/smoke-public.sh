@@ -71,6 +71,14 @@ ws_upgrade
 get -X POST -H "Origin: $BASE" -H 'Content-Type: application/json' --data '{}' "$BASE/api/debug/call-report"
 [ "$status" = "401" ] || die "POST /api/debug/call-report without a session returned $status, expected 401"
 
+# 4e. chat history and catch-up are login-gated (CHAT-02, CHAT-05): no cookie -> 401 JSON
+for path in "/api/messages" "/api/sync?since=0"; do
+  get "$BASE$path"
+  [ "$status" = "401" ] || die "GET $path without a session returned $status, expected 401"
+  header content-type | grep -qi 'application/json' || die "GET $path 401 is not JSON"
+  jq -e '.error' "$tmp/body" >/dev/null || die "GET $path 401 body has no error field"
+done
+
 # 5. optional real login round-trip
 if [ -n "${DUET_SEED_FILE:-}" ]; then
   [ -r "$DUET_SEED_FILE" ] || die "DUET_SEED_FILE is not readable"
