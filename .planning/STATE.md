@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 02
 current_phase_name: Chat, Media & Push
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-10-11T07:47:40.529Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-10-11T08:18:33.296Z"
 last_activity: 2026-10-11
-last_activity_desc: Completed 02-01 real-time text chat (deployed); 02-02 and 02-03 next
-state_head: 4c5f8bfeb1f76195903714b3567423282ff604de
+last_activity_desc: Completed 02-02 reactions, replies, typing and read receipts; 02-03 next
+state_head: 53f94b27dfa493731e9dd72aebdf8e68fa9accdf
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 10
-  completed_plans: 6
+  completed_plans: 7
   percent: 33
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 02 (Chat, Media & Push) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
-Last activity: 2026-10-11 — Completed 02-01: text chat with outbox, paging, sync and presence; all Phase 2 tables live; deployed to duet.brkn.me
+Last activity: 2026-10-11 — Completed 02-02: reactions, swipe/menu quoted replies with jump-to-original, typing indicator and read receipts (local e2e: seven scenarios pass; not yet deployed)
 
 Progress: [███░░░░░░░] 33%
 
@@ -62,6 +62,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 01 P04 | 7h 11m | 3 tasks | 20 files |
 | Phase 01 P05 | 10min | 3 tasks | 21 files |
 | Phase 02 P01 | 50min | 3 tasks | 40 files |
+| Phase 02 P02 | 28min | 3 tasks | 22 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,11 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-01: /api/sync cursor = last returned updatedSeq when hasMore else current max; >500 changes drops cache and reloads latest page
 - [Phase 02]: 02-01: Any chat 401 or 4401 resets store+outbox and returns to login; logout stops realtime before POST
 - [Phase 02]: 02-01: Bubble width fix: BubbleGroup w-full + wrap-anywhere on BubbleContent (utility classes only, preset files untouched)
+- [Phase 02]: 02-02: Each stored bubble is its own controlled PopoverTrigger (data-slot kept as bubble, trigger-press ignored); outbox bubbles get no menu or swipe
+- [Phase 02]: 02-02: Typing frames only on composer changes (max 1 per 3 s); indicator TTL 5 s, cleared by their message, also shown in an empty chat
+- [Phase 02]: 02-02: Read receipts only when visible+focused and the peer bubble ([data-seq]) intersects the list viewport, debounced 500 ms; cursor forward-only, clamped to newest seq
+- [Phase 02]: 02-02: Quote jump is instant: scrollToMessage(group) then re-centre the bubble for 6 frames; older-page autoload pauses while highlightSeq is set
+- [Phase 02]: 02-02: aria-live announcement written via ref, not state (fixed React #185 on 150-message bursts in 02-01 ScrollFollower)
 
 ### Pending Todos
 
@@ -121,6 +127,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-11T07:47:40.486Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-10-11T08:18:33.253Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None

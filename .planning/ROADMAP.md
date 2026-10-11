@@ -66,14 +66,14 @@ Plans:
   4. User can send a photo from the camera or photo library (an iPhone HEIC photo displays correctly on the Pixel, and tapping any image opens it full screen) and a short video clip from either phone (including an iPhone HEVC `.MOV`) that plays on both phones
   5. User can record and send a voice note that the other person plays with a working scrubber on either phone; seeking within videos and voice notes works (Range requests), and media URLs return no content without a logged-in session
 
-**Plans:** 1/5 plans executed
+**Plans:** 2/5 plans executed
 
 Plans:
 **Wave 1**
 - [x] 02-01-PLAN.md — Real-time text chat that never loses or doubles a message: all Phase 2 tables in one migration, shared chat/WS contracts, idempotent send, history paging, change-cursor sync, outbox, presence; deployed (CHAT-01..05)
 
 **Wave 2** *(blocked on Wave 1 completion; 02-02 and 02-03 run in parallel)*
-- [ ] 02-02-PLAN.md — Reactions (💕 💔 😋 😝 😘 😭), swipe/menu quoted replies with jump-to-original, typing indicator, read receipts (CHAT-06..09)
+- [x] 02-02-PLAN.md — Reactions (💕 💔 😋 😝 😘 😭), swipe/menu quoted replies with jump-to-original, typing indicator, read receipts (CHAT-06..09)
 - [ ] 02-03-PLAN.md — Message push with viewing suppression and collapse, tap opens chat, iOS Add to Home Screen guide, notifications card/drawer with test push; package gate for sharp (NOTF-01..03, SHEL-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -107,5 +107,5 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation, Auth & Media Plane | 5/5 | In Progress | - |
-| 2. Chat, Media & Push | 1/5 | In Progress | - |
+| 2. Chat, Media & Push | 2/5 | In Progress | - |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |

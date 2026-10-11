@@ -32,10 +32,10 @@
 - [x] **CHAT-03**: Sent messages appear instantly and show status: sending / sent / read / failed
 - [x] **CHAT-04**: Messages composed while offline are queued and sent automatically on reconnect; failed messages can be retried; retries never duplicate
 - [x] **CHAT-05**: After the app resumes from background or reconnects, it catches up on everything missed
-- [ ] **CHAT-06**: User sees a typing indicator when the other person is typing
-- [ ] **CHAT-07**: User sees when the other person has read their messages (read receipts)
-- [ ] **CHAT-08**: User can react to a message with an emoji
-- [ ] **CHAT-09**: User can reply to a specific message, shown as a quoted reply
+- [x] **CHAT-06**: User sees a typing indicator when the other person is typing
+- [x] **CHAT-07**: User sees when the other person has read their messages (read receipts)
+- [x] **CHAT-08**: User can react to a message with an emoji
+- [x] **CHAT-09**: User can reply to a specific message, shown as a quoted reply
 
 ### Media
 
@@ -132,10 +132,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CHAT-03 | Phase 2 | Complete |
 | CHAT-04 | Phase 2 | Complete |
 | CHAT-05 | Phase 2 | Complete |
-| CHAT-06 | Phase 2 | Pending |
-| CHAT-07 | Phase 2 | Pending |
-| CHAT-08 | Phase 2 | Pending |
-| CHAT-09 | Phase 2 | Pending |
+| CHAT-06 | Phase 2 | Complete |
+| CHAT-07 | Phase 2 | Complete |
+| CHAT-08 | Phase 2 | Complete |
+| CHAT-09 | Phase 2 | Complete |
 | MDIA-01 | Phase 2 | Pending |
 | MDIA-02 | Phase 2 | Pending |
 | MDIA-03 | Phase 2 | Pending |
