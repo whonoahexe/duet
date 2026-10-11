@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { ChatCircleIcon, DotsThreeVerticalIcon, PhoneCallIcon, SignOutIcon } from "@phosphor-icons/react"
+import { BellIcon, ChatCircleIcon, DotsThreeVerticalIcon, PhoneCallIcon, SignOutIcon } from "@phosphor-icons/react"
 import { OkResponse, type MeResponse } from "@duet/shared"
 import { ChatView } from "@/components/app/chat-view"
 import { NotificationsCard } from "@/components/app/notifications-card"
+import { NotificationsDrawer } from "@/components/app/notifications-drawer"
 import { initials } from "@/components/app/login-tiles"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -19,7 +20,14 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Toaster } from "@/components/ui/sonner"
 import { ApiError, apiPost } from "@/lib/api"
 import { startRealtime, stopRealtime } from "@/lib/chat/realtime"
-import { getPushState, prepare, type PushState } from "@/lib/chat/push"
+import {
+  bridgeServiceWorkerMessages,
+  clearNotifications,
+  getPushState,
+  prepare,
+  syncSubscription,
+  type PushState,
+} from "@/lib/chat/push"
 import { chatStore, useChat } from "@/lib/chat/store"
 import { isStandalone } from "@/lib/platform"
 
@@ -81,16 +89,28 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   useVisualViewportHeight(rootRef)
   // D-16: the installed app shows the notifications card until push is on (null = not shown).
   const [cardState, setCardState] = useState<PushState | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
-    if (!isStandalone()) return
     let cancelled = false
+    bridgeServiceWorkerMessages()
     void prepare()
-    void getPushState().then((state) => {
-      if (!cancelled && state === "off") setCardState(state)
-    })
+    // iOS drops subscriptions silently: re-save on every launch (never prompts).
+    void syncSubscription()
+    if (isStandalone()) {
+      void getPushState().then((state) => {
+        if (!cancelled && (state === "off" || state === "blocked")) setCardState(state)
+      })
+    }
+    // The chat is on screen: clear duet's notifications from the tray.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void clearNotifications()
+    }
+    onVisible()
+    document.addEventListener("visibilitychange", onVisible)
     return () => {
       cancelled = true
+      document.removeEventListener("visibilitychange", onVisible)
     }
   }, [])
 
@@ -172,6 +192,10 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
               <DotsThreeVerticalIcon weight="bold" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto">
+              <DropdownMenuItem onClick={() => setDrawerOpen(true)}>
+                <BellIcon />
+                Notifications
+              </DropdownMenuItem>
               {/* The installed app has no URL bar, so the hidden call test is reached from here (Pitfall M6). */}
               <DropdownMenuItem onClick={() => window.location.assign("/debug/call/")}>
                 <PhoneCallIcon />
@@ -187,8 +211,18 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
       </header>
 
       {peer && cardState && (
-        <NotificationsCard peerName={peer.displayName} state={cardState} onStateChange={setCardState} />
+        <NotificationsCard
+          peerName={peer.displayName}
+          state={cardState}
+          onStateChange={setCardState}
+          onHide={() => setCardState(null)}
+        />
       )}
+      <NotificationsDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        onStateChange={(state) => setCardState((current) => (current ? state : current))}
+      />
 
       <main className="flex min-h-0 flex-1 flex-col">
         {peer ? (

@@ -79,6 +79,10 @@ for path in "/api/messages" "/api/sync?since=0"; do
   jq -e '.error' "$tmp/body" >/dev/null || die "GET $path 401 body has no error field"
 done
 
+# 4f. the VAPID key endpoint is login-gated (NOTF-01): no cookie -> 401
+get "$BASE/api/push/vapid-public-key"
+[ "$status" = "401" ] || die "GET /api/push/vapid-public-key without a session returned $status, expected 401"
+
 # 5. optional real login round-trip
 if [ -n "${DUET_SEED_FILE:-}" ]; then
   [ -r "$DUET_SEED_FILE" ] || die "DUET_SEED_FILE is not readable"

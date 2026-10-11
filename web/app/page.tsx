@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { CloudSlashIcon, UsersIcon } from "@phosphor-icons/react"
 import { MeResponse, UsersResponse, type UserSummary } from "@duet/shared"
+import { A2HS_SKIPPED_KEY, A2hsGuide } from "@/components/app/a2hs-guide"
 import { LoginTiles } from "@/components/app/login-tiles"
 import { PasswordStep } from "@/components/app/password-step"
 import { Shell } from "@/components/app/shell"
@@ -10,13 +11,29 @@ import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { ApiError, apiGet } from "@/lib/api"
+import { isIos, isStandalone } from "@/lib/platform"
 
 type State =
   | { kind: "loading" }
+  | { kind: "a2hs" }
   | { kind: "error" }
   | { kind: "tiles"; users: UserSummary[] }
   | { kind: "password"; users: UserSummary[]; user: UserSummary }
   | { kind: "shell"; me: MeResponse }
+
+/**
+ * D-16: iOS Safari outside the installed app shows the Add to Home Screen guide before anything
+ * else (logging in there would be wasted: the Home Screen app has its own storage), unless it was
+ * skipped in this browser session.
+ */
+function needsA2hsGuide(): boolean {
+  if (!isIos() || isStandalone()) return false
+  try {
+    return sessionStorage.getItem(A2HS_SKIPPED_KEY) !== "1"
+  } catch {
+    return true
+  }
+}
 
 export default function Page() {
   const [state, setState] = useState<State>({ kind: "loading" })
@@ -46,9 +63,22 @@ export default function Page() {
     }
   }, [loadTiles])
 
-  useEffect(() => {
-    void load()
+  /** Decided after mount: the guide needs the user agent and sessionStorage. */
+  const start = useCallback(async () => {
+    if (needsA2hsGuide()) {
+      setState({ kind: "a2hs" })
+      return
+    }
+    await load()
   }, [load])
+
+  useEffect(() => {
+    void start()
+  }, [start])
+
+  if (state.kind === "a2hs") {
+    return <A2hsGuide onContinue={() => void load()} />
+  }
 
   if (state.kind === "shell") {
     return <Shell me={state.me} onLoggedOut={() => void loadTiles()} />

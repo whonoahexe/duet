@@ -98,11 +98,29 @@ bash scripts/check-call-smoke.sh            # INFR-04 gate: reads call_smoke lin
 
 `check-call-smoke.sh` passes when, in normal mode and in forced-relay mode, one room has PASS reports from two distinct clients and at least one of them comes from an IP other than the home egress IP (a phone on cellular). In forced-relay mode every PASS report must have local candidate `relay`. It prints rooms, counts and candidate types, never IP addresses.
 
+## Push notifications
+
+New messages raise a Web Push notification on the other person's phone when they are not looking at the chat (one collapsed notification per sender, tap opens the chat). It needs a VAPID keypair, created once:
+
+```bash
+bash deploy/vapid-keys.sh            # once (idempotent): create or reuse VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
+docker compose up -d --build         # the container reads the VAPID vars from the env file
+```
+
+- **Never rotate the keypair.** A new pair invalidates every phone's push subscription; both phones would have to turn notifications on again. The script reuses an existing pair and never prints a key. `VAPID_SUBJECT` defaults to the https `APP_ORIGIN`.
+- Without the pair the app still runs; `GET /api/push/vapid-public-key` answers 503 `push_unconfigured` and nothing is pushed.
+- **iPhone:** web push only works in the installed app. Open duet in Safari, follow the "Add duet to your Home Screen" guide, open duet from the Home Screen, log in there, then tap "Enable notifications". The Pixel shows the same card in the installed app. "Send test notification" pushes to this phone only.
+- Logging out removes that phone's subscriptions. The header menu → "Notifications" shows the state and re-enables or re-tests.
+
+```bash
+SMOKE_SCRIPT=scripts/smoke-onboarding.mjs bash scripts/smoke-chat.sh   # Add to Home Screen guide + drawer e2e
+```
+
 ## Smoke scripts
 
 ```bash
 bash scripts/smoke-public.sh          # via APP_ORIGIN: /healthz, dark login, /api/me 401, 2 users, headers,
-                                      #   ice-servers / call-report 401, /ws upgrade 401 (Origin) / 403 (no Origin)
+                                      #   ice-servers / call-report / vapid-public-key 401, /ws upgrade 401 (Origin) / 403 (no Origin)
 DUET_SEED_FILE=~/.config/duet/seed-users.json bash scripts/smoke-public.sh   # + real login/me/logout
 bash scripts/smoke-persistence.sh     # docker compose down/up keeps users, sessions and a sentinel
 bash scripts/check-live-db.sh --existing ./data   # schema/WAL/migrations check on the live volume

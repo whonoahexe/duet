@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { and, count, eq, gt } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 import webpush from "web-push"
-import { messageLabel, PUSH_TOPIC_CHAT, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
+import { messageLabel, PUSH_TOPIC_CHAT, PUSH_TOPIC_TEST, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
 import type { Config } from "../config"
 import type { Db } from "../db/client"
 import { messages, pushSubscriptions, readState } from "../db/schema"
@@ -52,6 +52,8 @@ export interface PushSender {
   publicKey: string | null
   /** Push "{senderName}: {label}" to every saved subscription of the recipient. Returns successes. */
   notifyMessage(recipientId: string, message: MessageDto, senderName: string): Promise<number>
+  /** SHEL-03: push the test notification to this session's subscriptions only. Returns successes. */
+  sendTest(sessionId: string): Promise<number>
   /** Upsert a subscription by endpoint, re-binding it to this user and session. */
   saveSubscription(userId: string, sessionId: string, sub: { endpoint: string; p256dh: string; auth: string }): void
 }
@@ -139,6 +141,13 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
       const ok = await sendAll(subs, payload, PUSH_TOPIC_CHAT)
       log.info({ evt: "push_sent", userId: recipientId, seq: message.seq, subs: subs.length, ok })
       return ok
+    },
+
+    async sendTest(sessionId) {
+      if (!configured) return 0
+      const subs = db.select().from(pushSubscriptions).where(eq(pushSubscriptions.sessionId, sessionId)).all()
+      if (subs.length === 0) return 0
+      return sendAll(subs, buildPayload("test", "duet", "Test notification. You're all set."), PUSH_TOPIC_TEST)
     },
 
     saveSubscription(userId, sessionId, sub) {

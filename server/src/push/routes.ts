@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import { ne } from "drizzle-orm"
-import { PushSubscriptionBody, type OkResponse, type VapidKeyResponse } from "@duet/shared"
+import { PushSubscriptionBody, type OkResponse, type PushTestResponse, type VapidKeyResponse } from "@duet/shared"
 import { requireUser } from "../auth/session"
 import { users } from "../db/schema"
 import { createPushSender, isAllowedPushEndpoint, type WebPushSend } from "./sender"
@@ -68,6 +68,15 @@ export async function pushRoutes(app: FastifyInstance, opts: PushRoutesOptions =
       return { ok: true } satisfies OkResponse
     },
   )
+
+  /** SHEL-03: "Send test notification" reaches this phone (this session's subscriptions) only. */
+  app.post("/api/push/test", { preHandler: requireUser, config: perIpLimit(10) }, async (request, reply) => {
+    reply.header("Cache-Control", "no-store")
+    if (!sender.configured) return reply.code(503).send({ error: "push_unconfigured" })
+    const sent = await sender.sendTest(request.session!.id)
+    request.log.info({ evt: "push_test", userId: request.user!.id, sent })
+    return { sent } satisfies PushTestResponse
+  })
 
   app.chatEvents.onMessageCreated(async ({ message, senderId }) => {
     if (!sender.configured) return

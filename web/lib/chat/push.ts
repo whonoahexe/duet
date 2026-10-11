@@ -1,5 +1,8 @@
-import { OkResponse, VapidKeyResponse } from "@duet/shared"
+import { toast } from "sonner"
+import { OkResponse, PushTestResponse, VapidKeyResponse } from "@duet/shared"
 import { apiGet, apiPost } from "@/lib/api"
+import { OPEN_CHAT_EVENT } from "@/lib/chat/events"
+import { isIos } from "@/lib/platform"
 
 /**
  * Client side of Web Push (NOTF-01, SHEL-03). The service worker is registered by SwRegister; this
@@ -117,4 +120,67 @@ export async function enablePush(): Promise<PushState> {
   sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })
   await save(sub)
   return "on"
+}
+
+/** SHEL-03: push "Test notification" to this phone. Toasts the outcome (UI-SPEC copy). */
+export async function sendTestPush(): Promise<boolean> {
+  try {
+    const { sent } = await apiPost("/api/push/test", {}, PushTestResponse)
+    if (sent >= 1) {
+      toast.success("Test sent. It should arrive in a few seconds.")
+      return true
+    }
+  } catch {
+    /* falls through to the failure toast */
+  }
+  toast.error("Couldn't send the test. Check your connection and try again.")
+  return false
+}
+
+/**
+ * On every launch while logged in with permission granted, re-save the current subscription. iOS
+ * drops subscriptions silently and never fires pushsubscriptionchange; the upsert also re-binds the
+ * subscription to the current session. Never prompts.
+ */
+export async function syncSubscription(): Promise<void> {
+  if (!pushSupported() || Notification.permission !== "granted") return
+  try {
+    const reg = registration ?? (await swReady())
+    registration = reg
+    const sub = await reg.pushManager.getSubscription()
+    if (sub) await save(sub)
+  } catch {
+    /* best effort: the next launch tries again */
+  }
+}
+
+/** Close duet's notifications once the chat is on screen (the tray clears when the chat is read). */
+export async function clearNotifications(): Promise<void> {
+  if (!pushSupported()) return
+  try {
+    const reg = registration ?? (await swReady(3000))
+    const open = await reg.getNotifications()
+    for (const n of open) n.close()
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+let bridged = false
+
+/** A notification tap on an open window: the service worker posts {t: "open-chat"}. */
+export function bridgeServiceWorkerMessages(): void {
+  if (bridged || typeof navigator === "undefined" || !("serviceWorker" in navigator)) return
+  bridged = true
+  navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
+    const data = event.data as { t?: unknown } | null
+    if (data && data.t === "open-chat") window.dispatchEvent(new Event(OPEN_CHAT_EVENT))
+  })
+}
+
+/** Platform-specific "Notifications are blocked" instructions (Copywriting Contract). */
+export function blockedInstructions(): string {
+  return isIos()
+    ? "Open Settings › Notifications › duet and turn on Allow Notifications, then come back."
+    : "Long-press the duet icon › App info › Notifications and turn them on, then come back."
 }

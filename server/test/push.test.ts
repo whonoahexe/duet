@@ -242,6 +242,52 @@ describe("logout removes the device's subscriptions (T-02-15)", () => {
   })
 })
 
+describe("POST /api/push/test (SHEL-03)", () => {
+  function test(cookie: string, ip: string) {
+    return t.app.inject({
+      method: "POST",
+      url: "/api/push/test",
+      headers: { cookie, origin: TEST_ORIGIN, "cf-connecting-ip": ip },
+      payload: {},
+    })
+  }
+
+  it("pushes only to this session's subscriptions", async () => {
+    const other = await loginCookie(t.app, "alice")
+    const mine = await subscribe(aliceCookie)
+    await subscribe(other)
+    const res = await test(aliceCookie, "10.20.0.1")
+    expect(res.statusCode).toBe(200)
+    expect(res.headers["cache-control"]).toBe("no-store")
+    expect(res.json()).toEqual({ sent: 1 })
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]![0].endpoint).toBe(mine.endpoint)
+    expect(payloadOf(0)).toEqual({ t: "test", title: "duet", body: "Test notification. You're all set." })
+    expect(send.mock.calls[0]![2]).toMatchObject({ topic: "duet-test", TTL: 86400, urgency: "high" })
+  })
+
+  it("answers {sent: 0} without subscriptions or when the push service fails", async () => {
+    expect((await test(aliceCookie, "10.20.0.2")).json()).toEqual({ sent: 0 })
+    await subscribe(aliceCookie)
+    sendImpl = async () => {
+      throw Object.assign(new Error("boom"), { statusCode: 500 })
+    }
+    expect((await test(aliceCookie, "10.20.0.2")).json()).toEqual({ sent: 0 })
+  })
+
+  it("limits each client IP to 10 a minute", async () => {
+    for (let i = 0; i < 10; i += 1) expect((await test(aliceCookie, "10.20.0.3")).statusCode).toBe(200)
+    const limited = await test(aliceCookie, "10.20.0.3")
+    expect(limited.statusCode).toBe(429)
+    expect(limited.json().error).toBe("rate_limited")
+  })
+
+  it("answers 401 without a session and 403 without an Origin", async () => {
+    expect((await post(t.app, "/api/push/test", null, {})).statusCode).toBe(401)
+    expect((await post(t.app, "/api/push/test", aliceCookie, {}, null)).statusCode).toBe(403)
+  })
+})
+
 describe("without VAPID configuration", () => {
   let bare: TestApp
   const bareSend = vi.fn<WebPushSend>(async () => ({}))
@@ -261,6 +307,7 @@ describe("without VAPID configuration", () => {
     expect(key.json()).toEqual({ error: "push_unconfigured" })
     const sub = await post(bare.app, "/api/push/subscriptions", alice, subscription())
     expect(sub.statusCode).toBe(503)
+    expect((await post(bare.app, "/api/push/test", alice, {})).statusCode).toBe(503)
     await message(bob, "still delivered", bare.app)
     await sleep(30)
     expect(bareSend).not.toHaveBeenCalled()
