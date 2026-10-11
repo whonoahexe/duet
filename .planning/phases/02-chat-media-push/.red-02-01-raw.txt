@@ -1,0 +1,34 @@
+TAP version 13
+1..24
+ok 1 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > stores a text message and returns its DTO with seq 1 # SKIP
+ok 2 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > is idempotent on the client id: a replay returns the identical message and stores one row # SKIP
+ok 3 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > rejects the other person's id with 409 id_conflict and leaves their row unchanged # SKIP
+ok 4 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > rejects an empty or whitespace-only body with 400 invalid_body # SKIP
+ok 5 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > rejects an extra key (senderId) with 400 invalid_body: the sender comes from the session only # SKIP
+ok 6 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > rejects a missing body, a non-uuid id and a non-string body with 400 invalid_body # SKIP
+ok 7 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > counts length in code points: 4000 astral emoji are accepted, 4001 are rejected # SKIP
+ok 8 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > round-trips the body byte-identically (combining marks, ZWJ emoji, newlines, edge spaces) # SKIP
+ok 9 - test/chat.test.ts > POST /api/messages (CHAT-01, CHAT-04) > answers 401 without a session and 403 without an Origin # SKIP
+ok 10 - test/chat.test.ts > GET /api/messages (CHAT-02) > returns an empty page with cursor 0 and no reads on an empty conversation # SKIP
+ok 11 - test/chat.test.ts > GET /api/messages (CHAT-02) > answers 401 without a session and 400 on a bad query # SKIP
+ok 12 - test/chat.test.ts > GET /api/messages (CHAT-02) > pages 120 messages by seq: 50 + 50 + 20, disjoint, ascending, covering all, hasMore true/true/false # SKIP
+ok 13 - test/chat.test.ts > GET /api/messages (CHAT-02) > returns exactly one message when there is exactly one before the bound # SKIP
+ok 14 - test/chat.test.ts > fan-out over /ws and the chatEvents seam > delivers a created message to every socket of both people; a replay delivers nothing # SKIP
+ok 15 - test/chat.test.ts > fan-out over /ws and the chatEvents seam > calls onMessageCreated once per created message, never for a replay; a throwing listener does not fail the send # SKIP
+ok 16 - test/chat.test.ts > privacy (T-02-03) > never writes a message body to the log # SKIP
+not ok 17 - test/chat.test.ts > GET /api/sync (CHAT-05 change cursor) > returns the messages changed after the cursor, ascending by updatedSeq # time=15.30ms
+    ---
+    error:
+        name: "AssertionError"
+        message: "expected 404 to be 200 // Object.is equality"
+    at: "/home/cinedise/duet/server/test/chat.test.ts:311:28"
+    actual: "404"
+    expected: "200"
+    ...
+ok 18 - test/chat.test.ts > GET /api/sync (CHAT-05 change cursor) > returns nothing new at the current cursor # SKIP
+ok 19 - test/chat.test.ts > GET /api/sync (CHAT-05 change cursor) > caps a delta at SYNC_MAX (500) and sets hasMore # SKIP
+ok 20 - test/chat.test.ts > GET /api/sync (CHAT-05 change cursor) > rejects a negative or missing cursor with 400 and answers 401 without a session # SKIP
+ok 21 - test/chat.test.ts > /ws ping and presence (D-15, Pitfall 8) > answers ping with pong # SKIP
+ok 22 - test/chat.test.ts > /ws ping and presence (D-15, Pitfall 8) > tracks presence: visible makes isViewing true, hidden makes it false # SKIP
+ok 23 - test/chat.test.ts > /ws ping and presence (D-15, Pitfall 8) > expires a visible presence after 45 s without frames # SKIP
+ok 24 - test/chat.test.ts > /ws ping and presence (D-15, Pitfall 8) > rejects an unknown key on presence with error bad_frame # SKIP
