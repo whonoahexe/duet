@@ -401,6 +401,51 @@ Object.assign(scenarios, {
     await until(() => mediaImagesLoaded(onBob, 1), 20_000, "Bob's photo never loaded from /media/")
     await waitForStatus(ada, DELIVERED, 10_000)
   },
+
+  /**
+   * MDIA-02 / D-06 / D-07: Ada picks 3 photos ("3 photos", "Send 3 photos"), removes one ("2 photos"),
+   * adds a caption and sends; Bob sees a 2-tile album, opens the second tile in the full-screen viewer
+   * ("2 / 2"), goes back with ArrowLeft ("1 / 2") and closes it with Escape.
+   */
+  async album({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const run = randomUUID().slice(0, 8)
+    const files = [makeJpeg(`a-${run}.jpg`, 800, 600), makeJpeg(`b-${run}.jpg`, 600, 800), makeJpeg(`c-${run}.jpg`, 700, 700)]
+    const caption = uniqueText("album")
+
+    await pickFiles(ada, files)
+    const drawer = previewDrawer(ada)
+    await drawer.getByText("3 photos", { exact: true }).waitFor({ state: "visible", timeout: 3_000 })
+    await drawer.getByRole("button", { name: "Send 3 photos", exact: true }).waitFor({ state: "visible", timeout: 3_000 })
+    if ((await drawer.getByTestId("preview-item").count()) !== 3) throw new Error("the drawer does not show 3 items")
+    await drawer.getByRole("button", { name: "Remove item" }).nth(1).click()
+    await drawer.getByText("2 photos", { exact: true }).waitFor({ state: "visible", timeout: 3_000 })
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send 2 photos", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+
+    const onBob = albumWithCaption(bob, caption)
+    await onBob.waitFor({ state: "visible", timeout: 20_000 })
+    await until(() => mediaImagesLoaded(onBob, 2), 20_000, "Bob's album thumbnails never loaded from /media/")
+    if ((await onBob.getByTestId("album-tile").count()) !== 2) throw new Error("Bob's album does not have 2 tiles")
+
+    await onBob.getByRole("button", { name: "Open photo 2 of 2" }).click()
+    const counter = bob.getByTestId("viewer-counter")
+    await until(async () => (await counter.textContent())?.trim() === "2 / 2", 5_000, "the viewer did not open at 2 / 2")
+    const caps = bob.getByTestId("viewer-caption")
+    if ((await caps.textContent())?.trim() !== caption) throw new Error("the viewer does not show the caption")
+    await until(
+      async () =>
+        (await bob.getByTestId("viewer-image").evaluateAll((imgs) => imgs.every((i) => i.complete && i.naturalWidth > 0 && i.src.includes("/display")))) &&
+        (await bob.getByTestId("viewer-image").count()) === 2,
+      10_000,
+      "the viewer's display copies did not load",
+    )
+    await bob.keyboard.press("ArrowLeft")
+    await until(async () => (await counter.textContent())?.trim() === "1 / 2", 5_000, "ArrowLeft did not move to 1 / 2")
+    await bob.keyboard.press("Escape")
+    await counter.waitFor({ state: "hidden", timeout: 3_000 })
+  },
 })
 
 const requested = process.argv.slice(3)

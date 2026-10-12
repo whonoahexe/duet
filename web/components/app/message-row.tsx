@@ -237,6 +237,8 @@ function StoredBubble({ item, seq, ctx }: { item: GroupItem; seq: number; ctx: R
             <>
               <Album
                 tiles={item.media}
+                caption={item.body}
+                openable
                 className={cn(open && "ring-2 ring-ring/30", item.highlighted && "ring-2 ring-primary")}
               />
               <AlbumCaption

@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { PaperPlaneRightIcon, PlusIcon, XIcon } from "@phosphor-icons/react"
-import { isBlankBody } from "@duet/shared"
+import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, isBlankBody } from "@duet/shared"
 import { PreviewDrawer } from "@/components/app/preview-drawer"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
 import { Button } from "@/components/ui/button"
@@ -61,9 +62,19 @@ export function Composer({ peerName }: { peerName: string }) {
 
   /** The native picker returned files (camera, library or Files: D-05). */
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
+    let files = Array.from(e.target.files ?? [])
     // Picking the same file again must fire change again.
     e.target.value = ""
+    // Limits are checked before the drawer opens; if nothing is left it does not open.
+    const tooBig = files.filter((f) => !f.type.startsWith("video/") && f.size > UPLOAD_LIMITS.image)
+    if (tooBig.length > 0) {
+      files = files.filter((f) => !tooBig.includes(f))
+      toast.error(tooBig.length === 1 ? "That photo is over 100 MB, so it was left out." : `${tooBig.length} photos are over 100 MB, so they were left out.`)
+    }
+    if (files.length > MAX_ALBUM_ITEMS) {
+      files = files.slice(0, MAX_ALBUM_ITEMS)
+      toast("You can send up to 10 at a time. The first 10 are selected.")
+    }
     if (files.length > 0) setPicked(files)
   }
 
@@ -157,7 +168,12 @@ export function Composer({ peerName }: { peerName: string }) {
           </InputGroupAddon>
         )}
       </InputGroup>
-      <PreviewDrawer files={picked} onSend={sendPicked} onDiscard={() => setPicked([])} />
+      <PreviewDrawer
+        files={picked}
+        onSend={sendPicked}
+        onRemove={(i) => setPicked((prev) => prev.filter((_, j) => j !== i))}
+        onDiscard={() => setPicked([])}
+      />
     </div>
   )
 }
