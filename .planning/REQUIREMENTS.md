@@ -23,7 +23,7 @@
 
 - [ ] **SHEL-01**: UI is built exclusively from shadcn preset `b51GFhBEQ` (scaffolded via `shadcn init -p b51GFhBEQ`, components only via `shadcn add`)
 - [ ] **SHEL-02**: User can install the app to the home screen on iPhone (Safari) and Pixel (Chrome) and it launches standalone
-- [ ] **SHEL-03**: First-run onboarding guides iPhone users to Add to Home Screen and to enable notifications, with a test-push button
+- [x] **SHEL-03**: First-run onboarding guides iPhone users to Add to Home Screen and to enable notifications, with a test-push button
 
 ### Chat
 
@@ -47,9 +47,9 @@
 
 ### Notifications
 
-- [ ] **NOTF-01**: User receives a push notification for new messages when the app is not in the foreground
-- [ ] **NOTF-02**: Tapping a message notification opens the app into the chat
-- [ ] **NOTF-03**: No push is sent while the recipient is actively viewing the chat
+- [x] **NOTF-01**: User receives a push notification for new messages when the app is not in the foreground
+- [x] **NOTF-02**: Tapping a message notification opens the app into the chat
+- [x] **NOTF-03**: No push is sent while the recipient is actively viewing the chat
 
 ### Calls
 
@@ -126,7 +126,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUTH-04 | Phase 1 | Gaps Found |
 | SHEL-01 | Phase 1 | Gaps Found |
 | SHEL-02 | Phase 1 | Gaps Found |
-| SHEL-03 | Phase 2 | Pending |
+| SHEL-03 | Phase 2 | Complete |
 | CHAT-01 | Phase 2 | Complete |
 | CHAT-02 | Phase 2 | Complete |
 | CHAT-03 | Phase 2 | Complete |
@@ -141,9 +141,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MDIA-03 | Phase 2 | Pending |
 | MDIA-04 | Phase 2 | Pending |
 | MDIA-05 | Phase 2 | Pending |
-| NOTF-01 | Phase 2 | Pending |
-| NOTF-02 | Phase 2 | Pending |
-| NOTF-03 | Phase 2 | Pending |
+| NOTF-01 | Phase 2 | Complete |
+| NOTF-02 | Phase 2 | Complete |
+| NOTF-03 | Phase 2 | Complete |
 | CALL-01 | Phase 3 | Pending |
 | CALL-02 | Phase 3 | Pending |
 | CALL-03 | Phase 3 | Pending |

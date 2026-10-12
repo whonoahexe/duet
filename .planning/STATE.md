@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 02
 current_phase_name: Chat, Media & Push
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-10-11T08:18:33.296Z"
-last_activity: 2026-10-11
-last_activity_desc: Completed 02-02 reactions, replies, typing and read receipts; 02-03 next
-state_head: 53f94b27dfa493731e9dd72aebdf8e68fa9accdf
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-10-12T11:17:51.867Z"
+last_activity: 2026-10-12
+last_activity_desc: Completed 02-03 push notifications and onboarding; sharp@0.35.4 approved; 02-04 next
+state_head: 7be8457982b972a5fe9eebc927707cc4b33ddb4d
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 10
-  completed_plans: 7
+  completed_plans: 8
   percent: 33
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 02 (Chat, Media & Push) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
-Last activity: 2026-10-11 — Completed 02-02: reactions, swipe/menu quoted replies with jump-to-original, typing indicator and read receipts (local e2e: seven scenarios pass; not yet deployed)
+Last activity: 2026-10-12 — Completed 02-03: Web Push with viewing suppression and collapse, tap opens chat, iOS Add to Home Screen guide, notifications card/drawer with test push; owner approved sharp@0.35.4 (not yet deployed; goes live with 02-04)
 
 Progress: [███░░░░░░░] 33%
 
@@ -63,6 +63,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 01 P05 | 10min | 3 tasks | 21 files |
 | Phase 02 P01 | 50min | 3 tasks | 40 files |
 | Phase 02 P02 | 28min | 3 tasks | 22 files |
+| Phase 02 P03 | 27min | 3 tasks | 24 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,10 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-02: Read receipts only when visible+focused and the peer bubble ([data-seq]) intersects the list viewport, debounced 500 ms; cursor forward-only, clamped to newest seq
 - [Phase 02]: 02-02: Quote jump is instant: scrollToMessage(group) then re-centre the bubble for 6 frames; older-page autoload pauses while highlightSeq is set
 - [Phase 02]: 02-02: aria-live announcement written via ref, not state (fixed React #185 on 150-message bursts in 02-01 ScrollFollower)
+- [Phase 02]: 02-03: Push suppression is server-side only (hub.isViewing); the service worker shows a notification for every push and closes old ones first (iOS ignores tag)
+- [Phase 02]: 02-03: Push body is cut until the JSON payload is <= 3072 bytes; title capped at 60 graphemes
+- [Phase 02]: 02-03: Subscriptions upsert by endpoint bound to the session (logout cascades); SSRF host allowlist FCM/*.push.apple.com/Mozilla/WNS; test push goes to this session only
+- [Phase 02]: 02-03: Owner approved sharp@0.35.4 for plan 02-04 (reply: approved)
 
 ### Pending Todos
 
@@ -127,6 +132,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-11T08:18:33.253Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-10-12T11:17:51.823Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
