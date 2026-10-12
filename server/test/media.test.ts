@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import sharp from "sharp"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { eq } from "drizzle-orm"
 import { selectionSendLabel, selectionTitle } from "@duet/shared"
+import { attachments, users } from "../src/db/schema"
 import { hasTool, runTool } from "../src/media/exec"
 import { processImage } from "../src/media/image"
-import { loginCookie, makeTestApp, openWs, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
+import { loginCookie, makeDataDir, makeTestApp, openWs, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
 
 let t: TestApp
 let aliceCookie: string
@@ -268,5 +270,200 @@ describe("selection labels (D-06)", () => {
     expect(selectionSendLabel(["image", "image"])).toBe("Send 2 photos")
     expect(selectionSendLabel(["video", "video"])).toBe("Send 2 videos")
     expect(selectionSendLabel(["image", "video"])).toBe("Send 2 items")
+  })
+})
+
+describe("album order and attachment ownership (D-07, MDIA-05, T-02-28)", () => {
+  it("keeps the attachmentIds order as positions 0..n-1 in the send, GET /api/messages and /api/sync", async () => {
+    const a = await readyPhoto()
+    const b = await readyPhoto()
+    const c = await readyPhoto()
+    const cursorBefore = (
+      await t.app.inject({ method: "GET", url: "/api/messages?limit=1", headers: { cookie: bobCookie } })
+    ).json().cursor as number
+    const res = await send(aliceCookie, { body: "ordered", attachmentIds: [c, a, b] })
+    expect(res.statusCode).toBe(200)
+    const sent = res.json().message
+    const order = (m: { attachments: { id: string; position: number }[] }) => m.attachments.map((x) => [x.id, x.position])
+    expect(order(sent)).toEqual([
+      [c, 0],
+      [a, 1],
+      [b, 2],
+    ])
+
+    const page = await t.app.inject({ method: "GET", url: "/api/messages?limit=5", headers: { cookie: bobCookie } })
+    const fromPage = page.json().messages.find((m: { seq: number }) => m.seq === sent.seq)
+    expect(order(fromPage)).toEqual(order(sent))
+
+    const sync = await t.app.inject({ method: "GET", url: `/api/sync?since=${cursorBefore}`, headers: { cookie: bobCookie } })
+    const fromSync = sync.json().messages.find((m: { seq: number }) => m.seq === sent.seq)
+    expect(order(fromSync)).toEqual(order(sent))
+  })
+
+  it("answers 400 bad_attachment for an attachment already in a message or uploaded by the other person", async () => {
+    const used = await readyPhoto()
+    expect((await send(aliceCookie, { attachmentIds: [used] })).statusCode).toBe(200)
+    const again = await send(aliceCookie, { attachmentIds: [used] })
+    expect(again.statusCode).toBe(400)
+    expect(again.json()).toEqual({ error: "bad_attachment" })
+
+    const bobs = await readyPhoto(bobCookie)
+    const stolen = await send(aliceCookie, { attachmentIds: [bobs] })
+    expect(stolen.statusCode).toBe(400)
+    expect(stolen.json()).toEqual({ error: "bad_attachment" })
+    // Nothing was attached by the rejected sends.
+    const row = t.app.db.select().from(attachments).where(eq(attachments.id, bobs)).get()
+    expect(row?.messageSeq).toBeNull()
+  })
+
+  it("answers 400 bad_attachment for an upload that never completed or failed processing", async () => {
+    const created = await t.app.inject({
+      method: "POST",
+      url: "/api/uploads",
+      headers: { cookie: aliceCookie, origin: TEST_ORIGIN },
+      payload: { kind: "image", size: 10 },
+    })
+    const unfinished = created.json().id as string
+    expect((await send(aliceCookie, { attachmentIds: [unfinished] })).json()).toEqual({ error: "bad_attachment" })
+
+    const { id: junk } = await uploadBytes(t.app, aliceCookie, Buffer.from("not an image at all"))
+    await t.app.media.idle()
+    const row = t.app.db.select().from(attachments).where(eq(attachments.id, junk)).get()
+    expect(row).toMatchObject({ status: "failed", error: "unsupported_media" })
+    expect((await send(aliceCookie, { attachmentIds: [junk] })).json()).toEqual({ error: "bad_attachment" })
+  })
+
+  it("rejects 11 attachments and duplicated ids as invalid_body", async () => {
+    const ids = Array.from({ length: 11 }, (_, i) => `${"A".repeat(20)}${String(i).padStart(2, "0")}`)
+    const eleven = await send(aliceCookie, { attachmentIds: ids })
+    expect(eleven.statusCode).toBe(400)
+    expect(eleven.json()).toEqual({ error: "invalid_body" })
+    const id = await readyPhoto()
+    const dup = await send(aliceCookie, { attachmentIds: [id, id] })
+    expect(dup.statusCode).toBe(400)
+    expect(dup.json()).toEqual({ error: "invalid_body" })
+  })
+})
+
+describe("upload concurrency (MDIA-05)", () => {
+  it("returns the same attachment when complete is called twice, also concurrently", async () => {
+    const bytes = await jpeg(300, 300)
+    const created = await t.app.inject({
+      method: "POST",
+      url: "/api/uploads",
+      headers: { cookie: aliceCookie, origin: TEST_ORIGIN },
+      payload: { kind: "image", size: bytes.length },
+    })
+    const id = created.json().id as string
+    const put = await t.app.inject({
+      method: "PUT",
+      url: `/api/uploads/${id}/chunks/0`,
+      headers: { cookie: aliceCookie, origin: TEST_ORIGIN, "content-type": "application/octet-stream" },
+      payload: bytes,
+    })
+    expect(put.statusCode).toBe(204)
+    t.app.media.pause()
+    try {
+      const complete = () =>
+        t.app.inject({ method: "POST", url: `/api/uploads/${id}/complete`, headers: { cookie: aliceCookie, origin: TEST_ORIGIN } })
+      const [first, second] = await Promise.all([complete(), complete()])
+      const third = await complete()
+      for (const r of [first, second, third]) {
+        expect(r.statusCode).toBe(200)
+        expect(r.json().attachment).toMatchObject({ id, status: "processing" })
+      }
+      expect(readFileSync(path.join(t.dataDir, "media", id, "original")).equals(bytes)).toBe(true)
+    } finally {
+      t.app.media.resume()
+      await t.app.media.idle()
+    }
+  })
+
+  it("keeps only the last bytes of a chunk that was sent twice", async () => {
+    const created = await t.app.inject({
+      method: "POST",
+      url: "/api/uploads",
+      headers: { cookie: aliceCookie, origin: TEST_ORIGIN },
+      payload: { kind: "image", size: 1000 },
+    })
+    const id = created.json().id as string
+    const put = (bytes: Buffer) =>
+      t.app.inject({
+        method: "PUT",
+        url: `/api/uploads/${id}/chunks/0`,
+        headers: { cookie: aliceCookie, origin: TEST_ORIGIN, "content-type": "application/octet-stream" },
+        payload: bytes,
+      })
+    expect((await put(Buffer.alloc(1000, 1))).statusCode).toBe(204)
+    const last = Buffer.alloc(1000, 2)
+    expect((await put(last)).statusCode).toBe(204)
+    const done = await t.app.inject({
+      method: "POST",
+      url: `/api/uploads/${id}/complete`,
+      headers: { cookie: aliceCookie, origin: TEST_ORIGIN },
+    })
+    expect(done.statusCode).toBe(200)
+    expect(readFileSync(path.join(t.dataDir, "media", id, "original")).equals(last)).toBe(true)
+    await t.app.media.idle()
+  })
+})
+
+describe("boot recovery (Pattern 6)", () => {
+  it("processes attachments left in processing and deletes uploads and temp dirs older than 24 h", async () => {
+    const dir = makeDataDir()
+    const first = await makeTestApp({ dataDir: dir, seed: true })
+    const aliceId = first.app.db.select({ id: users.id }).from(users).where(eq(users.username, "alice")).get()!.id
+    const media = path.join(dir, "media")
+    const HOUR = 60 * 60 * 1000
+    const now = Date.now()
+
+    // A finished upload whose processing never ran (the server stopped first).
+    const leftover = "L".repeat(22)
+    mkdirSync(path.join(media, leftover), { recursive: true })
+    writeFileSync(path.join(media, leftover, "original"), await jpeg(500, 400))
+    // Abandoned uploads: one 25 h old (deleted), one 1 h old (kept), each with a temp dir.
+    const stale = "S".repeat(22)
+    const fresh = "F".repeat(22)
+    for (const [id, age] of [
+      [stale, 25 * HOUR],
+      [fresh, 1 * HOUR],
+    ] as const) {
+      const tmp = path.join(media, "tmp", id)
+      mkdirSync(tmp, { recursive: true })
+      writeFileSync(path.join(tmp, "0.part"), Buffer.alloc(10))
+      const when = new Date(now - age)
+      utimesSync(tmp, when, when)
+    }
+    // An orphaned temp dir with no row at all, 25 h old.
+    const orphan = path.join(media, "tmp", "O".repeat(22))
+    mkdirSync(orphan, { recursive: true })
+    utimesSync(orphan, new Date(now - 25 * HOUR), new Date(now - 25 * HOUR))
+
+    const row = { uploaderId: aliceId, kind: "image" as const, declaredSize: 10 }
+    first.app.db
+      .insert(attachments)
+      .values([
+        { ...row, id: leftover, status: "processing", createdAt: new Date(now - 2 * HOUR) },
+        { ...row, id: stale, status: "uploading", createdAt: new Date(now - 25 * HOUR) },
+        { ...row, id: fresh, status: "uploading", createdAt: new Date(now - 1 * HOUR) },
+      ])
+      .run()
+    await first.app.close()
+
+    const second = await makeTestApp({ dataDir: dir, seed: false })
+    try {
+      await second.app.ready()
+      await second.app.media.idle()
+      const byId = (id: string) => second.app.db.select().from(attachments).where(eq(attachments.id, id)).get()
+      expect(byId(leftover)).toMatchObject({ status: "ready", width: 500, height: 400 })
+      expect(existsSync(path.join(media, leftover, "display.webp"))).toBe(true)
+      expect(byId(stale)).toBeUndefined()
+      expect(existsSync(path.join(media, "tmp", stale))).toBe(false)
+      expect(byId(fresh)).toMatchObject({ status: "uploading" })
+      expect(existsSync(path.join(media, "tmp", fresh))).toBe(true)
+      expect(existsSync(orphan)).toBe(false)
+    } finally {
+      await second.close()
+    }
   })
 })
