@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react"
+import { PaperPlaneRightIcon, PlusIcon, XIcon } from "@phosphor-icons/react"
 import { isBlankBody } from "@duet/shared"
+import { PreviewDrawer } from "@/components/app/preview-drawer"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
@@ -23,7 +24,9 @@ function finePointer(): boolean {
 /** Text composer pinned under the list. Send appears only once there is something to send. */
 export function Composer({ peerName }: { peerName: string }) {
   const [text, setText] = useState("")
+  const [picked, setPicked] = useState<File[]>([])
   const ref = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const lastTypingRef = useRef(0)
   const canSend = !isBlankBody(text)
   const chat = useChat()
@@ -56,6 +59,20 @@ export function Composer({ peerName }: { peerName: string }) {
     ref.current?.focus()
   }
 
+  /** The native picker returned files (camera, library or Files: D-05). */
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    // Picking the same file again must fire change again.
+    e.target.value = ""
+    if (files.length > 0) setPicked(files)
+  }
+
+  function sendPicked(files: File[], caption: string) {
+    chatStore.sendMedia(files, caption, replyMessage ? replyMessage.seq : null)
+    chatStore.setReplyTarget(null)
+    setPicked([])
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return
     if (!finePointer()) return
@@ -85,7 +102,27 @@ export function Composer({ peerName }: { peerName: string }) {
           </Button>
         </div>
       )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        data-testid="attach-input"
+        onChange={onPick}
+      />
       <InputGroup>
+        <InputGroupAddon align="inline-start">
+          <InputGroupButton
+            variant="ghost"
+            size="icon-sm"
+            className="size-11 rounded-full"
+            aria-label="Attach photo or video"
+            onClick={() => fileRef.current?.click()}
+          >
+            <PlusIcon weight="bold" />
+          </InputGroupButton>
+        </InputGroupAddon>
         <InputGroupTextarea
           ref={ref}
           rows={1}
@@ -120,6 +157,7 @@ export function Composer({ peerName }: { peerName: string }) {
           </InputGroupAddon>
         )}
       </InputGroup>
+      <PreviewDrawer files={picked} onSend={sendPicked} onDiscard={() => setPicked([])} />
     </div>
   )
 }

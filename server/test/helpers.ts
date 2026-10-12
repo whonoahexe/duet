@@ -204,3 +204,36 @@ export async function openWs(
     },
   }
 }
+
+/** Run a full chunked upload of `bytes` (POST /api/uploads -> chunk PUTs -> complete). */
+export async function uploadBytes(
+  app: FastifyInstance,
+  cookie: string,
+  bytes: Buffer,
+  kind: "image" | "video" | "audio" = "image",
+): Promise<{ id: string; attachment: Record<string, any> }> {
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/uploads",
+    headers: { cookie, origin: TEST_ORIGIN },
+    payload: { kind, size: bytes.length },
+  })
+  if (created.statusCode !== 200) throw new Error(`create upload returned ${created.statusCode}`)
+  const { id, chunkSize } = created.json() as { id: string; chunkSize: number }
+  for (let i = 0; i * chunkSize < bytes.length; i++) {
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/uploads/${id}/chunks/${i}`,
+      headers: { cookie, origin: TEST_ORIGIN, "content-type": "application/octet-stream" },
+      payload: bytes.subarray(i * chunkSize, (i + 1) * chunkSize),
+    })
+    if (res.statusCode !== 204) throw new Error(`chunk ${i} returned ${res.statusCode}`)
+  }
+  const done = await app.inject({
+    method: "POST",
+    url: `/api/uploads/${id}/complete`,
+    headers: { cookie, origin: TEST_ORIGIN },
+  })
+  if (done.statusCode !== 200) throw new Error(`complete returned ${done.statusCode}`)
+  return { id, attachment: done.json().attachment }
+}

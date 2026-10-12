@@ -1,6 +1,7 @@
 export * from "./api"
 export * from "./chat"
 export * from "./chat-logic"
+export * from "./media"
 export * from "./push"
 export * from "./rtc"
 export * from "./ws"

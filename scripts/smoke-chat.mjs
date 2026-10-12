@@ -1,7 +1,9 @@
 // Headless two-browser chat e2e (CHAT-01..09): two Chrome contexts, two fixture accounts.
 // Usage: node scripts/smoke-chat.mjs <base-url> [scenario ...]   (driven by scripts/smoke-chat.sh)
 // No scenario names runs every scenario in registry order. Prints only scenario names and verdicts.
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import path from "node:path"
 import { dumpErrors, fixtureIds, launchBrowser, loggedInPage } from "./lib/e2e.mjs"
 
 const BASE = process.argv[2]
@@ -107,6 +109,43 @@ async function swipeRight(page, locator, dx) {
 async function inListView(page, locator) {
   const [box, vp] = await Promise.all([locator.boundingBox(), viewport(page).boundingBox()])
   return Boolean(box && vp && box.y >= vp.y - 1 && box.y + box.height <= vp.y + vp.height + 1)
+}
+
+/** A test-pattern JPEG generated with ffmpeg (lavfi testsrc) in SMOKE_TMP. */
+function makeJpeg(name, width, height) {
+  const dir = process.env.SMOKE_TMP
+  if (!dir) throw new Error("SMOKE_TMP is not set (run through scripts/smoke-chat.sh)")
+  const file = path.join(dir, name)
+  execFileSync(
+    "ffmpeg",
+    ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", `testsrc=size=${width}x${height}`, "-frames:v", "1", file],
+    { stdio: ["ignore", "ignore", "inherit"] },
+  )
+  return file
+}
+
+/** The preview drawer (D-06) once it is open. */
+function previewDrawer(page) {
+  return page.locator('[data-slot="drawer-popup"]')
+}
+
+/** Pick files through the composer's hidden input (the "+" button opens it on a phone). */
+async function pickFiles(page, files) {
+  await page.getByTestId("attach-input").setInputFiles(files)
+  await previewDrawer(page).waitFor({ state: "visible", timeout: 5_000 })
+}
+
+/** The album bubble whose caption is exactly `caption`. */
+function albumWithCaption(page, caption) {
+  return page.locator('[data-slot="bubble"]').filter({ has: page.locator('[data-testid="album"]') }).filter({ has: bubbles(page, caption) })
+}
+
+/** Every img in the locator has decoded (naturalWidth > 0) and comes from /media/. */
+async function mediaImagesLoaded(locator, expected) {
+  const info = await locator.locator("img").evaluateAll((imgs) =>
+    imgs.map((img) => ({ src: img.getAttribute("src") ?? "", w: img.naturalWidth, done: img.complete })),
+  )
+  return info.length === expected && info.every((i) => i.src.includes("/media/") && i.done && i.w > 0)
 }
 
 /** name -> async ({ ada, bob }) => void. Each prints "scenario <name> ok" on success. */
@@ -339,6 +378,30 @@ const scenarios = {
     )
   },
 }
+
+Object.assign(scenarios, {
+  /**
+   * MDIA-01 / D-05 / D-06 / D-09: Ada picks one photo, sees the "1 photo" drawer, adds a caption and
+   * presses "Send photo"; Bob sees the caption and the processed thumbnail served from /media/.
+   */
+  async photo({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const file = makeJpeg(`photo-${randomUUID().slice(0, 8)}.jpg`, 1600, 1200)
+    const caption = uniqueText("look")
+
+    await pickFiles(ada, [file])
+    const drawer = previewDrawer(ada)
+    await drawer.getByText("1 photo", { exact: true }).waitFor({ state: "visible", timeout: 3_000 })
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send photo", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+
+    const onBob = albumWithCaption(bob, caption)
+    await onBob.waitFor({ state: "visible", timeout: 20_000 })
+    await until(() => mediaImagesLoaded(onBob, 1), 20_000, "Bob's photo never loaded from /media/")
+    await waitForStatus(ada, DELIVERED, 10_000)
+  },
+})
 
 const requested = process.argv.slice(3)
 const names = requested.length > 0 ? requested : Object.keys(scenarios)

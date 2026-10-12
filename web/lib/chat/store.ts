@@ -10,6 +10,7 @@ import {
   SendMessageResponse,
   SyncResponse,
   mergeMessages,
+  type AttachmentKind,
   type MeResponse,
   type MessageDto,
   type ReadCursor,
@@ -18,10 +19,37 @@ import {
 } from "@duet/shared"
 import { ApiError, apiGet, apiPost, apiPut } from "@/lib/api"
 import { createOutbox, type OutboxEntry } from "./outbox"
+import { uploadFile } from "./upload"
 
 export type { OutboxEntry } from "./outbox"
 
 export type ConnectionState = "connecting" | "live" | "offline"
+
+/** One picked file of an album being sent (kept in memory only, research A3). */
+export interface MediaItem {
+  key: string
+  file: File
+  kind: AttachmentKind
+  /** Local preview shown until the server's thumbnail exists. */
+  objectUrl: string
+  /** Set once the upload completed (a retry skips this item). */
+  attachmentId: string | null
+  /** Upload progress in whole percents. */
+  progress: number
+  state: "queued" | "uploading" | "done" | "failed"
+}
+
+/** An album on its way (D-06/D-07): uploads in pick order, then one POST /api/messages. */
+export interface MediaEntry {
+  /** Client message UUID, reused by every retry (CHAT-04). */
+  id: string
+  createdAt: number
+  /** Optional caption (never blank). */
+  caption: string | null
+  replyToSeq: number | null
+  items: MediaItem[]
+  state: "sending" | "failed"
+}
 
 export interface ChatState {
   me: UserSummary | null
@@ -30,6 +58,10 @@ export interface ChatState {
   messages: MessageDto[]
   /** Unconfirmed text sends (the outbox), rendered after `messages` in createdAt order. */
   pending: OutboxEntry[]
+  /** Albums being uploaded or sent (in memory only), rendered with the outbox. */
+  media: MediaEntry[]
+  /** Local object URLs of your own uploads by attachment id, shown until the server copy is ready. */
+  localPreviews: Record<string, string>
   /** Change cursor for /api/sync (max updatedSeq seen). */
   cursor: number
   /** Lowest loaded seq (null before the first message). Changes to older messages are ignored. */
@@ -63,6 +95,8 @@ const EMPTY: ChatState = {
   peer: null,
   messages: [],
   pending: [],
+  media: [],
+  localPreviews: {},
   cursor: 0,
   oldestSeq: null,
   hasMore: false,
@@ -87,6 +121,88 @@ let highlightTimer: ReturnType<typeof setTimeout> | null = null
 let typingTimer: ReturnType<typeof setTimeout> | null = null
 /** Highest seq already sent to POST /api/read in this session (avoids repeating a receipt). */
 let lastReadSent = 0
+/** Media entries whose upload/send loop is running (one loop per entry). */
+const mediaRunning = new Set<string>()
+/** A local preview is kept this long after the server copy became ready (the thumb is loading). */
+const PREVIEW_REVOKE_DELAY_MS = 60_000
+
+function patchMedia(id: string, fn: (e: MediaEntry) => MediaEntry): void {
+  set({ media: state.media.map((e) => (e.id === id ? fn(e) : e)) })
+}
+
+function patchMediaItem(id: string, key: string, patch: Partial<MediaItem>): void {
+  patchMedia(id, (e) => ({ ...e, items: e.items.map((it) => (it.key === key ? { ...it, ...patch } : it)) }))
+}
+
+/** Drop local previews of attachments the server now has ready (revoked a little later). */
+function retireLocalPreviews(incoming: MessageDto[]): void {
+  let next: Record<string, string> | null = null
+  for (const m of incoming) {
+    for (const a of m.attachments) {
+      const url = state.localPreviews[a.id]
+      if (!url || a.status !== "ready") continue
+      next ??= { ...state.localPreviews }
+      delete next[a.id]
+      setTimeout(() => URL.revokeObjectURL(url), PREVIEW_REVOKE_DELAY_MS)
+    }
+  }
+  if (next) set({ localPreviews: next })
+}
+
+/**
+ * Upload every item of an album that has no attachment yet, in pick order, then send the message
+ * with attachmentIds in that order (MDIA-05 ordering). Any failure marks the entry failed ("Not sent.
+ * Tap to retry."); a retry re-uploads only the failed items and reuses the message id.
+ */
+async function runMedia(id: string): Promise<void> {
+  if (mediaRunning.has(id)) return
+  mediaRunning.add(id)
+  const gen = generation
+  try {
+    const entry = state.media.find((e) => e.id === id)
+    if (!entry) return
+    for (const item of entry.items) {
+      if (item.attachmentId) continue
+      patchMediaItem(id, item.key, { state: "uploading", progress: 0 })
+      const attachment = await uploadFile(item.file, item.kind, (progress) => {
+        if (gen === generation) patchMediaItem(id, item.key, { progress })
+      })
+      if (gen !== generation) return
+      patchMediaItem(id, item.key, { attachmentId: attachment.id, state: "done", progress: 100 })
+      set({ localPreviews: { ...state.localPreviews, [attachment.id]: item.objectUrl } })
+    }
+    const ready = state.media.find((e) => e.id === id)
+    if (!ready) return
+    const res = await apiPost(
+      "/api/messages",
+      {
+        id: ready.id,
+        ...(ready.caption ? { body: ready.caption } : {}),
+        ...(ready.replyToSeq ? { replyToSeq: ready.replyToSeq } : {}),
+        attachmentIds: ready.items.map((it) => it.attachmentId),
+      },
+      SendMessageResponse,
+    )
+    if (gen !== generation) return
+    set({ media: state.media.filter((e) => e.id !== id) })
+    chatStore.applyMessages([res.message])
+  } catch (err) {
+    if (gen !== generation) return
+    if (isLoggedOutError(err)) return loggedOut()
+    patchMedia(id, (e) => ({
+      ...e,
+      state: "failed",
+      items: e.items.map((it) => (it.attachmentId ? it : { ...it, state: "failed" })),
+    }))
+  } finally {
+    mediaRunning.delete(id)
+  }
+}
+
+/** Photo or video, from the picked file's type (the picker only offers those). */
+function kindOf(file: File): AttachmentKind {
+  return file.type.startsWith("video/") ? "video" : "image"
+}
 
 /** Merge read cursors, never moving one backwards. Returns the same object when nothing moved. */
 function mergeReads(current: ChatState["reads"], incoming: ReadCursor[]): ChatState["reads"] {
@@ -170,6 +286,9 @@ export const chatStore = {
     typingTimer = null
     lastReadSent = 0
     outbox.clear()
+    for (const e of state.media) for (const it of e.items) URL.revokeObjectURL(it.objectUrl)
+    for (const url of Object.values(state.localPreviews)) URL.revokeObjectURL(url)
+    mediaRunning.clear()
     set(EMPTY)
   },
 
@@ -236,6 +355,7 @@ export const chatStore = {
       const known = new Set(state.messages.map((m) => m.seq))
       if (incoming.some((m) => m.senderId === peerId && !known.has(m.seq))) clearTyping()
     }
+    retireLocalPreviews(incoming)
     const messages = mergeMessages(state.messages, incoming, state.oldestSeq)
     const cursor = Math.max(state.cursor, ...incoming.map((m) => m.updatedSeq))
     if (messages === state.messages && cursor === state.cursor) return
@@ -288,6 +408,45 @@ export const chatStore = {
   sendText(body: string, replyToSeq: number | null = null): void {
     outbox.enqueue(body, replyToSeq)
     void outbox.flush()
+  },
+
+  /**
+   * Send picked photos/videos as one album with an optional caption (D-06, D-07). The bubble shows at
+   * once from local object URLs; items upload in order, then the message is sent.
+   */
+  sendMedia(files: File[], caption: string, replyToSeq: number | null = null): void {
+    if (files.length === 0) return
+    const createdAt = Date.now()
+    const entry: MediaEntry = {
+      id: crypto.randomUUID(),
+      createdAt,
+      caption: caption.trim().length > 0 ? caption : null,
+      replyToSeq,
+      state: "sending",
+      items: files.map((file, i) => ({
+        key: `${createdAt}-${i}`,
+        file,
+        kind: kindOf(file),
+        objectUrl: URL.createObjectURL(file),
+        attachmentId: null,
+        progress: 0,
+        state: "queued",
+      })),
+    }
+    set({ media: [...state.media, entry] })
+    void runMedia(entry.id)
+  },
+
+  /** Tap on a failed album: upload only what is missing, then send with the same message id. */
+  retryMedia(id: string): void {
+    const entry = state.media.find((e) => e.id === id)
+    if (!entry || entry.state !== "failed") return
+    patchMedia(id, (e) => ({
+      ...e,
+      state: "sending",
+      items: e.items.map((it) => (it.state === "failed" ? { ...it, state: "queued", progress: 0 } : it)),
+    }))
+    void runMedia(id)
   },
 
   /** Start (seq) or cancel (null) replying to a message; the composer shows the reply chip. */

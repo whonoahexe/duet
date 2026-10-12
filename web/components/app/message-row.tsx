@@ -3,6 +3,7 @@
 import { Fragment, useState } from "react"
 import { ArrowBendUpLeftIcon, WarningCircleIcon } from "@phosphor-icons/react"
 import { reactionSummary, type ReactionDto, type ReplyPreview } from "@duet/shared"
+import { Album, type AlbumTile } from "@/components/app/album"
 import { MessageActions } from "@/components/app/message-actions"
 import { QuoteBlock } from "@/components/app/quote-block"
 import { Bubble, BubbleContent, BubbleGroup, BubbleReactions } from "@/components/ui/bubble"
@@ -33,6 +34,8 @@ export interface GroupItem {
   replyTo: ReplyPreview | null
   /** Just jumped to from a quote: accent ring for a moment (UI-SPEC accent item 6). */
   highlighted: boolean
+  /** Album tiles of a media message (D-07); null for text. */
+  media: AlbumTile[] | null
 }
 
 interface RowContext {
@@ -56,6 +59,42 @@ const FOCUS_CLASS =
   "outline-none focus-visible:*:data-[slot=bubble-content]:ring-3 focus-visible:*:data-[slot=bubble-content]:ring-ring/30"
 const CONTENT_CLASS =
   "flex flex-col gap-1 text-base leading-normal whitespace-pre-wrap wrap-anywhere transition-[box-shadow] duration-700 motion-reduce:transition-none"
+
+/** A media bubble: a ghost Bubble 288px wide, capped at 80% (UI-SPEC "Album bubble"). */
+const ALBUM_BUBBLE_CLASS = "w-72 max-w-[80%] data-[variant=ghost]:max-w-[80%]"
+
+/**
+ * The caption (and reply quote) of an album, under the grid in a regular tinted/muted bubble inside
+ * the same ghost Bubble. Its slot is renamed so it never counts as a message bubble of its own.
+ */
+function AlbumCaption({
+  item,
+  ctx,
+  onQuote,
+  className,
+}: {
+  item: GroupItem
+  ctx: RowContext
+  onQuote?: () => void
+  className?: string
+}) {
+  if (!item.body && !item.replyTo) return null
+  return (
+    <Bubble
+      data-slot="album-caption"
+      variant={ctx.mine ? "tinted" : "muted"}
+      align={ctx.mine ? "end" : "start"}
+      className="max-w-full"
+    >
+      <BubbleContent className={cn(CONTENT_CLASS, className)}>
+        {item.replyTo && (
+          <QuoteBlock preview={item.replyTo} meId={ctx.meId} peerName={ctx.peerName} onClick={onQuote} />
+        )}
+        <MessageText body={item.body} />
+      </BubbleContent>
+    </Bubble>
+  )
+}
 
 /** Footer under a bubble: the failed row (every failed message) or the status line (latest only). */
 function StatusFooter({ item }: { item: GroupItem }) {
@@ -104,6 +143,23 @@ function MessageText({ body }: { body: string | null }) {
  */
 function PendingBubble({ item, ctx }: { item: GroupItem; ctx: RowContext }) {
   const retry = item.failed ? item.onRetry : undefined
+  if (item.media) {
+    return (
+      <>
+        <Bubble
+          data-message-id={item.id}
+          variant="ghost"
+          align="end"
+          className={cn(BUBBLE_CLASS, ALBUM_BUBBLE_CLASS, item.failed && "opacity-70")}
+          {...(retry ? { role: "button", tabIndex: 0, onClick: retry, onKeyDown: onActivate(retry) } : {})}
+        >
+          <Album tiles={item.media} />
+          <AlbumCaption item={item} ctx={ctx} />
+        </Bubble>
+        <StatusFooter item={item} />
+      </>
+    )
+  }
   return (
     <>
       <Bubble data-message-id={item.id} variant="tinted" align="end" className={cn(BUBBLE_CLASS, item.failed && "opacity-70")}>
@@ -154,10 +210,11 @@ function StoredBubble({ item, seq, ctx }: { item: GroupItem; seq: number; ctx: R
             <Bubble
               data-message-id={item.id}
               data-seq={seq}
-              variant={mine ? "tinted" : "muted"}
+              variant={item.media ? "ghost" : mine ? "tinted" : "muted"}
               align={align}
               className={cn(
                 BUBBLE_CLASS,
+                item.media && ALBUM_BUBBLE_CLASS,
                 FOCUS_CLASS,
                 "touch-pan-y",
                 !swipe.dragging && "transition-transform duration-200 ease-out motion-reduce:transition-none",
@@ -176,23 +233,37 @@ function StoredBubble({ item, seq, ctx }: { item: GroupItem; seq: number; ctx: R
               style={{ opacity: swipe.progress }}
             />
           )}
-          <BubbleContent
-            className={cn(
-              CONTENT_CLASS,
-              open && "ring-2 ring-ring/30",
-              item.highlighted && "ring-2 ring-primary",
-            )}
-          >
-            {item.replyTo && (
-              <QuoteBlock
-                preview={item.replyTo}
-                meId={meId}
-                peerName={peerName}
-                onClick={() => void chatStore.jumpTo(item.replyTo!.seq)}
+          {item.media ? (
+            <>
+              <Album
+                tiles={item.media}
+                className={cn(open && "ring-2 ring-ring/30", item.highlighted && "ring-2 ring-primary")}
               />
-            )}
-            <MessageText body={item.body} />
-          </BubbleContent>
+              <AlbumCaption
+                item={item}
+                ctx={ctx}
+                onQuote={item.replyTo ? () => void chatStore.jumpTo(item.replyTo!.seq) : undefined}
+              />
+            </>
+          ) : (
+            <BubbleContent
+              className={cn(
+                CONTENT_CLASS,
+                open && "ring-2 ring-ring/30",
+                item.highlighted && "ring-2 ring-primary",
+              )}
+            >
+              {item.replyTo && (
+                <QuoteBlock
+                  preview={item.replyTo}
+                  meId={meId}
+                  peerName={peerName}
+                  onClick={() => void chatStore.jumpTo(item.replyTo!.seq)}
+                />
+              )}
+              <MessageText body={item.body} />
+            </BubbleContent>
+          )}
           {summary.length > 0 && (
             <BubbleReactions side="bottom" align={mine ? "start" : "end"} data-testid="reaction-chip">
               <button

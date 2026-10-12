@@ -27,6 +27,9 @@ export type AttachmentKind = z.infer<typeof AttachmentKind>
 export const AttachmentStatus = z.enum(["uploading", "processing", "ready", "failed"])
 export type AttachmentStatus = z.infer<typeof AttachmentStatus>
 
+/** Most items in one album message (D-07). */
+export const MAX_ALBUM_ITEMS = 10
+
 /** 128-bit random id, base64url without padding. */
 export const AttachmentId = z.string().regex(/^[A-Za-z0-9_-]{22}$/)
 export type AttachmentId = z.infer<typeof AttachmentId>
@@ -111,16 +114,30 @@ export const ReadCursor = z.object({
 })
 export type ReadCursor = z.infer<typeof ReadCursor>
 
-/** POST /api/messages body. The sender always comes from the session, never from the body. */
+/**
+ * POST /api/messages body. The sender always comes from the session, never from the body. A text
+ * message has a body; a media message (D-07) has 1..MAX_ALBUM_ITEMS attachmentIds in album order and
+ * an optional caption in body. A body, when present, is never blank.
+ */
 export const SendMessageBody = z
   .strictObject({
     id: z.uuid(),
-    body: z.string().max(MESSAGE_BODY_MAX_UTF16),
+    body: z.string().max(MESSAGE_BODY_MAX_UTF16).optional(),
     /** The message this one answers (D-02); it must exist, else 400 bad_reply. */
     replyToSeq: z.number().int().positive().optional(),
+    /** Completed uploads of the sender, in album order (position 0..n-1). */
+    attachmentIds: z.array(AttachmentId).min(1).max(MAX_ALBUM_ITEMS).optional(),
   })
-  .refine((b) => !isBlankBody(b.body), { path: ["body"], message: "blank" })
-  .refine((b) => codePointLength(b.body) <= MESSAGE_BODY_MAX_CODE_POINTS, { path: ["body"], message: "too_long" })
+  .refine((b) => b.body !== undefined || b.attachmentIds !== undefined, { path: ["body"], message: "empty" })
+  .refine((b) => b.body === undefined || !isBlankBody(b.body), { path: ["body"], message: "blank" })
+  .refine((b) => b.body === undefined || codePointLength(b.body) <= MESSAGE_BODY_MAX_CODE_POINTS, {
+    path: ["body"],
+    message: "too_long",
+  })
+  .refine((b) => b.attachmentIds === undefined || new Set(b.attachmentIds).size === b.attachmentIds.length, {
+    path: ["attachmentIds"],
+    message: "duplicate",
+  })
 export type SendMessageBody = z.infer<typeof SendMessageBody>
 
 export const SendMessageResponse = z.object({

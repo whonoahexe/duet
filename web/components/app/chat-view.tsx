@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { ArrowDownIcon, ChatCircleIcon, CloudSlashIcon } from "@phosphor-icons/react"
 import { messageLabel, type MessageDto, type ReactionDto, type ReplyPreview, type UserSummary } from "@duet/shared"
+import type { AlbumTile } from "@/components/app/album"
 import { Composer } from "@/components/app/composer"
 import { MessageGroupRow, type GroupItem, type RowStatus } from "@/components/app/message-row"
 import { localReplyPreview } from "@/components/app/quote-block"
@@ -45,6 +46,10 @@ interface DisplayMessage {
   failed: boolean
   reactions: ReactionDto[]
   replyTo: ReplyPreview | null
+  /** Album tiles (D-07), null for text. */
+  media: AlbumTile[] | null
+  /** Retry of a failed send (text outbox or album). */
+  retry: (() => void) | null
 }
 
 type ListItem =
@@ -395,7 +400,46 @@ export function ChatView({ peer }: { peer: UserSummary }) {
     return original ? localReplyPreview(original) : null
   }
 
-  // Confirmed messages by seq, then the outbox by createdAt (CHAT-04).
+  // Confirmed messages by seq, then the outbox (text and albums) by createdAt (CHAT-04).
+  const pendingDisplay: DisplayMessage[] = [
+    ...chat.pending.map((p) => ({
+      id: p.id,
+      seq: null,
+      senderId: meId ?? "",
+      body: p.body,
+      createdAt: p.createdAt,
+      confirmed: false,
+      failed: p.state === "failed",
+      reactions: [],
+      replyTo: replyPreviewFor(p.replyToSeq ?? null),
+      media: null,
+      retry: () => chatStore.retry(p.id),
+    })),
+    ...chat.media.map((e) => ({
+      id: e.id,
+      seq: null,
+      senderId: meId ?? "",
+      body: e.caption,
+      createdAt: e.createdAt,
+      confirmed: false,
+      failed: e.state === "failed",
+      reactions: [],
+      replyTo: replyPreviewFor(e.replyToSeq),
+      media: e.items.map(
+        (it): AlbumTile => ({
+          key: it.key,
+          kind: it.kind,
+          status: it.state === "queued" || it.state === "uploading" ? (e.state === "failed" ? "local" : "uploading") : "local",
+          attachmentId: it.attachmentId,
+          localUrl: it.objectUrl,
+          progress: it.progress,
+          width: null,
+          height: null,
+        }),
+      ),
+      retry: () => chatStore.retryMedia(e.id),
+    })),
+  ].sort((a, b) => a.createdAt - b.createdAt)
   const display: DisplayMessage[] = [
     ...chat.messages.map((m) => ({
       id: m.id,
@@ -407,18 +451,24 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       failed: false,
       reactions: m.reactions,
       replyTo: m.replyTo,
+      media:
+        m.kind === "media"
+          ? m.attachments.map(
+              (a): AlbumTile => ({
+                key: a.id,
+                kind: a.kind,
+                status: a.status === "uploading" ? "processing" : a.status,
+                attachmentId: a.id,
+                localUrl: chat.localPreviews[a.id] ?? null,
+                progress: null,
+                width: a.width,
+                height: a.height,
+              }),
+            )
+          : null,
+      retry: null,
     })),
-    ...chat.pending.map((p) => ({
-      id: p.id,
-      seq: null,
-      senderId: meId ?? "",
-      body: p.body,
-      createdAt: p.createdAt,
-      confirmed: false,
-      failed: p.state === "failed",
-      reactions: [],
-      replyTo: replyPreviewFor(p.replyToSeq ?? null),
-    })),
+    ...pendingDisplay,
   ]
 
   // Your most recent message carries the status line (D-03): no seq -> "Sending…", seq -> "Sent".
@@ -448,10 +498,11 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       status,
       readAt,
       failed: m.failed,
-      onRetry: m.failed ? () => chatStore.retry(m.id) : undefined,
+      onRetry: m.failed && m.retry ? m.retry : undefined,
       reactions: m.reactions,
       replyTo: m.replyTo,
       highlighted: m.seq !== null && m.seq === chat.highlightSeq,
+      media: m.media,
     }
   }
 

@@ -49,16 +49,21 @@ export function nextUpdatedSeq(tx: DbOrTx): number {
 }
 
 /**
- * Idempotent text send (CHAT-01, CHAT-04). One synchronous transaction: a replayed id from the same
+ * Idempotent send (CHAT-01, CHAT-04). One synchronous transaction: a replayed id from the same
  * sender returns the stored row unchanged (created false); an id owned by the other person is a 409
  * id_conflict and their row is untouched (T-02-02). The body is stored exactly as received. A
  * replyToSeq must name an existing message, checked inside the same transaction (400 bad_reply,
  * T-02-13).
+ *
+ * With attachmentIds the message is a media album (D-07, kind "media", body = optional caption):
+ * every id must be an upload of the sender that is not attached yet, finished uploading (processing
+ * or ready, never failed) and a photo or video, else 400 bad_attachment (T-02-28). The attachments
+ * take position 0..n-1 in the given order (MDIA-05 ordering).
  */
 export function sendMessage(
   db: Db,
   senderId: string,
-  input: Pick<SendMessageBody, "id" | "body" | "replyToSeq">,
+  input: Pick<SendMessageBody, "id" | "body" | "replyToSeq" | "attachmentIds">,
 ): { row: MessageRow; created: boolean } {
   return db.transaction((tx) => {
     const existing = tx.select().from(messages).where(eq(messages.id, input.id)).get()
@@ -71,22 +76,95 @@ export function sendMessage(
       const parent = tx.select({ seq: messages.seq }).from(messages).where(eq(messages.seq, replyToSeq)).get()
       if (!parent) throw new ChatError("bad_reply", 400)
     }
+    const attachmentIds = input.attachmentIds ?? []
+    if (attachmentIds.length > 0) {
+      const found = tx
+        .select({
+          id: attachments.id,
+          uploaderId: attachments.uploaderId,
+          messageSeq: attachments.messageSeq,
+          status: attachments.status,
+          kind: attachments.kind,
+        })
+        .from(attachments)
+        .where(inArray(attachments.id, attachmentIds))
+        .all()
+      const byId = new Map(found.map((a) => [a.id, a]))
+      for (const id of attachmentIds) {
+        const a = byId.get(id)
+        if (
+          !a ||
+          a.uploaderId !== senderId ||
+          a.messageSeq !== null ||
+          (a.status !== "processing" && a.status !== "ready") ||
+          (a.kind !== "image" && a.kind !== "video")
+        ) {
+          throw new ChatError("bad_attachment", 400)
+        }
+      }
+    } else if (input.body === undefined) {
+      throw new ChatError("invalid_body", 400)
+    }
     const updatedSeq = nextUpdatedSeq(tx)
     const row = tx
       .insert(messages)
       .values({
         id: input.id,
         senderId,
-        kind: "text",
-        body: input.body,
+        kind: attachmentIds.length > 0 ? "media" : "text",
+        body: input.body ?? null,
         replyToSeq,
         createdAt: new Date(),
         updatedSeq,
       })
       .returning()
       .get()
+    attachmentIds.forEach((id, position) => {
+      tx.update(attachments).set({ messageSeq: row.seq, position }).where(eq(attachments.id, id)).run()
+    })
     return { row, created: true }
   })
+}
+
+/**
+ * An attachment changed (processing finished or failed): when it already belongs to a message, bump
+ * that message's updated_seq so the change reaches both phones (WS msg frame now, /api/sync later)
+ * and return the fresh DTO. Null while the attachment is not attached yet.
+ */
+export function messageChangedForAttachment(db: Db, attachmentId: string): MessageDto | null {
+  const row = db.transaction((tx) => {
+    const att = tx
+      .select({ messageSeq: attachments.messageSeq })
+      .from(attachments)
+      .where(eq(attachments.id, attachmentId))
+      .get()
+    if (!att || att.messageSeq === null) return null
+    const updatedSeq = nextUpdatedSeq(tx)
+    return tx.update(messages).set({ updatedSeq }).where(eq(messages.seq, att.messageSeq)).returning().get() ?? null
+  })
+  return row ? toDtos(db, [row])[0] : null
+}
+
+type AttachmentRow = typeof attachments.$inferSelect
+
+/** One attachment row -> AttachmentDto (the same projection toDtos uses). */
+export function toAttachmentDto(
+  a: Pick<
+    AttachmentRow,
+    "id" | "kind" | "status" | "position" | "width" | "height" | "durationMs" | "waveform" | "error"
+  >,
+): AttachmentDto {
+  return {
+    id: a.id,
+    kind: a.kind,
+    status: a.status,
+    position: a.position,
+    width: a.width,
+    height: a.height,
+    durationMs: a.durationMs,
+    waveform: parseWaveform(a.waveform),
+    error: a.error,
+  }
 }
 
 /**
@@ -217,17 +295,7 @@ export function toDtos(db: DbOrTx, rows: MessageRow[]): MessageDto[] {
   for (const a of attRows) {
     if (a.messageSeq === null) continue
     const list = attsBySeq.get(a.messageSeq) ?? []
-    list.push({
-      id: a.id,
-      kind: a.kind,
-      status: a.status,
-      position: a.position,
-      width: a.width,
-      height: a.height,
-      durationMs: a.durationMs,
-      waveform: parseWaveform(a.waveform),
-      error: a.error,
-    })
+    list.push(toAttachmentDto(a))
     attsBySeq.set(a.messageSeq, list)
   }
 

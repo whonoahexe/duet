@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs"
+import path from "node:path"
 import Fastify, { type FastifyInstance } from "fastify"
 import fastifyCookie from "@fastify/cookie"
 import fastifyRateLimit from "@fastify/rate-limit"
@@ -16,6 +17,10 @@ import { chatRoutes } from "./chat/routes"
 import { pushRoutes } from "./push/routes"
 import type { WebPushSend } from "./push/sender"
 import { createChatEvents, type ChatEvents } from "./chat/events"
+import { messageChangedForAttachment } from "./chat/service"
+import { createMediaProcessor, type MediaProcessor } from "./media/process"
+import { mediaRoutes } from "./media/routes"
+import { uploadRoutes } from "./media/uploads"
 import { createHub, type Hub } from "./ws/hub"
 import { wsRoutes } from "./ws/routes"
 
@@ -27,6 +32,8 @@ declare module "fastify" {
     hub: Hub
     /** "A new message was stored" seam (push subscribes in plan 02-03). */
     chatEvents: ChatEvents
+    /** Media processing lanes (plan 02-04): uploads enqueue, tests pause/resume/idle. */
+    media: MediaProcessor
   }
 }
 
@@ -95,6 +102,28 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
 
   app.decorate("chatEvents", createChatEvents(app.log))
 
+  // Media processing (MDIA-01): when an attachment that already belongs to a message becomes ready
+  // or failed, its message is bumped and re-broadcast, so the other phone's tile turns into the photo.
+  const mediaRoot = path.join(config.DATA_DIR, "media")
+  const media = createMediaProcessor({
+    db,
+    mediaRoot,
+    log: app.log,
+    onAttachmentChanged: (id) => {
+      const message = messageChangedForAttachment(db, id)
+      if (message) app.hub.broadcast({ t: "msg", message })
+    },
+  })
+  app.decorate("media", media)
+  // Boot recovery: re-queue attachments still processing, drop stale temp parts and uploads.
+  app.addHook("onReady", async () => {
+    await media.start()
+  })
+  // Before onClose closes the database: let a running job finish its write.
+  app.addHook("preClose", async () => {
+    await media.close()
+  })
+
   app.get("/healthz", async () => ({ ok: true }))
 
   await app.register(usersRoutes)
@@ -135,6 +164,14 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
       },
     })
   }
+
+  if (!hasStatic) {
+    // Tests and server-only runs: still decorate reply.sendFile for /media (no files are served here).
+    await app.register(fastifyStatic, { root: mediaRoot, serve: false })
+  }
+
+  await app.register(uploadRoutes, { processor: media, mediaRoot })
+  await app.register(mediaRoutes, { mediaRoot })
 
   app.setNotFoundHandler((req, reply) => {
     if (isApiPath(req.url)) {
