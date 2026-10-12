@@ -1,4 +1,4 @@
-# duet: one Node process (Fastify) serving the static Next export, /api and /healthz.
+# duet: one Node process (Fastify) serving the static Next export, /api, /media and /healthz.
 # Debian (glibc) base on purpose: better-sqlite3 and @node-rs/argon2 ship prebuilt glibc binaries.
 # No ARG carries a secret; TURN credentials reach the container only through the compose env_file.
 
@@ -28,6 +28,11 @@ COPY --from=build /app/shared ./shared
 COPY --from=build /app/server ./server
 COPY --from=build /app/web/package.json ./web/package.json
 COPY --from=build /app/web/out ./web/out
+# Media toolchain (plan 02-04): ffmpeg for video/voice (02-05) and heif-convert (libheif example tools) for
+# iPhone HEIC, which sharp's prebuilt libvips cannot decode. sharp itself ships prebuilt glibc binaries.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg libheif-examples \
+  && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 3100

@@ -83,6 +83,16 @@ done
 get "$BASE/api/push/vapid-public-key"
 [ "$status" = "401" ] || die "GET /api/push/vapid-public-key without a session returned $status, expected 401"
 
+# 4g. media is login-gated and never cached at the edge (MDIA-05, T-02-27): no cookie -> 401, not a HIT
+get "$BASE/media/AAAAAAAAAAAAAAAAAAAAAA/thumb"
+[ "$status" = "401" ] || die "GET /media/<id>/thumb without a session returned $status, expected 401"
+cf_cache="$(header cf-cache-status)"
+[ "$cf_cache" != "HIT" ] || die "GET /media/<id>/thumb was served from the Cloudflare cache (cf-cache-status HIT)"
+
+# 4h. Cloudflare forwards Range requests (iOS video needs 206 responses, research A11)
+get -H "Range: bytes=0-1" "$BASE/icons/icon-512.png"
+[ "$status" = "206" ] || die "GET /icons/icon-512.png with Range: bytes=0-1 returned $status, expected 206"
+
 # 5. optional real login round-trip
 if [ -n "${DUET_SEED_FILE:-}" ]; then
   [ -r "$DUET_SEED_FILE" ] || die "DUET_SEED_FILE is not readable"
