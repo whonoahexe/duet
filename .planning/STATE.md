@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 02
 current_phase_name: Chat, Media & Push
 status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-10-12T11:17:51.867Z"
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-10-12T11:42:07.924Z"
 last_activity: 2026-10-12
-last_activity_desc: Completed 02-03 push notifications and onboarding; sharp@0.35.4 approved; 02-04 next
-state_head: 7be8457982b972a5fe9eebc927707cc4b33ddb4d
+last_activity_desc: Completed 02-04 photos and albums (chunked uploads, HEIC, /media, viewer) and deployed 02-01..02-04; 02-05 next
+state_head: 57f24df19a1345ba53cc6a2f99a0f4d3d246170a
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 9
   percent: 33
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 02 (Chat, Media & Push) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
-Last activity: 2026-10-12 — Completed 02-03: Web Push with viewing suppression and collapse, tap opens chat, iOS Add to Home Screen guide, notifications card/drawer with test push; owner approved sharp@0.35.4 (not yet deployed; goes live with 02-04)
+Last activity: 2026-10-12 — Completed 02-04: chunked uploads, sharp + heif-convert image lane (HEIC), session-gated /media with Range, preview drawer, album grid and full-screen viewer; deployed with ffmpeg + libheif in the image (chat, push and photos are live)
 
 Progress: [███░░░░░░░] 33%
 
@@ -64,6 +64,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 02 P01 | 50min | 3 tasks | 40 files |
 | Phase 02 P02 | 28min | 3 tasks | 22 files |
 | Phase 02 P03 | 27min | 3 tasks | 24 files |
+| Phase 02 P04 | 21min | 3 tasks | 32 files |
 
 ## Accumulated Context
 
@@ -109,6 +110,11 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-03: Push body is cut until the JSON payload is <= 3072 bytes; title capped at 60 graphemes
 - [Phase 02]: 02-03: Subscriptions upsert by endpoint bound to the session (logout cascades); SSRF host allowlist FCM/*.push.apple.com/Mozilla/WNS; test push goes to this session only
 - [Phase 02]: 02-03: Owner approved sharp@0.35.4 for plan 02-04 (reply: approved)
+- [Phase 02]: 02-04: MAX_ALBUM_ITEMS lives in shared/src/chat.ts (media.ts imports chat.ts; the reverse would be an ESM cycle)
+- [Phase 02]: 02-04: /media checks the variant file exists first, so a miss is JSON 404 no-store, never 404.html with an immutable header
+- [Phase 02]: 02-04: Media processor is a kind->{lane, run} handler map; 02-05 registers video (slow) and audio (fast); tests drive it with app.media pause/resume/idle
+- [Phase 02]: 02-04: Own uploads keep their local object URL per attachment id until ready; a failed album retries only items without an attachment id, same message id
+- [Phase 02]: 02-04: Deployed: ffmpeg + libheif-examples in the image, container HEIC self-test ok, push_config configured true
 
 ### Pending Todos
 
@@ -132,6 +138,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-12T11:17:51.823Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-10-12T11:42:07.879Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None
