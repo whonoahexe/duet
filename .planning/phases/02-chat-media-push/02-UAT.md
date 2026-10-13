@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 02-chat-media-push
 source: [02-01-SUMMARY.md, 02-02-SUMMARY.md, 02-03-SUMMARY.md, 02-04-SUMMARY.md, 02-05-SUMMARY.md]
 started: 2026-10-13T10:26:41Z
@@ -262,8 +262,19 @@ blocked: 0
   reason: "User reported: pass - also, it should auto scroll down when a msg is sent"
   severity: major
   test: 42
-  artifacts: []  # Filled by diagnosis
-  missing: []    # Filled by diagnosis
+  root_cause: "No code path scrolls to the end on a local send. Composer send handlers (text/album/voice) only add optimistic store entries; the only scrollToEnd call is ScrollFollower's OPEN_CHAT_EVENT handler; Composer renders outside MessageScrollerProvider. Own messages rely on the primitive's following-bottom mode, which is off when scrolled up and is also switched off by a non-scrolling touch/wheel at the bottom (overscroll, swipe-to-reply, long-press jitter)."
+  artifacts:
+    - path: "web/components/app/composer.tsx"
+      issue: "send(), sendPicked(), recorder onSend never request scroll-to-end"
+    - path: "web/components/app/chat-view.tsx"
+      issue: "Composer outside MessageScrollerProvider; ScrollFollower only scrolls on OPEN_CHAT_EVENT"
+    - path: "web/lib/chat/store.ts"
+      issue: "sendText/sendMedia/sendVoice carry no own-send signal"
+  missing:
+    - "Unconditionally scrollToEnd (behavior auto) on every local send — text, reply, album, voice — e.g. a window event ScrollFollower listens for"
+    - "Keep the incoming-message scroll-to-latest badge behaviour unchanged"
+    - "Regression scenario in scripts/smoke-chat.mjs: send while scrolled up 1200px, and after a non-scrolling wheel at bottom → new bubble visible"
+  debug_session: .planning/debug/no-autoscroll-on-send.md
 
 - gap_id: G-02-7
   truth: "The in-app guide steps match Safari's Add to Home Screen flow. Enable → Allow → a test push arrives. With duet closed, new messages raise a notification on both the iPhone and the Pixel. Several messages collapse into a single '{name} · n new messages' notification. Tapping it opens the chat. While you're actively viewing the chat, no notification appears."
@@ -271,5 +282,20 @@ blocked: 0
   reason: "User reported: notifications are not working on iphone but pass on android"
   severity: major
   test: 7
-  artifacts: []  # Filled by diagnosis
-  missing: []    # Filled by diagnosis
+  root_cause: "web.push.apple.com rejects every duet push with HTTP 400 (logs: ~25 consecutive 400s, Apple sub last_ok_at NULL; FCM all OK). server/src/push/sender.ts sendOne always sets web-push topic (duet-chat / duet-test), and since ~mid-Sep 2026 Apple answers any Topic header with 400 BadWebPushTopic (3 independent projects report and fixed it by dropping Topic). Apple's reason string not directly observed because push_failed logs drop err.body."
+  artifacts:
+    - path: "server/src/push/sender.ts"
+      issue: "sendOne always passes topic; catch logs only statusCode, drops WebPushError.body"
+    - path: "shared/src/push.ts"
+      issue: "PUSH_TOPIC_CHAT / PUSH_TOPIC_TEST assume Apple coalesces by topic"
+    - path: "server/test/push.test.ts"
+      issue: "lines ~105 and ~266 assert a topic is sent (lock in failing behaviour)"
+    - path: "web/lib/chat/push.ts"
+      issue: "sendTestPush shows 'Check your connection' on sent: 0 (misleading)"
+  missing:
+    - "Stop sending the Topic header (at least for *.push.apple.com); SW close-before-show already collapses on device"
+    - "Log a capped, sanitized err.body reason in push_failed"
+    - "Update push tests to assert no topic"
+    - "Reword the sent:0 test-push toast"
+    - "After deploy: user re-taps Enable + Send test notification on the installed iPhone; if a different Apple 400/403 appears, next suspect is per-send VAPID JWT refresh (research A9)"
+  debug_session: .planning/debug/iphone-push-not-arriving.md
