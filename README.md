@@ -116,6 +116,23 @@ docker compose up -d --build         # the container reads the VAPID vars from t
 SMOKE_SCRIPT=scripts/smoke-onboarding.mjs bash scripts/smoke-chat.sh   # Add to Home Screen guide + drawer e2e
 ```
 
+## Media
+
+Photos, short video clips and voice notes are uploaded to duet and normalized on the server, so whatever one phone records plays on the other.
+
+- **Photos** keep their original and are served as 2048 px WebP display copies (plus 640 px thumbnails), autorotated and without EXIF/GPS. iPhone HEIC goes through `heif-convert` first.
+- **Videos** (about 3 minutes / 200 MB per clip; the server refuses more than 200 s) are transcoded by ffmpeg to H.264 High + AAC MP4, at most 1280 px on the long side, with faststart and a JPEG poster frame. iPhone HDR (HLG/PQ) is tone-mapped to bt709. A clip shows "Processing…" on both phones until the transcode finishes.
+- **Voice notes** (hold the mic, slide left to cancel, slide up or tap to lock; no length limit) are normalized to AAC `.m4a` (64 kbps mono) with the duration and a 40-bar waveform computed on the server, so iPhone (AAC) and Chrome (Opus) recordings play on both phones.
+- Every video and voice upload is probed with `ffprobe` first: only allowlisted containers (MP4/MOV, Matroska/WebM, and for voice also Ogg, WAV, MP3, AAC) are processed, with an explicit input format, no shell and a kill timeout. A playlist disguised as a video is refused with 422.
+- Uploads are chunked in 8 MiB parts, because Cloudflare rejects request bodies over 100 MB.
+- Originals live in `data/media/<id>/original` and are never served; `/media/<id>/<variant>` only serves the generated copies, to a logged-in session, with Range support. Video and voice originals are kept too (to reclaim space later, delete `original` for ready video/audio attachments; nothing reads them again).
+
+Container toolchain self-test (prints `heic ok`, `video ok`, `voice ok` and `media-selftest ok`):
+
+```bash
+docker compose exec -T duet node --import tsx server/scripts/media-selftest.ts
+```
+
 ## Smoke scripts
 
 ```bash
