@@ -126,13 +126,15 @@ describe("chunked uploads (MDIA-05, Pattern 5)", () => {
     expect(res.json()).toEqual({ error: "incomplete" })
   })
 
-  it("answers 413 too_large past the image cap and accepts video (02-05 lane)", async () => {
+  it("answers 413 too_large past the image cap and accepts video and audio (02-05 lanes)", async () => {
     const big = await create(aliceCookie, { kind: "image", size: 104_857_601 })
     expect(big.statusCode).toBe(413)
     expect(big.json()).toEqual({ error: "too_large" })
     expect((await create(aliceCookie, { kind: "image", size: 104_857_600 })).statusCode).toBe(200)
 
-    expect((await create(aliceCookie, { kind: "video", size: 1000 })).statusCode).toBe(200)
+    for (const kind of ["video", "audio"]) {
+      expect((await create(aliceCookie, { kind, size: 1000 })).statusCode).toBe(200)
+    }
   })
 
   it("validates the create body strictly and requires a session", async () => {

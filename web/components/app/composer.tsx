@@ -2,14 +2,16 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { PaperPlaneRightIcon, PlusIcon, XIcon } from "@phosphor-icons/react"
+import { PaperPlaneRightIcon, PlusIcon, TrashIcon, XIcon } from "@phosphor-icons/react"
 import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, VIDEO_PICK_MAX_SECONDS, isBlankBody } from "@duet/shared"
 import { PreviewDrawer, kindOf, videoDurationMs, type PickedItem } from "@/components/app/preview-drawer"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
+import { MicButton, RecordingStatus, useVoiceRecorder } from "@/components/app/recorder"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
 import { sendTyping } from "@/lib/chat/realtime"
 import { chatStore, useChat } from "@/lib/chat/store"
+import { cn } from "@/lib/utils"
 
 /** At most one typing frame per this interval while typing (CHAT-06, UI-SPEC). */
 const TYPING_FRAME_INTERVAL_MS = 3000
@@ -34,6 +36,16 @@ export function Composer({ peerName }: { peerName: string }) {
   const meId = chat.me?.id ?? null
   const replyTarget = chat.replyTarget
   const replyMessage = replyTarget !== null ? chat.messages.find((m) => m.seq === replyTarget) : undefined
+  const replySeq = replyMessage ? replyMessage.seq : null
+
+  // Voice notes (D-10): the mic takes the Send button's place while the text field is empty.
+  const recorder = useVoiceRecorder({
+    onSend: (blob, durationMs) => {
+      chatStore.sendVoice(blob, durationMs, replySeq)
+      chatStore.setReplyTarget(null)
+    },
+  })
+  const recording = recorder.phase === "holding" || recorder.phase === "locked"
 
   // Starting a reply (swipe or menu) focuses the field so the keyboard comes up (D-01).
   useEffect(() => {
@@ -142,37 +154,72 @@ export function Composer({ peerName }: { peerName: string }) {
         data-testid="attach-input"
         onChange={(e) => void onPick(e)}
       />
-      <InputGroup>
-        <InputGroupAddon align="inline-start">
-          <InputGroupButton
-            variant="ghost"
-            size="icon-sm"
-            className="size-11 rounded-full"
-            aria-label="Attach photo or video"
-            onClick={() => fileRef.current?.click()}
-          >
-            <PlusIcon weight="bold" />
-          </InputGroupButton>
-        </InputGroupAddon>
-        <InputGroupTextarea
-          ref={ref}
-          rows={1}
-          value={text}
-          onChange={(e) => {
-            const value = e.target.value
-            setText(value)
-            const now = Date.now()
-            if (!isBlankBody(value) && now - lastTypingRef.current >= TYPING_FRAME_INTERVAL_MS) {
-              lastTypingRef.current = now
-              sendTyping()
-            }
-          }}
-          onKeyDown={onKeyDown}
-          placeholder={`Message ${peerName}`}
-          aria-label={`Message ${peerName}`}
-          className="max-h-36 min-h-11 text-base md:text-base"
-        />
-        {canSend && (
+      <InputGroup className={cn(recording && "h-auto")}>
+        {!recording && (
+          <InputGroupAddon align="inline-start">
+            <InputGroupButton
+              variant="ghost"
+              size="icon-sm"
+              className="size-11 rounded-full"
+              aria-label="Attach photo or video"
+              onClick={() => fileRef.current?.click()}
+            >
+              <PlusIcon weight="bold" />
+            </InputGroupButton>
+          </InputGroupAddon>
+        )}
+        {recorder.phase === "locked" && (
+          <InputGroupAddon align="inline-start">
+            <InputGroupButton
+              variant="destructive"
+              size="icon-sm"
+              className="size-11 rounded-full"
+              aria-label="Discard recording"
+              onClick={recorder.discard}
+            >
+              <TrashIcon />
+            </InputGroupButton>
+          </InputGroupAddon>
+        )}
+        {recording ? (
+          <RecordingStatus recorder={recorder} />
+        ) : (
+          <InputGroupTextarea
+            ref={ref}
+            rows={1}
+            value={text}
+            onChange={(e) => {
+              const value = e.target.value
+              setText(value)
+              const now = Date.now()
+              if (!isBlankBody(value) && now - lastTypingRef.current >= TYPING_FRAME_INTERVAL_MS) {
+                lastTypingRef.current = now
+                sendTyping()
+              }
+            }}
+            onKeyDown={onKeyDown}
+            placeholder={`Message ${peerName}`}
+            aria-label={`Message ${peerName}`}
+            className="max-h-36 min-h-11 text-base md:text-base"
+          />
+        )}
+        {recorder.phase === "locked" ? (
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              variant="default"
+              size="icon-sm"
+              className="size-11 rounded-full"
+              aria-label="Send voice note"
+              onClick={recorder.send}
+            >
+              <PaperPlaneRightIcon weight="fill" />
+            </InputGroupButton>
+          </InputGroupAddon>
+        ) : !canSend || recorder.phase !== "idle" ? (
+          <InputGroupAddon align="inline-end">
+            <MicButton recorder={recorder} />
+          </InputGroupAddon>
+        ) : (
           <InputGroupAddon align="inline-end">
             <InputGroupButton
               variant="default"

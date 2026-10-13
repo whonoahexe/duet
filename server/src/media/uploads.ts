@@ -21,7 +21,7 @@ import { toAttachmentDto } from "../chat/service"
 import { attachments } from "../db/schema"
 import { MediaError } from "./exec"
 import { attachmentDir, uploadTmpDir, type MediaProcessor } from "./process"
-import { VIDEO_FORMATS, inputFormatFor, probeMedia } from "./probe"
+import { VIDEO_FORMATS, VOICE_FORMATS, inputFormatFor, probeMedia } from "./probe"
 
 /** Attachment ids are 128-bit randomBytes as base64url: exactly 22 characters (T-02-23). */
 export const ATTACHMENT_ID_RE = /^[A-Za-z0-9_-]{22}$/
@@ -38,6 +38,8 @@ const REJECTIONS: ReadonlySet<string> = new Set<UploadRejection>(["unsupported_m
  */
 const PROBE_GATES: Partial<Record<AttachmentKind, { formats: readonly string[]; maxDurationMs: number | null }>> = {
   video: { formats: VIDEO_FORMATS, maxDurationMs: VIDEO_MAX_DURATION_MS },
+  // No length limit for voice notes (D-11): the 200 MB upload cap is the only backstop (T-02-33).
+  audio: { formats: VOICE_FORMATS, maxDurationMs: null },
 }
 
 /** Probe an assembled original against its kind's gate; null when it may be processed. */

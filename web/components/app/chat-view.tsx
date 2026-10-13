@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { ArrowDownIcon, ChatCircleIcon, CloudSlashIcon } from "@phosphor-icons/react"
 import { messageLabel, type MessageDto, type ReactionDto, type ReplyPreview, type UserSummary } from "@duet/shared"
 import type { AlbumTile } from "@/components/app/album"
+import type { VoiceNoteProps } from "@/components/app/voice-note"
 import { Composer } from "@/components/app/composer"
 import { MessageGroupRow, type GroupItem, type RowStatus } from "@/components/app/message-row"
 import { localReplyPreview } from "@/components/app/quote-block"
@@ -48,6 +49,8 @@ interface DisplayMessage {
   replyTo: ReplyPreview | null
   /** Album tiles (D-07), null for text. */
   media: AlbumTile[] | null
+  /** A voice note (D-12), null otherwise. */
+  voice: VoiceNoteProps | null
   /** Retry of a failed send (text outbox or album). */
   retry: (() => void) | null
 }
@@ -413,6 +416,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       reactions: [],
       replyTo: replyPreviewFor(p.replyToSeq ?? null),
       media: null,
+      voice: null,
       retry: () => chatStore.retry(p.id),
     })),
     ...chat.media.map((e) => ({
@@ -425,7 +429,13 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       failed: e.state === "failed",
       reactions: [],
       replyTo: replyPreviewFor(e.replyToSeq),
-      media: e.items.map(
+      // A voice note going up: flat placeholder bars and the recorder's length (D-12).
+      voice: e.voice
+        ? { attachmentId: null, ready: false, failed: false, durationMs: e.voice.durationMs, waveform: null }
+        : null,
+      media: e.voice
+        ? null
+        : e.items.map(
         (it): AlbumTile => ({
           key: it.key,
           kind: it.kind,
@@ -452,6 +462,16 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       failed: false,
       reactions: m.reactions,
       replyTo: m.replyTo,
+      voice:
+        m.kind === "voice" && m.attachments[0]
+          ? {
+              attachmentId: m.attachments[0].id,
+              ready: m.attachments[0].status === "ready",
+              failed: m.attachments[0].status === "failed",
+              durationMs: m.attachments[0].durationMs,
+              waveform: m.attachments[0].waveform,
+            }
+          : null,
       media:
         m.kind === "media"
           ? m.attachments.map(
@@ -505,6 +525,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       replyTo: m.replyTo,
       highlighted: m.seq !== null && m.seq === chat.highlightSeq,
       media: m.media,
+      voice: m.voice,
     }
   }
 

@@ -30,7 +30,7 @@ export interface MediaItem {
   key: string
   file: File
   kind: AttachmentKind
-  /** Local preview shown until the server's thumbnail exists. */
+  /** Local preview shown until the server's thumbnail exists (a voice note's own recording). */
   objectUrl: string
   /** Set once the upload completed (a retry skips this item). */
   attachmentId: string | null
@@ -39,7 +39,10 @@ export interface MediaItem {
   state: "queued" | "uploading" | "done" | "failed"
 }
 
-/** An album on its way (D-06/D-07): uploads in pick order, then one POST /api/messages. */
+/**
+ * An album on its way (D-06/D-07): uploads in pick order, then one POST /api/messages. A voice note
+ * (D-10, MDIA-04) is the same kind of entry with one audio item and `voice` set.
+ */
 export interface MediaEntry {
   /** Client message UUID, reused by every retry (CHAT-04). */
   id: string
@@ -49,6 +52,8 @@ export interface MediaEntry {
   replyToSeq: number | null
   items: MediaItem[]
   state: "sending" | "failed"
+  /** Set for a voice note: its length as recorded (shown until the server's own duration arrives). */
+  voice: { durationMs: number } | null
 }
 
 export interface ChatState {
@@ -423,6 +428,7 @@ export const chatStore = {
       caption: caption.trim().length > 0 ? caption : null,
       replyToSeq,
       state: "sending",
+      voice: null,
       items: files.map((file, i) => ({
         key: `${createdAt}-${i}`,
         file,
@@ -432,6 +438,39 @@ export const chatStore = {
         progress: 0,
         state: "queued",
       })),
+    }
+    set({ media: [...state.media, entry] })
+    void runMedia(entry.id)
+  },
+
+  /**
+   * Send a recorded voice note (D-10, MDIA-04): it shows at once as a voice bubble with flat
+   * placeholder bars, uploads as kind audio, then POST /api/messages { id, attachmentIds: [id] }.
+   * A failure is the same "Not sent. Tap to retry." path as an album (retryMedia).
+   */
+  sendVoice(blob: Blob, durationMs: number, replyToSeq: number | null = null): void {
+    if (blob.size === 0) return
+    const createdAt = Date.now()
+    const ext = blob.type.includes("webm") ? "webm" : blob.type.includes("ogg") ? "ogg" : "m4a"
+    const file = new File([blob], `voice-${createdAt}.${ext}`, { type: blob.type || "audio/mp4" })
+    const entry: MediaEntry = {
+      id: crypto.randomUUID(),
+      createdAt,
+      caption: null,
+      replyToSeq,
+      state: "sending",
+      voice: { durationMs },
+      items: [
+        {
+          key: `${createdAt}-0`,
+          file,
+          kind: "audio",
+          objectUrl: URL.createObjectURL(file),
+          attachmentId: null,
+          progress: 0,
+          state: "queued",
+        },
+      ],
     }
     set({ media: [...state.media, entry] })
     void runMedia(entry.id)

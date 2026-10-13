@@ -6,6 +6,7 @@ import { reactionSummary, type ReactionDto, type ReplyPreview } from "@duet/shar
 import { Album, type AlbumTile } from "@/components/app/album"
 import { MessageActions } from "@/components/app/message-actions"
 import { QuoteBlock } from "@/components/app/quote-block"
+import { VoiceNote, type VoiceNoteProps } from "@/components/app/voice-note"
 import { Bubble, BubbleContent, BubbleGroup, BubbleReactions } from "@/components/ui/bubble"
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -36,6 +37,8 @@ export interface GroupItem {
   highlighted: boolean
   /** Album tiles of a media message (D-07); null for text. */
   media: AlbumTile[] | null
+  /** A voice note (D-12); null for text and albums. */
+  voice: VoiceNoteProps | null
 }
 
 interface RowContext {
@@ -62,6 +65,8 @@ const CONTENT_CLASS =
 
 /** A media bubble: a ghost Bubble 288px wide, capped at 80% (UI-SPEC "Album bubble"). */
 const ALBUM_BUBBLE_CLASS = "w-72 max-w-[80%] data-[variant=ghost]:max-w-[80%]"
+/** A voice-note bubble: tinted/muted, 288px wide, capped at 80% (UI-SPEC section 3). */
+const VOICE_BUBBLE_CLASS = "w-72 max-w-[80%]"
 
 /**
  * The caption (and reply quote) of an album, under the grid in a regular tinted/muted bubble inside
@@ -143,6 +148,27 @@ function MessageText({ body }: { body: string | null }) {
  */
 function PendingBubble({ item, ctx }: { item: GroupItem; ctx: RowContext }) {
   const retry = item.failed ? item.onRetry : undefined
+  if (item.voice) {
+    return (
+      <>
+        <Bubble
+          data-message-id={item.id}
+          variant="tinted"
+          align="end"
+          className={cn(BUBBLE_CLASS, VOICE_BUBBLE_CLASS, item.failed && "opacity-70")}
+        >
+          <BubbleContent
+            className="flex flex-col gap-2"
+            {...(retry ? { role: "button", tabIndex: 0, onClick: retry, onKeyDown: onActivate(retry) } : {})}
+          >
+            {item.replyTo && <QuoteBlock preview={item.replyTo} meId={ctx.meId} peerName={ctx.peerName} />}
+            <VoiceNote {...item.voice} />
+          </BubbleContent>
+        </Bubble>
+        <StatusFooter item={item} />
+      </>
+    )
+  }
   if (item.media) {
     return (
       <>
@@ -215,6 +241,7 @@ function StoredBubble({ item, seq, ctx }: { item: GroupItem; seq: number; ctx: R
               className={cn(
                 BUBBLE_CLASS,
                 item.media && ALBUM_BUBBLE_CLASS,
+                item.voice && VOICE_BUBBLE_CLASS,
                 FOCUS_CLASS,
                 "touch-pan-y",
                 !swipe.dragging && "transition-transform duration-200 ease-out motion-reduce:transition-none",
@@ -233,7 +260,25 @@ function StoredBubble({ item, seq, ctx }: { item: GroupItem; seq: number; ctx: R
               style={{ opacity: swipe.progress }}
             />
           )}
-          {item.media ? (
+          {item.voice ? (
+            <BubbleContent
+              className={cn(
+                "flex flex-col gap-2 transition-[box-shadow] duration-700 motion-reduce:transition-none",
+                open && "ring-2 ring-ring/30",
+                item.highlighted && "ring-2 ring-primary",
+              )}
+            >
+              {item.replyTo && (
+                <QuoteBlock
+                  preview={item.replyTo}
+                  meId={meId}
+                  peerName={peerName}
+                  onClick={() => void chatStore.jumpTo(item.replyTo!.seq)}
+                />
+              )}
+              <VoiceNote {...item.voice} />
+            </BubbleContent>
+          ) : item.media ? (
             <>
               <Album
                 tiles={item.media}

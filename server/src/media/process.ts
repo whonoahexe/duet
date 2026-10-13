@@ -7,6 +7,7 @@ import type { AttachmentKind } from "@duet/shared"
 import type { Db } from "../db/client"
 import { attachments } from "../db/schema"
 import { MediaError } from "./exec"
+import { processAudio } from "./audio"
 import { processImage } from "./image"
 import { probeMedia } from "./probe"
 import { processVideo } from "./video"
@@ -73,6 +74,14 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
     image: {
       lane: "fast",
       run: async (dir) => processImage(path.join(dir, "original"), dir),
+    },
+    // Voice notes are short jobs and share the fast lane with photos (research Pattern 6).
+    audio: {
+      lane: "fast",
+      run: async (dir) => {
+        const original = path.join(dir, "original")
+        return processAudio(original, dir, await probeMedia(original))
+      },
     },
     // A transcode can take minutes: its own serial lane, so photos never wait behind it (T-02-31).
     video: {

@@ -56,9 +56,11 @@ export function nextUpdatedSeq(tx: DbOrTx): number {
  * T-02-13).
  *
  * With attachmentIds the message is a media album (D-07, kind "media", body = optional caption):
- * every id must be an upload of the sender that is not attached yet, finished uploading (processing
- * or ready, never failed) and a photo or video, else 400 bad_attachment (T-02-28). The attachments
- * take position 0..n-1 in the given order (MDIA-05 ordering).
+ * every id must be an upload of the sender that is not attached yet and finished uploading
+ * (processing or ready, never failed), else 400 bad_attachment (T-02-28). The attachments take
+ * position 0..n-1 in the given order (MDIA-05 ordering). Photos and videos mix freely; a voice note
+ * (kind "voice", MDIA-04) is exactly one audio attachment with no body, and audio in any other
+ * combination (with a photo, a second note, or a caption) is 400 bad_attachment.
  */
 export function sendMessage(
   db: Db,
@@ -77,6 +79,7 @@ export function sendMessage(
       if (!parent) throw new ChatError("bad_reply", 400)
     }
     const attachmentIds = input.attachmentIds ?? []
+    let voice = false
     if (attachmentIds.length > 0) {
       const found = tx
         .select({
@@ -96,11 +99,14 @@ export function sendMessage(
           !a ||
           a.uploaderId !== senderId ||
           a.messageSeq !== null ||
-          (a.status !== "processing" && a.status !== "ready") ||
-          (a.kind !== "image" && a.kind !== "video")
+          (a.status !== "processing" && a.status !== "ready")
         ) {
           throw new ChatError("bad_attachment", 400)
         }
+      }
+      if (found.some((a) => a.kind === "audio")) {
+        if (attachmentIds.length !== 1 || input.body !== undefined) throw new ChatError("bad_attachment", 400)
+        voice = true
       }
     } else if (input.body === undefined) {
       throw new ChatError("invalid_body", 400)
@@ -111,7 +117,7 @@ export function sendMessage(
       .values({
         id: input.id,
         senderId,
-        kind: attachmentIds.length > 0 ? "media" : "text",
+        kind: voice ? "voice" : attachmentIds.length > 0 ? "media" : "text",
         body: input.body ?? null,
         replyToSeq,
         createdAt: new Date(),

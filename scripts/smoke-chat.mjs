@@ -509,6 +509,106 @@ Object.assign(scenarios, {
     await player.waitFor({ state: "hidden", timeout: 3_000 })
     await waitForStatus(ada, DELIVERED, 10_000)
   },
+
+  /**
+   * MDIA-04 / D-10 / D-12: Ada holds the mic ("Record voice note") for 2.5 s with Chrome's fake
+   * microphone and releases; Bob gets a voice note whose waveform slider ("Seek voice note") carries
+   * the server's 1..4 s duration and plays from /media/; Ada's composer is back to idle (the
+   * recording row is gone, the mic is offered again). T-02-32: after the send, a slide-left cancel
+   * and a too-short hold, every microphone track Ada's page ever opened has ended.
+   */
+  async voice({ ada, bob }) {
+    // Count every MediaStream the page opens, so the test can prove the mic is always released.
+    await ada.addInitScript(() => {
+      const md = navigator.mediaDevices
+      if (!md?.getUserMedia || window.__duetStreams) return
+      window.__duetStreams = []
+      const original = md.getUserMedia.bind(md)
+      md.getUserMedia = async (constraints) => {
+        const stream = await original(constraints)
+        window.__duetStreams.push(stream)
+        return stream
+      }
+    })
+    const micReleased = () =>
+      ada.evaluate(() => (window.__duetStreams ?? []).every((s) => s.getTracks().every((t) => t.readyState === "ended")))
+    const streamCount = () => ada.evaluate(() => (window.__duetStreams ?? []).length)
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const sliders = bob.getByRole("slider", { name: "Seek voice note" })
+    const before = await sliders.count()
+
+    const mic = ada.getByRole("button", { name: "Record voice note" })
+    await mic.waitFor({ state: "visible", timeout: 5_000 })
+    const box = await mic.boundingBox()
+    if (!box) throw new Error("the mic button has no box")
+    await ada.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await ada.mouse.down()
+    await ada.getByTestId("recording-row").waitFor({ state: "visible", timeout: 5_000 })
+    await new Promise((r) => setTimeout(r, 2_500))
+    await ada.mouse.up()
+
+    await until(async () => (await sliders.count()) > before, 30_000, "Bob never received the voice note")
+    const slider = sliders.last()
+    await until(
+      async () => {
+        const max = Number(await slider.getAttribute("aria-valuemax"))
+        return max >= 1 && max <= 4
+      },
+      30_000,
+      "the voice note never got a 1..4 s server duration",
+    )
+    const note = bob.getByTestId("voice-note").last()
+    await note.getByRole("button", { name: "Play voice note" }).click()
+    await until(
+      async () => Number(await slider.getAttribute("aria-valuenow")) > 0 || (await note.getByRole("button", { name: "Pause voice note" }).count()) > 0,
+      10_000,
+      "Bob's voice note did not start playing",
+    )
+
+    await ada.getByTestId("recording-row").waitFor({ state: "hidden", timeout: 5_000 })
+    await mic.waitFor({ state: "visible", timeout: 5_000 })
+    await waitForStatus(ada, DELIVERED, 15_000)
+    if ((await streamCount()) !== 1) throw new Error("the send did not go through exactly one getUserMedia stream")
+    await until(micReleased, 5_000, "the microphone stayed open after sending")
+
+    // Slide left more than 96 px: cancelled, nothing sent, mic released.
+    const sent = await sliders.count()
+    await ada.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await ada.mouse.down()
+    await ada.getByTestId("recording-row").waitFor({ state: "visible", timeout: 5_000 })
+    for (let dx = 10; dx <= 130; dx += 10) await ada.mouse.move(box.x + box.width / 2 - dx, box.y + box.height / 2)
+    await ada.getByTestId("recording-row").waitFor({ state: "hidden", timeout: 5_000 })
+    await ada.mouse.up()
+    await until(micReleased, 5_000, "the microphone stayed open after slide-to-cancel")
+
+    // A hold released between 300 ms and 1 s: discarded with the toast, mic released.
+    await ada.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await ada.mouse.down()
+    await ada.getByTestId("recording-row").waitFor({ state: "visible", timeout: 5_000 })
+    await new Promise((r) => setTimeout(r, 500))
+    await ada.mouse.up()
+    await ada.getByText("Too short. Hold to record, or tap the mic for hands-free.").waitFor({ state: "visible", timeout: 5_000 })
+    await until(micReleased, 5_000, "the microphone stayed open after a too-short hold")
+    if ((await streamCount()) !== 3) throw new Error("expected three recordings to have opened the microphone")
+    await new Promise((r) => setTimeout(r, 1_500))
+    if ((await sliders.count()) !== sent) throw new Error("a cancelled or too-short recording was sent")
+
+    // Tap to lock, then discard: nothing sent, mic released.
+    await mic.click()
+    await ada.getByRole("button", { name: "Discard recording" }).click()
+    await ada.getByTestId("recording-row").waitFor({ state: "hidden", timeout: 5_000 })
+    await until(micReleased, 5_000, "the microphone stayed open after discarding")
+
+    // Tap to lock, record hands-free, then "Send voice note": Bob receives it.
+    await mic.click()
+    const sendVoice = ada.getByRole("button", { name: "Send voice note" })
+    await sendVoice.waitFor({ state: "visible", timeout: 5_000 })
+    await new Promise((r) => setTimeout(r, 1_500))
+    await sendVoice.click()
+    await ada.getByTestId("recording-row").waitFor({ state: "hidden", timeout: 5_000 })
+    await until(async () => (await sliders.count()) === sent + 1, 30_000, "Bob never received the locked voice note")
+    await until(micReleased, 5_000, "the microphone stayed open after a locked send")
+  },
 })
 
 const requested = process.argv.slice(3)
