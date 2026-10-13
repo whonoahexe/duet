@@ -9,20 +9,53 @@ import {
   CreateUploadBody,
   UPLOAD_CHUNK_SIZE,
   UPLOAD_LIMITS,
+  VIDEO_MAX_DURATION_MS,
   chunkCount,
   type AttachmentDto,
+  type AttachmentKind,
   type CompleteUploadResponse,
   type CreateUploadResponse,
 } from "@duet/shared"
 import { requireUser } from "../auth/session"
 import { toAttachmentDto } from "../chat/service"
 import { attachments } from "../db/schema"
+import { MediaError } from "./exec"
 import { attachmentDir, uploadTmpDir, type MediaProcessor } from "./process"
+import { VIDEO_FORMATS, inputFormatFor, probeMedia } from "./probe"
 
 /** Attachment ids are 128-bit randomBytes as base64url: exactly 22 characters (T-02-23). */
 export const ATTACHMENT_ID_RE = /^[A-Za-z0-9_-]{22}$/
 /** Chunk index path parameter: a small decimal integer (a 200 MB video has 25 chunks). */
 const INDEX_RE = /^(0|[1-9][0-9]{0,3})$/
+
+/** Why complete refused an upload: answered 422 { error } and stored as the attachment's error. */
+export type UploadRejection = "unsupported_media" | "too_long"
+const REJECTIONS: ReadonlySet<string> = new Set<UploadRejection>(["unsupported_media", "too_long"])
+
+/**
+ * The complete-time gate per kind (T-02-30, D-08): which ffprobe formats are processed at all and
+ * the longest duration accepted. Images are checked by sharp in their own lane instead.
+ */
+const PROBE_GATES: Partial<Record<AttachmentKind, { formats: readonly string[]; maxDurationMs: number | null }>> = {
+  video: { formats: VIDEO_FORMATS, maxDurationMs: VIDEO_MAX_DURATION_MS },
+}
+
+/** Probe an assembled original against its kind's gate; null when it may be processed. */
+async function gate(kind: AttachmentKind, original: string): Promise<UploadRejection | null> {
+  const rule = PROBE_GATES[kind]
+  if (!rule) return null
+  try {
+    const probe = await probeMedia(original)
+    inputFormatFor(probe, rule.formats)
+    if (rule.maxDurationMs !== null && probe.durationMs !== null && probe.durationMs > rule.maxDurationMs) {
+      return "too_long"
+    }
+    return null
+  } catch (err) {
+    if (err instanceof MediaError && err.code === "unsupported_media") return "unsupported_media"
+    throw err
+  }
+}
 
 export interface UploadRoutesOptions {
   processor: MediaProcessor
@@ -110,9 +143,13 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
   )
 
   /** Completions in flight, so a doubled complete waits for the first instead of racing it. */
-  const completing = new Map<string, Promise<AttachmentDto | "incomplete">>()
+  const completing = new Map<string, Promise<AttachmentDto | "incomplete" | { rejected: UploadRejection }>>()
 
-  async function complete(id: string, declaredSize: number): Promise<AttachmentDto | "incomplete"> {
+  async function complete(
+    id: string,
+    kind: AttachmentKind,
+    declaredSize: number,
+  ): Promise<AttachmentDto | "incomplete" | { rejected: UploadRejection }> {
     const dir = uploadTmpDir(mediaRoot, id)
     const count = chunkCount(declaredSize)
     const parts = Array.from({ length: count }, (_, i) => path.join(dir, `${i}.part`))
@@ -135,6 +172,15 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
     }
     await rm(dir, { recursive: true, force: true })
 
+    // Video/audio: ffprobe before anything else touches the file; a refused upload never reaches
+    // ffmpeg and its bytes are deleted (an HLS playlist is not worth keeping).
+    const rejected = await gate(kind, original)
+    if (rejected) {
+      app.db.update(attachments).set({ status: "failed", error: rejected }).where(eq(attachments.id, id)).run()
+      await rm(outDir, { recursive: true, force: true })
+      return { rejected }
+    }
+
     const row = app.db
       .update(attachments)
       .set({ status: "processing" })
@@ -152,16 +198,22 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
     if (!row) return reply.code(404).send({ error: "not_found" })
 
     let attachment: AttachmentDto
-    if (row.status !== "uploading") {
+    if (row.status === "failed" && row.error !== null && REJECTIONS.has(row.error)) {
+      return reply.code(422).send({ error: row.error })
+    } else if (row.status !== "uploading") {
       attachment = toAttachmentDto(row)
     } else {
       let pending = completing.get(id)
       if (!pending) {
-        pending = complete(id, row.declaredSize).finally(() => completing.delete(id))
+        pending = complete(id, row.kind, row.declaredSize).finally(() => completing.delete(id))
         completing.set(id, pending)
       }
       const result = await pending
       if (result === "incomplete") return reply.code(409).send({ error: "incomplete" })
+      if ("rejected" in result) {
+        request.log.info({ evt: "upload_rejected", userId: request.user!.id, attachmentId: id, kind: row.kind, code: result.rejected })
+        return reply.code(422).send({ error: result.rejected })
+      }
       attachment = result
       request.log.info({ evt: "upload_completed", userId: request.user!.id, attachmentId: id })
     }

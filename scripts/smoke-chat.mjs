@@ -124,6 +124,23 @@ function makeJpeg(name, width, height) {
   return file
 }
 
+/** A 1280x720 H.264/AAC test clip generated with ffmpeg (lavfi testsrc + sine) in SMOKE_TMP. */
+function makeMp4(name, seconds) {
+  const dir = process.env.SMOKE_TMP
+  if (!dir) throw new Error("SMOKE_TMP is not set (run through scripts/smoke-chat.sh)")
+  const file = path.join(dir, name)
+  execFileSync(
+    "ffmpeg",
+    [
+      "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=25", "-f", "lavfi", "-i", "sine=frequency=440",
+      "-t", String(seconds), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", file,
+    ],
+    { stdio: ["ignore", "ignore", "inherit"] },
+  )
+  return file
+}
+
 /** The preview drawer (D-06) once it is open. */
 function previewDrawer(page) {
   return page.locator('[data-slot="drawer-popup"]')
@@ -445,6 +462,52 @@ Object.assign(scenarios, {
     await until(async () => (await counter.textContent())?.trim() === "1 / 2", 5_000, "ArrowLeft did not move to 1 / 2")
     await bob.keyboard.press("Escape")
     await counter.waitFor({ state: "hidden", timeout: 3_000 })
+  },
+
+  /**
+   * MDIA-03 / D-05 / D-08: Ada picks a 4 s clip ("1 video", "Send video"); Bob sees the processing
+   * tile or the poster, then within 60 s the poster frame from /media/ with its duration; tapping it
+   * opens the viewer, whose native video (never autoplaying) loads its metadata from /media/.
+   */
+  async video({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const file = makeMp4(`clip-${randomUUID().slice(0, 8)}.mp4`, 4)
+    const caption = uniqueText("clip")
+
+    await pickFiles(ada, [file])
+    const drawer = previewDrawer(ada)
+    await drawer.getByText("1 video", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send video", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+
+    const onBob = albumWithCaption(bob, caption)
+    await onBob.waitFor({ state: "visible", timeout: 20_000 })
+    await until(
+      async () => (await onBob.getByTestId("video-processing").count()) > 0 || (await mediaImagesLoaded(onBob, 1)),
+      20_000,
+      "Bob never saw the processing tile or the poster",
+    )
+    await until(() => mediaImagesLoaded(onBob, 1), 60_000, "Bob's video poster never loaded from /media/")
+    const src = await onBob.locator("img").getAttribute("src")
+    if (!src?.includes("/poster")) throw new Error(`the video tile shows ${src}, not the poster`)
+    const duration = (await onBob.getByTestId("video-duration").textContent())?.trim()
+    if (duration !== "0:04" && duration !== "0:03") throw new Error(`the video tile shows duration "${duration}"`)
+
+    await onBob.getByRole("button", { name: "Open video 1 of 1" }).click()
+    const player = bob.getByTestId("viewer-video")
+    await player.waitFor({ state: "visible", timeout: 5_000 })
+    await until(
+      () => player.evaluate((v) => v.currentSrc.includes("/media/") && v.readyState >= 1),
+      15_000,
+      "the viewer's video never loaded its metadata from /media/",
+    )
+    if (!(await player.evaluate((v) => v.paused && v.controls && v.playsInline && !v.autoplay))) {
+      throw new Error("the viewer's video autoplays or lacks controls/playsInline")
+    }
+    await bob.keyboard.press("Escape")
+    await player.waitFor({ state: "hidden", timeout: 3_000 })
+    await waitForStatus(ada, DELIVERED, 10_000)
   },
 })
 

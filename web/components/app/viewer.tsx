@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { ImageBrokenIcon, XIcon } from "@phosphor-icons/react"
+import { useEffect, useRef, useState } from "react"
+import { ImageBrokenIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel"
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
 import type { AlbumTile } from "@/components/app/album"
+import { claimPlayback, releasePlayback } from "@/lib/chat/playback"
 
 /** The display copy (long edge 2048, D-09), never the original (assumption: one album at a time). */
 function displaySrc(tile: AlbumTile, attempt: number): string | null {
@@ -15,11 +16,68 @@ function displaySrc(tile: AlbumTile, attempt: number): string | null {
   return attempt > 0 ? `${base}?r=${attempt}` : base
 }
 
+/** /media/{id}/{variant}, with a cache-busting suffix after a failed load. */
+function mediaUrl(id: string, variant: "video" | "poster", attempt: number): string {
+  const base = `/media/${encodeURIComponent(id)}/${variant}`
+  return attempt > 0 ? `${base}?r=${attempt}` : base
+}
+
+/**
+ * A video slide (D-08, UI-SPEC): native controls, inline, metadata only, the poster, never autoplay.
+ * Seeking uses Range requests on /media/{id}/video. Starting it pauses any other playing media.
+ */
+function VideoSlide({ tile }: { tile: AlbumTile }) {
+  const [attempt, setAttempt] = useState(0)
+  const [failed, setFailed] = useState(false)
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    return () => {
+      if (!el) return
+      el.pause()
+      releasePlayback(el)
+    }
+  }, [attempt, failed])
+
+  if (failed || tile.status === "failed") {
+    return (
+      <button
+        type="button"
+        className="flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
+        onClick={() => {
+          setFailed(false)
+          setAttempt((a) => a + 1)
+        }}
+      >
+        <VideoCameraIcon className="size-8" />
+        Couldn&apos;t load
+      </button>
+    )
+  }
+  if (tile.status !== "ready" || !tile.attachmentId) return <Spinner className="size-8 text-muted-foreground" />
+  return (
+    <video
+      ref={ref}
+      key={attempt}
+      src={mediaUrl(tile.attachmentId, "video", attempt)}
+      poster={mediaUrl(tile.attachmentId, "poster", attempt)}
+      controls
+      playsInline
+      preload="metadata"
+      data-testid="viewer-video"
+      className="size-full object-contain"
+      onPlay={(e) => claimPlayback(e.currentTarget)}
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 /** One slide: the photo, object-contain; a failed load shows "Couldn't load" and a tap retries. */
 function Slide({ tile }: { tile: AlbumTile }) {
   const [attempt, setAttempt] = useState(0)
   const [failed, setFailed] = useState(false)
   const src = displaySrc(tile, attempt)
+  if (tile.kind === "video") return <VideoSlide tile={tile} />
   if (failed || tile.status === "failed") {
     return (
       <button
@@ -72,7 +130,11 @@ export function Viewer({
 
   useEffect(() => {
     if (!api) return
-    const onSelect = () => setCurrent(api.selectedScrollSnap())
+    const onSelect = () => {
+      setCurrent(api.selectedScrollSnap())
+      // Moving to another item stops a clip that was playing (videos never autoplay).
+      for (const v of api.rootNode().querySelectorAll("video")) v.pause()
+    }
     onSelect()
     api.on("select", onSelect)
     api.on("reInit", onSelect)
@@ -102,7 +164,7 @@ export function Viewer({
           }
         }}
       >
-        <DialogTitle className="sr-only">Photo viewer</DialogTitle>
+        <DialogTitle className="sr-only">Media viewer</DialogTitle>
         <div className="relative flex h-14 shrink-0 items-center px-2 pt-[env(safe-area-inset-top)] box-content">
           <DialogClose render={<Button variant="ghost" size="icon" aria-label="Close viewer" />}>
             <XIcon />

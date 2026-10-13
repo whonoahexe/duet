@@ -435,6 +435,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
           progress: it.progress,
           width: null,
           height: null,
+          durationMs: null,
         }),
       ),
       retry: () => chatStore.retryMedia(e.id),
@@ -463,6 +464,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
                 progress: null,
                 width: a.width,
                 height: a.height,
+                durationMs: a.durationMs,
               }),
             )
           : null,

@@ -8,6 +8,8 @@ import type { Db } from "../db/client"
 import { attachments } from "../db/schema"
 import { MediaError } from "./exec"
 import { processImage } from "./image"
+import { probeMedia } from "./probe"
+import { processVideo } from "./video"
 
 /** Temp chunk dirs and never-completed uploads older than this are deleted at boot. */
 export const STALE_UPLOAD_MS = 24 * 60 * 60 * 1000
@@ -61,8 +63,8 @@ export function uploadTmpDir(mediaRoot: string, id: string): string {
 }
 
 /**
- * Two serial in-process lanes (research Pattern 6): "fast" for images (and voice notes in 02-05) and
- * "slow" for video (02-05), so a long transcode never delays a photo. Each lane runs one job at a time
+ * Two serial in-process lanes (research Pattern 6): "fast" for images and voice notes, "slow" for
+ * video, so a long transcode never delays a photo. Each lane runs one job at a time
  * (T-02-25). A job never touches the original (D-09).
  */
 export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcessor {
@@ -71,6 +73,14 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
     image: {
       lane: "fast",
       run: async (dir) => processImage(path.join(dir, "original"), dir),
+    },
+    // A transcode can take minutes: its own serial lane, so photos never wait behind it (T-02-31).
+    video: {
+      lane: "slow",
+      run: async (dir) => {
+        const original = path.join(dir, "original")
+        return processVideo(original, dir, await probeMedia(original))
+      },
     },
   }
 
@@ -131,7 +141,7 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
           waveform: result.waveform ? JSON.stringify(result.waveform) : null,
         }
       } catch (err) {
-        const code = err instanceof MediaError ? err.code : "processing_failed"
+        const code = err instanceof MediaError ? err.code : row.kind === "image" ? "processing_failed" : "transcode_failed"
         if (err instanceof MediaError && err.detail) log.debug({ evt: "media_job_detail", attachmentId: id, detail: err.detail })
         patch = { status: "failed", error: code }
       }

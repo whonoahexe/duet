@@ -70,3 +70,28 @@ export function selectionSendLabel(kinds: AttachmentKind[]): string {
   const { one, many } = selectionNoun(kinds)
   return kinds.length === 1 ? `Send ${one}` : `Send ${kinds.length} ${many}`
 }
+
+/**
+ * Longest video clip the server accepts, by its probed duration (D-08 "about 3 minutes", research
+ * A7: a little slack over the client's 3-minute pick check for containers that round up).
+ */
+export const VIDEO_MAX_DURATION_MS = 200_000
+
+/** Longest video the picker lets through (D-08, UI-SPEC toast "Videos can be up to 3 minutes."). */
+export const VIDEO_PICK_MAX_SECONDS = 180
+
+/** Bars in a voice note's waveform (D-12, UI-SPEC: 40 SVG bars). Values are integers 0..100. */
+export const VOICE_WAVEFORM_BARS = 40
+
+/**
+ * A clip or voice-note length as the UI shows it (UI-SPEC "0:42", D-11 "1:00:00"): m:ss under an
+ * hour, h:mm:ss from one hour on. Rounds down to whole seconds; negative or non-finite values are 0.
+ */
+export function formatDuration(ms: number): string {
+  const total = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const ss = String(s).padStart(2, "0")
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`
+}

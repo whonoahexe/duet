@@ -20,17 +20,19 @@ export interface RunToolOptions {
   timeoutMs: number
   /** Error code used for a non-zero exit. Default "tool_failed". */
   failCode?: string
+  /** Receives stdout chunks (ffprobe JSON, raw PCM). Without it stdout is discarded. */
+  onStdout?: (chunk: Buffer) => void
 }
 
 /**
  * Run a media tool (ffmpeg, heif-convert, ...) safely (T-02-29, Pitfall 7): `nice -n 10 cmd ...args`
- * with an argument array (never a shell), stdin ignored, stdout discarded, at most 8 KB of stderr
- * kept, and a kill timeout. Every path in args is built by the server, never taken from a client.
+ * with an argument array (never a shell), stdin ignored, stdout discarded (or streamed to
+ * opts.onStdout), at most 8 KB of stderr kept, and a kill timeout. Every path in args is built by the server, never taken from a client.
  */
 export function runTool(cmd: string, args: readonly string[], opts: RunToolOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn("nice", ["-n", "10", cmd, ...args], {
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", opts.onStdout ? "pipe" : "ignore", "pipe"],
       shell: false,
       windowsHide: true,
     })
@@ -48,6 +50,18 @@ export function runTool(cmd: string, args: readonly string[], opts: RunToolOptio
       finish(new MediaError("timeout", `${cmd} exceeded ${opts.timeoutMs} ms`))
     }, opts.timeoutMs)
 
+    if (opts.onStdout) {
+      const onStdout = opts.onStdout
+      child.stdout?.on("data", (chunk: Buffer) => {
+        if (settled) return
+        try {
+          onStdout(chunk)
+        } catch (err) {
+          child.kill("SIGKILL")
+          finish(err instanceof MediaError ? err : new MediaError(opts.failCode ?? "tool_failed", String(err)))
+        }
+      })
+    }
     child.stderr?.setEncoding("utf8")
     child.stderr?.on("data", (chunk: string) => {
       if (stderr.length < STDERR_MAX) stderr = (stderr + chunk).slice(0, STDERR_MAX)

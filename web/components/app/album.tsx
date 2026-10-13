@@ -1,8 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { ImageBrokenIcon } from "@phosphor-icons/react"
-import type { AttachmentKind } from "@duet/shared"
+import { ImageBrokenIcon, PlayIcon, VideoCameraIcon } from "@phosphor-icons/react"
+import { formatDuration, type AttachmentKind } from "@duet/shared"
 import { Viewer } from "@/components/app/viewer"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
@@ -23,6 +23,8 @@ export interface AlbumTile {
   progress: number | null
   width: number | null
   height: number | null
+  /** Video length from the server (D-08); null for photos and items not processed yet. */
+  durationMs: number | null
 }
 
 /** Tiles drawn in the grid: at most four; the fourth carries "+N" when there are more. */
@@ -36,19 +38,34 @@ function clampedRatio(w: number | null, h: number | null): number {
 
 function thumbSrc(tile: AlbumTile, attempt: number): string | null {
   if (tile.status === "ready" && tile.attachmentId) {
-    const base = `/media/${encodeURIComponent(tile.attachmentId)}/thumb`
+    // A video's tile is its poster frame (Pitfall 10: only requested once the attachment is ready).
+    const variant = tile.kind === "video" ? "poster" : "thumb"
+    const base = `/media/${encodeURIComponent(tile.attachmentId)}/${variant}`
     // A retry after a failed load bypasses the browser's memory of the failure.
     return attempt > 0 ? `${base}?r=${attempt}` : base
   }
   return tile.localUrl
 }
 
-/** "Couldn't load" tile body (UI-SPEC: ImageBrokenIcon, 12px destructive text). */
-function Broken() {
+/** "Couldn't load" tile body (UI-SPEC: ImageBrokenIcon, or VideoCameraIcon for a video; 12px destructive text). */
+function Broken({ kind }: { kind: AttachmentKind }) {
   return (
     <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-xs text-destructive">
-      <ImageBrokenIcon className="size-6" />
+      {kind === "video" ? <VideoCameraIcon className="size-6" /> : <ImageBrokenIcon className="size-6" />}
       Couldn&apos;t load
+    </span>
+  )
+}
+
+/** A transcode that failed (D-08, UI-SPEC "Failures"): shown to both people. */
+function TranscodeFailed() {
+  return (
+    <span
+      data-testid="video-failed"
+      className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-2 text-center text-xs text-destructive"
+    >
+      <VideoCameraIcon className="size-6" />
+      Couldn&apos;t process this video
     </span>
   )
 }
@@ -76,8 +93,11 @@ function Tile({
 }) {
   const [attempt, setAttempt] = useState(0)
   const [loadFailed, setLoadFailed] = useState(false)
+  const video = tile.kind === "video"
   const src = thumbSrc(tile, attempt)
   const broken = tile.status === "failed" || (loadFailed && tile.status === "ready")
+  // Your own clip before the poster exists: the local file itself, first frame, never playing.
+  const localVideo = video && tile.status !== "ready" && tile.status !== "processing" && tile.localUrl !== null
 
   function activate(e: React.SyntheticEvent) {
     if (broken && tile.status === "ready") {
@@ -103,7 +123,9 @@ function Tile({
         ? {
             role: "button",
             tabIndex: 0,
-            "aria-label": broken ? "Couldn't load. Tap to retry" : `Open photo ${index + 1} of ${total}`,
+            "aria-label": broken
+              ? "Couldn't load. Tap to retry"
+              : `Open ${video ? "video" : "photo"} ${index + 1} of ${total}`,
             onClick: activate,
             onKeyDown: (e: React.KeyboardEvent) => {
               if (e.key === "Enter" || e.key === " ") {
@@ -114,7 +136,16 @@ function Tile({
           }
         : {})}
     >
-      {src && !broken && (
+      {localVideo && !broken && (
+        <video
+          src={`${tile.localUrl}#t=0.1`}
+          muted
+          playsInline
+          preload="metadata"
+          className="absolute inset-0 size-full object-cover"
+        />
+      )}
+      {src && !broken && !localVideo && !(video && tile.status === "processing") && (
         // eslint-disable-next-line @next/next/no-img-element -- static export; media is auth-gated
         <img
           src={src}
@@ -127,14 +158,40 @@ function Tile({
           }}
         />
       )}
-      {broken && <Broken />}
+      {broken && (video && tile.status === "failed" ? <TranscodeFailed /> : <Broken kind={tile.kind} />)}
+      {video && tile.status === "ready" && !broken && (
+        <>
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="flex size-10 items-center justify-center rounded-full bg-background/60">
+              <PlayIcon weight="fill" className="size-5" />
+            </span>
+          </span>
+          {tile.durationMs !== null && more === 0 && (
+            <span
+              data-testid="video-duration"
+              className="pointer-events-none absolute right-2 bottom-2 rounded-full bg-background/60 px-2 text-xs font-medium whitespace-nowrap tabular-nums"
+            >
+              {formatDuration(tile.durationMs)}
+            </span>
+          )}
+        </>
+      )}
+      {video && tile.status === "processing" && (
+        <span
+          data-testid="video-processing"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-muted text-xs font-medium"
+        >
+          <Spinner className="size-6 text-muted-foreground" />
+          Processing…
+        </span>
+      )}
       {tile.status === "uploading" && (
         <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-background/40">
           <Spinner className="size-6 text-primary" />
           <span className="text-xs font-medium tabular-nums">{tile.progress ?? 0}%</span>
         </span>
       )}
-      {tile.status === "processing" && !src && (
+      {!video && tile.status === "processing" && !src && (
         <span className="absolute inset-0 flex items-center justify-center">
           <Spinner className="size-6 text-muted-foreground" />
         </span>

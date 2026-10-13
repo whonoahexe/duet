@@ -3,8 +3,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { PaperPlaneRightIcon, PlusIcon, XIcon } from "@phosphor-icons/react"
-import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, isBlankBody } from "@duet/shared"
-import { PreviewDrawer } from "@/components/app/preview-drawer"
+import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, VIDEO_PICK_MAX_SECONDS, isBlankBody } from "@duet/shared"
+import { PreviewDrawer, kindOf, videoDurationMs, type PickedItem } from "@/components/app/preview-drawer"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
@@ -25,7 +25,7 @@ function finePointer(): boolean {
 /** Text composer pinned under the list. Send appears only once there is something to send. */
 export function Composer({ peerName }: { peerName: string }) {
   const [text, setText] = useState("")
-  const [picked, setPicked] = useState<File[]>([])
+  const [picked, setPicked] = useState<PickedItem[]>([])
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const lastTypingRef = useRef(0)
@@ -60,22 +60,42 @@ export function Composer({ peerName }: { peerName: string }) {
     ref.current?.focus()
   }
 
-  /** The native picker returned files (camera, library or Files: D-05). */
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  /**
+   * The native picker returned files (camera, library or Files: D-05). Limits are checked before the
+   * drawer opens (UI-SPEC): photos over 100 MB, videos over 200 MB or 3 minutes (D-08) are left out
+   * with a toast, at most 10 items are kept, and if nothing is left the drawer does not open.
+   */
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     let files = Array.from(e.target.files ?? [])
     // Picking the same file again must fire change again.
     e.target.value = ""
-    // Limits are checked before the drawer opens; if nothing is left it does not open.
-    const tooBig = files.filter((f) => !f.type.startsWith("video/") && f.size > UPLOAD_LIMITS.image)
-    if (tooBig.length > 0) {
-      files = files.filter((f) => !tooBig.includes(f))
-      toast.error(tooBig.length === 1 ? "That photo is over 100 MB, so it was left out." : `${tooBig.length} photos are over 100 MB, so they were left out.`)
+    const tooBigPhotos = files.filter((f) => kindOf(f) === "image" && f.size > UPLOAD_LIMITS.image)
+    if (tooBigPhotos.length > 0) {
+      files = files.filter((f) => !tooBigPhotos.includes(f))
+      toast.error(
+        tooBigPhotos.length === 1
+          ? "That photo is over 100 MB, so it was left out."
+          : `${tooBigPhotos.length} photos are over 100 MB, so they were left out.`,
+      )
+    }
+    const tooBigVideos = files.filter((f) => kindOf(f) === "video" && f.size > UPLOAD_LIMITS.video)
+    if (tooBigVideos.length > 0) {
+      files = files.filter((f) => !tooBigVideos.includes(f))
+      toast.error("That video is over 200 MB. Trim it and try again.")
     }
     if (files.length > MAX_ALBUM_ITEMS) {
       files = files.slice(0, MAX_ALBUM_ITEMS)
       toast("You can send up to 10 at a time. The first 10 are selected.")
     }
-    if (files.length > 0) setPicked(files)
+    let items: PickedItem[] = await Promise.all(
+      files.map(async (file) => ({ file, durationMs: kindOf(file) === "video" ? await videoDurationMs(file) : null })),
+    )
+    const tooLong = items.filter((it) => it.durationMs !== null && it.durationMs > VIDEO_PICK_MAX_SECONDS * 1000)
+    if (tooLong.length > 0) {
+      items = items.filter((it) => !tooLong.includes(it))
+      toast.error("Videos can be up to 3 minutes. Trim it and try again.")
+    }
+    if (items.length > 0) setPicked(items)
   }
 
   function sendPicked(files: File[], caption: string) {
@@ -116,11 +136,11 @@ export function Composer({ peerName }: { peerName: string }) {
       <input
         ref={fileRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         multiple
         hidden
         data-testid="attach-input"
-        onChange={onPick}
+        onChange={(e) => void onPick(e)}
       />
       <InputGroup>
         <InputGroupAddon align="inline-start">
@@ -169,7 +189,7 @@ export function Composer({ peerName }: { peerName: string }) {
         )}
       </InputGroup>
       <PreviewDrawer
-        files={picked}
+        items={picked}
         onSend={sendPicked}
         onRemove={(i) => setPicked((prev) => prev.filter((_, j) => j !== i))}
         onDiscard={() => setPicked([])}
