@@ -41,8 +41,8 @@
 
 - [x] **MDIA-01**: User can send images from the camera or photo library; iPhone HEIC photos display correctly on both phones
 - [x] **MDIA-02**: User can tap an image to view it full screen
-- [ ] **MDIA-03**: User can send short video clips that play on both phones (server transcodes to H.264 MP4)
-- [ ] **MDIA-04**: User can record and send voice notes that play on both phones, with a playback scrubber
+- [x] **MDIA-03**: User can send short video clips that play on both phones (server transcodes to H.264 MP4)
+- [x] **MDIA-04**: User can record and send voice notes that play on both phones, with a playback scrubber
 - [x] **MDIA-05**: Media is only accessible to the two logged-in users (auth-gated, supports range requests for playback)
 
 ### Notifications
@@ -138,8 +138,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CHAT-09 | Phase 2 | Complete |
 | MDIA-01 | Phase 2 | Complete |
 | MDIA-02 | Phase 2 | Complete |
-| MDIA-03 | Phase 2 | Pending |
-| MDIA-04 | Phase 2 | Pending |
+| MDIA-03 | Phase 2 | Complete |
+| MDIA-04 | Phase 2 | Complete |
 | MDIA-05 | Phase 2 | Complete |
 | NOTF-01 | Phase 2 | Complete |
 | NOTF-02 | Phase 2 | Complete |
