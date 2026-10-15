@@ -4,7 +4,7 @@
 // No scenario names runs every scenario in registry order. Every scenario opens its own logged-in pages
 // and closes them when done. Prints only scenario names and verdicts: never cookies, passwords, ICE
 // server entries or credentials.
-import { dumpErrors, fixtureIds, launchBrowser, loggedInPage } from "./lib/e2e.mjs"
+import { dumpErrors, fixtureIds, launchBrowser } from "./lib/e2e.mjs"
 
 const BASE = process.argv[2]
 if (!BASE) {
@@ -40,14 +40,54 @@ function recordTracks() {
   }
 }
 
+/** getUserMedia rejects like a person who tapped "Don't Allow" (NotAllowedError). */
+function denyMedia() {
+  const md = navigator.mediaDevices
+  if (!md) return
+  md.getUserMedia = async () => {
+    throw new DOMException("Permission denied", "NotAllowedError")
+  }
+}
+
 /**
- * Open logged-in pages at "/" for each fixture (the chat composer must be visible). Each page lives in
- * its own browser context (its own session, like a separate phone). Registered for closing in `opened`.
+ * The session cookie value of `fixture`'s login number `slot`. Logins are pooled across scenarios
+ * (POST /api/login allows 5 per 5 minutes per account and IP): a scenario that needs two devices of the
+ * same person uses slots 0 and 1, which are two different sessions.
  */
-async function openApp(ctx, fixture, peer, opened) {
-  const page = await loggedInPage(ctx.browser, BASE, fixture, ctx.ids[fixture.username])
+async function sessionCookie(ctx, fixture, slot) {
+  const key = `${fixture.username}#${slot}`
+  const cached = ctx.cookies.get(key)
+  if (cached) return cached
+  const res = await fetch(`${BASE}/api/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json", Origin: BASE },
+    body: JSON.stringify({ userId: ctx.ids[fixture.username], password: fixture.password }),
+  })
+  if (res.status !== 200) throw new Error(`login as ${fixture.username} returned ${res.status}`)
+  const m = /duet_session=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")
+  if (!m) throw new Error(`login as ${fixture.username} set no duet_session cookie`)
+  ctx.cookies.set(key, m[1])
+  return m[1]
+}
+
+/**
+ * Open the app at "/" as `fixture` (the chat composer must be visible), in a fresh browser context
+ * (like a separate phone) on session `slot`. Registered for closing in `opened`.
+ */
+async function openApp(ctx, fixture, peer, opened, { denyMic = false, slot = 0 } = {}) {
+  const context = await ctx.browser.newContext()
+  await context.addCookies([{ name: "duet_session", value: await sessionCookie(ctx, fixture, slot), url: BASE }])
+  const page = await context.newPage()
+  const errors = []
+  page.__errors = errors
+  page.__name = slot === 0 ? fixture.username : `${fixture.username}-${slot + 1}`
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(msg.text().slice(0, 300))
+  })
+  page.on("pageerror", (err) => errors.push(String(err).slice(0, 300)))
   opened.push(page)
   await page.addInitScript(recordTracks)
+  if (denyMic) await page.addInitScript(denyMedia)
   await page.goto(`${BASE}/`)
   await page.getByPlaceholder(`Message ${peer.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
   return page
@@ -135,6 +175,12 @@ async function ringBob(ada, bob) {
   const incoming = incomingDialog(bob, ADA)
   await incoming.waitFor({ state: "visible", timeout: 10_000 })
   return incoming
+}
+
+/** Hang up a live call from `page` and wait until both pages are idle again. */
+async function hangUpBoth(page, peer, other) {
+  await callDialog(page, peer).getByRole("button", { name: "Hang up" }).click()
+  await Promise.all([waitPhase(page, "idle", 5_000), waitPhase(other, "idle", 5_000)])
 }
 
 /** No incoming dialog appears on `page` within `ms`. */
@@ -239,6 +285,75 @@ const scenarios = {
     await waitStatus(ada, BOB, /^Declined$/, 3_000)
     await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 4_000 })
   },
+
+  /** D-11: both of Bob's devices ring; the second answers; the first closes with a toast. */
+  async "multi-device"(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob1 = await openApp(ctx, BOB, ADA, opened)
+    const bob2 = await openApp(ctx, BOB, ADA, opened, { slot: 1 })
+    await ada.getByRole("button", { name: "Voice call" }).click()
+    const in1 = incomingDialog(bob1, ADA)
+    const in2 = incomingDialog(bob2, ADA)
+    await Promise.all([in1.waitFor({ state: "visible", timeout: 10_000 }), in2.waitFor({ state: "visible", timeout: 10_000 })])
+    await in2.getByRole("button", { name: "Accept" }).click()
+    await in1.waitFor({ state: "hidden", timeout: 5_000 })
+    await toasts(bob1).getByText("Answered on another device", { exact: true }).waitFor({ state: "visible", timeout: 3_000 })
+    await Promise.all([waitPhase(ada, "live", 30_000), waitPhase(bob2, "live", 30_000)])
+    const [a, b2, b1] = await Promise.all([diag(ada), diag(bob2), diag(bob1)])
+    if (a.callId !== b2.callId) throw new Error("Ada and Bob's second device are in different calls")
+    if (b1.phase !== "idle") throw new Error(`Bob's first device is "${b1.phase}", expected idle`)
+    await hangUpBoth(ada, BOB, bob2)
+    await expectTracksEnded(ada)
+    await expectTracksEnded(bob2)
+  },
+
+  /** D-14: both tap Voice call at the same moment; the server merges the two into one call. */
+  async glare(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await Promise.all([
+      ada.getByRole("button", { name: "Voice call" }).click(),
+      bob.getByRole("button", { name: "Voice call" }).click(),
+    ])
+    await Promise.all([waitPhase(ada, "live", 30_000), waitPhase(bob, "live", 30_000)])
+    const [a, b] = await Promise.all([diag(ada), diag(bob)])
+    if (!a.callId || a.callId !== b.callId) throw new Error("glare left the two pages in different calls")
+    await hangUpBoth(ada, BOB, bob)
+    await expectTracksEnded(ada)
+    await expectTracksEnded(bob)
+  },
+
+  /** Busy: Ada is in a call on one device; her second device's call is refused and Bob is not rung again. */
+  async busy(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    const ada2 = await openApp(ctx, ADA, BOB, opened, { slot: 1 })
+    await connectVoice(ada, bob)
+    await ada2.getByRole("button", { name: "Voice call" }).click()
+    await toasts(ada2)
+      .getByText("You're already in a call on another device.", { exact: true })
+      .waitFor({ state: "visible", timeout: 10_000 })
+    await callDialog(ada2, BOB).waitFor({ state: "hidden", timeout: 2_000 })
+    if (await incomingDialog(bob, ADA).isVisible()) throw new Error("Bob got a second incoming call")
+    const b = await diag(bob)
+    if (b.phase !== "live") throw new Error(`Bob's call is "${b.phase}" after the busy attempt, expected live`)
+    await expectTracksEnded(ada2)
+    await hangUpBoth(ada, BOB, bob)
+  },
+
+  /** D-19: a denied microphone starts no call and opens the "Allow the microphone" drawer. */
+  async "mic-denied"(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened, { denyMic: true })
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await ada.getByRole("button", { name: "Voice call" }).click()
+    const drawer = ada.getByTestId("permission-drawer")
+    await drawer.getByText("Allow the microphone", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
+    await drawer.getByRole("button", { name: "Close" }).waitFor({ state: "visible", timeout: 1_000 })
+    if (await callDialog(ada, BOB).isVisible()) throw new Error("a call screen opened with the microphone denied")
+    await expectNoIncoming(bob, ADA, 2_000)
+    await drawer.getByRole("button", { name: "Close" }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 3_000 })
+  },
 }
 
 const requested = process.argv.slice(3)
@@ -254,7 +369,7 @@ const browser = await launchBrowser()
 let exitCode = 0
 try {
   const [adaId, bobId] = await fixtureIds(BASE, [ADA.username, BOB.username])
-  const ctx = { browser, ids: { [ADA.username]: adaId, [BOB.username]: bobId } }
+  const ctx = { browser, ids: { [ADA.username]: adaId, [BOB.username]: bobId }, cookies: new Map() }
   for (const name of names) {
     const opened = []
     try {

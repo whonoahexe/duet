@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react"
 import type { MeResponse } from "@duet/shared"
 import { CallScreen } from "@/components/app/call-screen"
 import { IncomingCall } from "@/components/app/incoming-call"
+import { PermissionDrawer } from "@/components/app/permission-drawer"
 import { callStore, useCall } from "@/lib/call/store"
 import { onRealtimeFrame } from "@/lib/chat/realtime"
 
@@ -46,6 +47,13 @@ export function CallProvider({ me }: { me: MeResponse }) {
       />
       <CallScreen />
       <IncomingCall />
+      <PermissionDrawer
+        open={call.permission !== null}
+        onOpenChange={(open) => {
+          if (!open) callStore.clearPermission()
+        }}
+        device={call.permission ?? "microphone"}
+      />
     </>
   )
 }

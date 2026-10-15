@@ -7,6 +7,9 @@ export const RECENT_CALL_TTL_MS = 24 * 60 * 60 * 1000
 export const CALLER_ABSENT_MS = 10_000
 /** A bound party whose connection closed during an active call has this long before it ends as dropped. */
 export const ABSENT_GRACE_MS = 35_000
+/** T-03-03: at most this many invites that would ring, per person, per INVITE_WINDOW_MS (sliding). */
+export const INVITE_LIMIT = 10
+export const INVITE_WINDOW_MS = 60_000
 
 /** What the registry needs from the /ws hub. Connections are addressed by connId (one per device). */
 export interface CallTransport {
@@ -89,6 +92,21 @@ export function createCallRegistry({
 }: CallRegistryOptions): CallRegistry {
   let current: Call | null = null
   const recent = new Map<string, RecentCall>()
+  /** Invite timestamps per user inside the sliding window (the flood guard). */
+  const invites = new Map<string, number[]>()
+
+  /** Count one ringing invite; false when this person is over INVITE_LIMIT in the window. */
+  function underInviteLimit(userId: string): boolean {
+    const at = now()
+    const recentInvites = (invites.get(userId) ?? []).filter((t) => at - t < INVITE_WINDOW_MS)
+    if (recentInvites.length >= INVITE_LIMIT) {
+      invites.set(userId, recentInvites)
+      return false
+    }
+    recentInvites.push(at)
+    invites.set(userId, recentInvites)
+    return true
+  }
 
   function remember(call: Call, reason: CallEndReason): void {
     const at = now()
@@ -149,13 +167,28 @@ export function createCallRegistry({
 
   function invite(connId: string, userId: string, callId: string, kind: CallKind): void {
     if (current) {
-      // Busy: one call at a time (glare merging arrives with plan task 3).
-      if (current.id === callId) return
+      const call = current
+      // A repeated invite (a resend of the same call) changes nothing.
+      if (call.id === callId) return
+      // D-14 glare: the person being rung called back at the same moment. Merge: their invite is an
+      // accept of the ringing call from this device, and each side keeps its own camera choice.
+      if (call.status === "ringing" && userId === call.calleeId) {
+        log.info({ evt: "call_glare", callId: call.id, replaces: callId, callerId: call.callerId, calleeId: call.calleeId })
+        bind(connId, call, callId)
+        return
+      }
+      // Busy: one call at a time; a person already in a call gets no second ring.
+      log.info({ evt: "call_busy", callId, userId, currentCallId: call.id })
       transport.sendToConn(connId, { t: "call.ended", callId, reason: "busy" })
       return
     }
     const calleeId = otherUser(userId)
     if (!calleeId || recent.has(callId)) {
+      transport.sendToConn(connId, { t: "call.ended", callId, reason: "failed" })
+      return
+    }
+    if (!underInviteLimit(userId)) {
+      log.info({ evt: "call_rate_limited", callId, userId })
       transport.sendToConn(connId, { t: "call.ended", callId, reason: "failed" })
       return
     }
@@ -182,9 +215,21 @@ export function createCallRegistry({
       return
     }
     if (call.status === "active") {
-      if (call.calleeConn !== connId) notAllowed(connId)
+      // D-11: another device answered first; this one just stops ringing.
+      if (call.calleeConn !== connId) {
+        transport.sendToConn(connId, { t: "call.stop-ringing", callId: call.id, reason: "answered-elsewhere" })
+      }
       return
     }
+    bind(connId, call)
+  }
+
+  /**
+   * The callee's device `connId` answers: the call becomes active, exactly the two bound connections
+   * join call-<id>, both hear call.accepted, and the callee's other devices stop ringing (D-11).
+   * `replaces` is the callee's own merged invite (D-14).
+   */
+  function bind(connId: string, call: Call, replaces?: string): void {
     call.status = "active"
     if (call.ringTimer !== undefined) clearTimeout(call.ringTimer)
     call.ringTimer = undefined
@@ -195,7 +240,8 @@ export function createCallRegistry({
     transport.serverJoin(call.callerConn, room)
     transport.serverJoin(connId, room)
     transport.sendToConn(call.callerConn, { t: "call.accepted", callId: call.id })
-    transport.sendToConn(connId, { t: "call.accepted", callId: call.id })
+    transport.sendToConn(connId, replaces ? { t: "call.accepted", callId: call.id, replaces } : { t: "call.accepted", callId: call.id })
+    transport.sendToUser(call.calleeId, { t: "call.stop-ringing", callId: call.id, reason: "answered-elsewhere" }, connId)
     log.info({ evt: "call_accept", callId: call.id, callerId: call.callerId, calleeId: call.calleeId })
   }
 

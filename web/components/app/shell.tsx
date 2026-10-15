@@ -29,7 +29,7 @@ import {
   syncSubscription,
   type PushState,
 } from "@/lib/chat/push"
-import { callStore } from "@/lib/call/store"
+import { callStore, useCall } from "@/lib/call/store"
 import { chatStore, useChat } from "@/lib/chat/store"
 import { isStandalone } from "@/lib/platform"
 
@@ -56,8 +56,16 @@ function ConnectionSubline() {
 
 /** D-01: the header's voice call button (its own component, so call-state ticks never re-render the chat). */
 function VoiceCallButton() {
+  // Disabled while a call rings or runs on this device (UI-SPEC section 1).
+  const { phase } = useCall()
   return (
-    <Button variant="ghost" size="icon" aria-label="Voice call" onClick={() => void callStore.startCall("voice")}>
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label="Voice call"
+      disabled={phase !== "idle"}
+      onClick={() => void callStore.startCall("voice")}
+    >
       <PhoneIcon />
     </Button>
   )

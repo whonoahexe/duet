@@ -4,9 +4,10 @@ import { useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { formatCallDuration, type CallKind, type MeResponse, type ServerFrame, type UserSummary } from "@duet/shared"
 import { sendFrame } from "@/lib/chat/realtime"
+import { chatStore } from "@/lib/chat/store"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import type { CallSample } from "@/lib/rtc/stats"
-import { getMic } from "./media"
+import { getMic, type MicResult } from "./media"
 import { CallSession, forceRelayFlag } from "./session"
 import { startRingback, startRingtone, stopTones, unlockAudio, type Tone } from "./tones"
 
@@ -34,6 +35,8 @@ export interface CallState {
   inboundBytes: number
   /** The tone looping right now (D-08). */
   tone: Tone
+  /** A denied capture device: the permission drawer shows how to allow it (D-19). */
+  permission: "microphone" | "camera" | null
 }
 
 /** How long each terminal text stays before the call screen closes (UI-SPEC section 5). */
@@ -63,6 +66,7 @@ const EMPTY: CallState = {
   localType: null,
   inboundBytes: 0,
   tone: "none",
+  permission: null,
 }
 
 let state: CallState = EMPTY
@@ -106,9 +110,12 @@ function set(patch: Partial<CallState>): void {
   commit({ ...state, ...patch })
 }
 
+/** Back to idle; a permission drawer that is showing stays (it is not part of a call). */
 function idleState(): CallState {
-  return { ...EMPTY, peerId: peer?.id ?? null, peerName: peer?.displayName ?? "" }
+  return { ...EMPTY, peerId: peer?.id ?? null, peerName: peer?.displayName ?? "", permission: state.permission }
 }
+
+const OFFLINE_TEXT = "You're offline. Calls need a connection."
 
 function clearCloseTimer(): void {
   if (closeTimer !== null) clearTimeout(closeTimer)
@@ -229,6 +236,11 @@ function handleEnded(frame: Extract<ServerFrame, { t: "call.ended" }>): void {
   if (frame.callId !== state.callId || state.phase === "ended" || state.phase === "idle") return
   const noMedia = state.mediaStartedAt === null
   switch (frame.reason) {
+    case "busy":
+      // This person is already in a call on another device: the extra call screen closes.
+      closeNow()
+      toast("You're already in a call on another device.")
+      return
     case "hangup":
     case "dropped":
     case "failed":
@@ -259,6 +271,49 @@ function handleEnded(frame: Extract<ServerFrame, { t: "call.ended" }>): void {
   }
 }
 
+/**
+ * Answer ringing call `callId` with a microphone captured in a tap (Accept, or a Start tap that lost
+ * a glare race on this device): ICE servers, the callee session, then call.accept.
+ */
+async function answer(callId: string, mic: MicResult): Promise<void> {
+  if (state.callId !== callId || state.phase !== "ringing-in") {
+    if (mic.ok) mic.track.stop()
+    return
+  }
+  if (!mic.ok) {
+    sendFrame({ t: "call.decline", callId })
+    if (mic.reason === "denied") {
+      closeNow()
+      set({ permission: "microphone" })
+    } else {
+      showFailure()
+    }
+    return
+  }
+  pendingMic = mic.track
+  try {
+    const { iceServers } = await fetchIceServers()
+    if (state.callId !== callId || state.phase !== "ringing-in") {
+      releaseMedia()
+      return
+    }
+    pendingIce = iceServers
+  } catch {
+    if (state.callId === callId && state.phase === "ringing-in") {
+      sendFrame({ t: "call.decline", callId })
+      showFailure()
+    }
+    return
+  }
+  if (!startSession(callId, "callee")) {
+    sendFrame({ t: "call.decline", callId })
+    showFailure()
+    return
+  }
+  sendFrame({ t: "call.accept", callId })
+  set({ phase: "connecting", accepting: false })
+}
+
 export const callStore = {
   subscribe(listener: () => void): () => void {
     listeners.add(listener)
@@ -281,12 +336,25 @@ export const callStore = {
   async startCall(kind: CallKind): Promise<void> {
     unlockAudio()
     if (!peer || starting || (state.phase !== "idle" && state.phase !== "ended")) return
+    // UI-SPEC section 1: no call starts while the chat connection is not live.
+    if (chatStore.getSnapshot().connection !== "live") {
+      toast(OFFLINE_TEXT)
+      return
+    }
     starting = true
     let mic: Awaited<ReturnType<typeof getMic>>
     try {
       mic = await getMic()
     } finally {
       starting = false
+    }
+    // D-14 on this device: the other person's ring arrived while we waited for the microphone.
+    // Answer it with this microphone instead of starting a second call.
+    if (phaseNow() === "ringing-in" && state.callId && !state.accepting) {
+      const ringing = state.callId
+      set({ accepting: true })
+      await answer(ringing, mic)
+      return
     }
     if (!peer || (state.phase !== "idle" && state.phase !== "ended")) {
       if (mic.ok) mic.track.stop()
@@ -297,7 +365,9 @@ export const callStore = {
     const callId = crypto.randomUUID()
     const base = { ...idleState(), callId, kind, role: "caller" as const, peerId: peer.id, peerName: peer.displayName }
     if (!mic.ok) {
-      commit({ ...base, phase: "ended", endState: "couldnt-connect" })
+      // Denied: the call does not start and the drawer explains how to allow it (D-19).
+      if (mic.reason === "denied") commit({ ...idleState(), permission: "microphone" })
+      else commit({ ...base, phase: "ended", endState: "couldnt-connect" })
       return
     }
     commit({ ...base, phase: "ringing-out" })
@@ -310,7 +380,16 @@ export const callStore = {
       if (state.callId === callId && phaseNow() === "ringing-out") showFailure()
       return
     }
-    if (!sendFrame({ t: "call.invite", callId, kind })) showFailure()
+    if (!sendFrame({ t: "call.invite", callId, kind })) {
+      // The socket dropped between the tap and the invite: nothing rang.
+      closeNow()
+      toast(OFFLINE_TEXT)
+    }
+  },
+
+  /** The permission drawer was closed. */
+  clearPermission(): void {
+    if (state.permission !== null) set({ permission: null })
   },
 
   /** Retry from "Couldn't connect": a new call of the same kind (D-19). */
@@ -332,37 +411,7 @@ export const callStore = {
     if (state.phase !== "ringing-in" || state.accepting || !callId) return
     set({ accepting: true })
     const mic = await getMic()
-    if (state.callId !== callId || state.phase !== "ringing-in") {
-      if (mic.ok) mic.track.stop()
-      return
-    }
-    if (!mic.ok) {
-      sendFrame({ t: "call.decline", callId })
-      showFailure()
-      return
-    }
-    pendingMic = mic.track
-    try {
-      const { iceServers } = await fetchIceServers()
-      if (state.callId !== callId || state.phase !== "ringing-in") {
-        releaseMedia()
-        return
-      }
-      pendingIce = iceServers
-    } catch {
-      if (state.callId === callId && state.phase === "ringing-in") {
-        sendFrame({ t: "call.decline", callId })
-        showFailure()
-      }
-      return
-    }
-    if (!startSession(callId, "callee")) {
-      sendFrame({ t: "call.decline", callId })
-      showFailure()
-      return
-    }
-    sendFrame({ t: "call.accept", callId })
-    set({ phase: "connecting", accepting: false })
+    await answer(callId, mic)
   },
 
   /** Refuse the ringing call; this device closes at once (D-13). */
@@ -407,6 +456,17 @@ export const callStore = {
         })
         return
       case "call.accepted":
+        // D-14 glare: the server merged our own invite into the call that rang us. Adopt that call as
+        // its callee (polite answerer), keeping the microphone captured in our own Start tap.
+        if (frame.replaces !== undefined && frame.replaces === state.callId && state.phase === "ringing-out") {
+          if (!startSession(frame.callId, "callee")) {
+            sendFrame({ t: "call.end", callId: frame.callId })
+            showFailure()
+            return
+          }
+          set({ callId: frame.callId, role: "callee", phase: "connecting" })
+          return
+        }
         if (frame.callId !== state.callId) return
         if (state.phase === "ringing-out") {
           if (!startSession(frame.callId, "caller")) {
@@ -419,6 +479,12 @@ export const callStore = {
         return
       case "call.ended":
         handleEnded(frame)
+        return
+      case "call.stop-ringing":
+        // D-11: another of this person's devices answered first.
+        if (frame.callId !== state.callId || state.phase !== "ringing-in") return
+        closeNow()
+        toast("Answered on another device")
         return
       case "rtc.signal":
         session?.handleRoomFrame(frame)
