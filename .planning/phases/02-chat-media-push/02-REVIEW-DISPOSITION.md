@@ -1,12 +1,26 @@
 ---
 phase: 02-chat-media-push
 review: 02-REVIEW.md
-updated: 2026-10-13T09:39:20Z
+updated: 2026-10-15T14:50:00Z
 ---
 
 # Phase 02 Code Review Disposition
 
-open: 13 of 13 (critical 0, warning 6, info 7)
+open: 20 of 20 (critical 0, warning 9, info 11)
+
+## Incremental review: plan 02-06 (diff 5cf446e..HEAD, current 02-REVIEW.md)
+
+| ID | Severity | Title | Disposition |
+|----|----------|-------|-------------|
+| 06/WR-01 | warning | `pushFailureReason` redaction misses query-string tokens (WNS) and skips redaction on the identifier fast path | open |
+| 06/WR-02 | warning | Test-push catch-all toast blames the connection for 503, 429 and 401 responses | open |
+| 06/WR-03 | warning | The sent-0 toast's advice ("Reopen duet") cannot recover a pruned subscription | open |
+| 06/IN-01 | info | Composer asks for a scroll even when the store silently drops the send | open |
+| 06/IN-02 | info | Network-level push failures (`code: 0`) still log no cause | open |
+| 06/IN-03 | info | The sanitizer keeps bidi overrides and C1 controls | open |
+| 06/IN-04 | info | The blanket topic removal also drops FCM coalescing | open |
+
+## Prior full-phase review (report at 5cf446e, superseded in git history)
 
 | ID | Severity | Title | Disposition |
 |----|----------|-------|-------------|
