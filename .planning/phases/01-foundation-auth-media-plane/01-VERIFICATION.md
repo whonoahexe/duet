@@ -4,9 +4,9 @@ verified: 2026-10-10T13:21:14Z
 status: passed
 score: 44/46 must-haves verified
 covered_files: [".dockerignore",".env.example",".planning/phases/01-foundation-auth-media-plane/01-01-PLAN.md",".planning/phases/01-foundation-auth-media-plane/01-01-SUMMARY.md",".planning/phases/01-foundation-auth-media-plane/01-02-PLAN.md",".planning/phases/01-foundation-auth-media-plane/01-02-SUMMARY.md",".planning/phases/01-foundation-auth-media-plane/01-03-PLAN.md",".planning/phases/01-foundation-auth-media-plane/01-03-SUMMARY.md",".planning/phases/01-foundation-auth-media-plane/01-04-PLAN.md",".planning/phases/01-foundation-auth-media-plane/01-04-SUMMARY.md",".planning/phases/01-foundation-auth-media-plane/01-05-PLAN.md",".planning/phases/01-foundation-auth-media-plane/01-05-SUMMARY.md","Dockerfile","compose.yaml","deploy/cloudflare/turn-key.sh","deploy/cloudflared/setup.sh","package.json","scripts/check-call-smoke.sh","scripts/check-live-db.sh","scripts/check-preset.sh","scripts/gen-icons.mjs","scripts/smoke-call.mjs","scripts/smoke-call.sh","scripts/smoke-local.sh","scripts/smoke-persistence.sh","scripts/smoke-public.sh","server/drizzle.config.ts","server/drizzle/0000_amusing_bishop.sql","server/package.json","server/scripts/seed-users.ts","server/src/app.ts","server/src/auth/password.ts","server/src/auth/routes.ts","server/src/auth/session.ts","server/src/config.ts","server/src/db/client.ts","server/src/db/schema.ts","server/src/db/seed.ts","server/src/http/guards.ts","server/src/index.ts","server/src/routes/users.ts","server/src/rtc/routes.ts","server/src/rtc/turn.ts","server/src/ws/hub.ts","server/src/ws/routes.ts","server/test/auth.test.ts","server/test/call-report.test.ts","server/test/db.test.ts","server/test/helpers.ts","server/test/seed.test.ts","server/test/session.test.ts","server/test/static.test.ts","server/test/turn.test.ts","server/test/users.test.ts","server/test/ws.test.ts","server/vitest.config.ts","shared/package.json","shared/src/api.ts","shared/src/index.ts","shared/src/rtc.ts","shared/src/ws.ts","web/app/debug/call/page.tsx","web/app/layout.tsx","web/app/manifest.ts","web/app/page.tsx","web/components.json","web/components/app/call-test.tsx","web/components/app/login-tiles.tsx","web/components/app/password-step.tsx","web/components/app/shell.tsx","web/components/app/sw-register.tsx","web/components/theme-provider.tsx","web/lib/api.ts","web/lib/rtc/ice.ts","web/lib/rtc/peer.ts","web/lib/rtc/stats.ts","web/lib/utils.ts","web/lib/ws.ts","web/next.config.ts","web/package.json","web/public/sw.js"]
-covered_digest: "v3:sha256:aed23234fe8a0a19641faace33cc0b448aa1dfa00efd892e4be602b2a4717687"
+covered_digest: "v3:sha256:7dec6bfe56b5ba2cb55b18d2f8c10785dbab5755de3050df42398141d70345b6"
 behavior_unverified: 2
-overrides_applied: 0
+overrides_applied: 1
 re_verification:
   previous_status: gaps_found
   previous_score: 33/46
@@ -254,3 +254,7 @@ What is left is the human items above: re-runs of two box-side dev scripts and a
 
 _Verified: 2026-10-10T13:21:14Z_
 _Verifier: Claude (gsd-verifier)_
+
+## Owner Override (2026-10-15)
+
+The owner explicitly marked Phase 1 verified so that Phase 3 can start. No verifier was re-run. The report had gone stale only because Phase 2 later touched shared files (Dockerfile, package.json, smoke scripts, shell, sw.js). `covered_digest` was re-stamped against the current files. INFR-03/INFR-04 (Cloudflare TURN credentials and the cellular media smoke test) were marked complete on the owner's say-so and were not re-proven in this session.

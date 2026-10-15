@@ -12,7 +12,7 @@ duet goes from nothing to a private two-person messenger in three coarse phases.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation, Auth & Media Plane** - Live HTTPS app on the new domain, two-account password login, installable PWA; media track proves P2P WebRTC + Cloudflare TURN carries media over cellular
+- [x] **Phase 1: Foundation, Auth & Media Plane** - Live HTTPS app on the new domain, two-account password login, installable PWA; media track proves P2P WebRTC + Cloudflare TURN carries media over cellular (completed 2026-10-15)
 - [x] **Phase 2: Chat, Media & Push** - Reliable real-time chat with history, receipts, typing, reactions and replies; photos, video clips and voice notes on both phones; message push notifications (completed 2026-10-15)
 - [ ] **Phase 3: Voice & Video Calls** - 1:1 peer-to-peer voice/video calls (Cloudflare TURN relay) with push-to-answer, in-call controls and reconnect, on Wi-Fi and cellular
 
@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The app can be added to the home screen on the iPhone (Safari) and the Pixel (Chrome) and launches standalone, without browser chrome
   5. Media track: the duet server mints short-lived Cloudflare TURN credentials for logged-in users, and from a phone on cellular the smoke harness connects peer-to-peer to a second client and reports `bytesReceived > 0`, both with normal ICE and with relay-only TURN forced
 
-**Plans:** 5/5 plans executed. App track 01→02→03 is executed. Media track 04→05 (P2P WebRTC + Cloudflare TURN, INFR-03/INFR-04) is planned. The original SFU plans 01-04/01-05 were superseded on 2026-10-09 and kept in `phases/01-foundation-auth-media-plane/superseded/`; the new plans reuse their IDs. Phase 1 is not complete until 01-04/01-05 have run and the end-of-phase cellular and device UAT passes.
+**Plans:** 5/5 plans complete. App track 01→02→03 is executed. Media track 04→05 (P2P WebRTC + Cloudflare TURN, INFR-03/INFR-04) is planned. The original SFU plans 01-04/01-05 were superseded on 2026-10-09 and kept in `phases/01-foundation-auth-media-plane/superseded/`; the new plans reuse their IDs. Phase 1 is not complete until 01-04/01-05 have run and the end-of-phase cellular and device UAT passes.
 
 Plans:
 **Wave 1**
@@ -109,6 +109,6 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Auth & Media Plane | 5/5 | In Progress | - |
+| 1. Foundation, Auth & Media Plane | 5/5 | Complete    | 2026-10-15 |
 | 2. Chat, Media & Push | 6/6 | Complete    | 2026-10-15 |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |

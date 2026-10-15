@@ -7,22 +7,22 @@
 
 ### Infrastructure
 
-- [ ] **INFR-01**: duet is reachable at an HTTPS URL on the new domain via a Cloudflare Tunnel to this machine
-- [ ] **INFR-02**: App, database (SQLite) and media files run self-hosted in Docker on this machine with data on a persistent volume
-- [ ] **INFR-03**: TURN relay is provisioned on Cloudflare (TURN key via API) and the duet server mints short-lived TURN credentials for logged-in users only (revised 2026-10-09: was self-hosted SFU + coturn; home connection is CGNAT)
-- [ ] **INFR-04**: A smoke test proves a peer-to-peer WebRTC connection carries media (`bytesReceived > 0`) between two clients with one phone on cellular, both with normal ICE and with relay-only (forced TURN)
+- [x] **INFR-01**: duet is reachable at an HTTPS URL on the new domain via a Cloudflare Tunnel to this machine
+- [x] **INFR-02**: App, database (SQLite) and media files run self-hosted in Docker on this machine with data on a persistent volume
+- [x] **INFR-03**: TURN relay is provisioned on Cloudflare (TURN key via API) and the duet server mints short-lived TURN credentials for logged-in users only (revised 2026-10-09: was self-hosted SFU + coturn; home connection is CGNAT)
+- [x] **INFR-04**: A smoke test proves a peer-to-peer WebRTC connection carries media (`bytesReceived > 0`) between two clients with one phone on cellular, both with normal ICE and with relay-only (forced TURN)
 
 ### Auth
 
-- [ ] **AUTH-01**: Exactly two accounts exist, created by a server seed script; there is no sign-up UI
-- [ ] **AUTH-02**: User can log in by tapping their name and entering their password (password-only; TOTP dropped 2026-10-08)
-- [ ] **AUTH-03**: User stays logged in across app restarts for a long rolling period (no frequent re-login)
-- [ ] **AUTH-04**: User can log out
+- [x] **AUTH-01**: Exactly two accounts exist, created by a server seed script; there is no sign-up UI
+- [x] **AUTH-02**: User can log in by tapping their name and entering their password (password-only; TOTP dropped 2026-10-08)
+- [x] **AUTH-03**: User stays logged in across app restarts for a long rolling period (no frequent re-login)
+- [x] **AUTH-04**: User can log out
 
 ### App Shell
 
-- [ ] **SHEL-01**: UI is built exclusively from shadcn preset `b51GFhBEQ` (scaffolded via `shadcn init -p b51GFhBEQ`, components only via `shadcn add`)
-- [ ] **SHEL-02**: User can install the app to the home screen on iPhone (Safari) and Pixel (Chrome) and it launches standalone
+- [x] **SHEL-01**: UI is built exclusively from shadcn preset `b51GFhBEQ` (scaffolded via `shadcn init -p b51GFhBEQ`, components only via `shadcn add`)
+- [x] **SHEL-02**: User can install the app to the home screen on iPhone (Safari) and Pixel (Chrome) and it launches standalone
 - [x] **SHEL-03**: First-run onboarding guides iPhone users to Add to Home Screen and to enable notifications, with a test-push button
 
 ### Chat
@@ -116,16 +116,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFR-01 | Phase 1 | Gaps Found |
-| INFR-02 | Phase 1 | Gaps Found |
-| INFR-03 | Phase 1 | Gaps Found |
-| INFR-04 | Phase 1 | Pending |
-| AUTH-01 | Phase 1 | Gaps Found |
-| AUTH-02 | Phase 1 | Gaps Found |
-| AUTH-03 | Phase 1 | Gaps Found |
-| AUTH-04 | Phase 1 | Gaps Found |
-| SHEL-01 | Phase 1 | Gaps Found |
-| SHEL-02 | Phase 1 | Gaps Found |
+| INFR-01 | Phase 1 | Complete |
+| INFR-02 | Phase 1 | Complete |
+| INFR-03 | Phase 1 | Complete |
+| INFR-04 | Phase 1 | Complete |
+| AUTH-01 | Phase 1 | Complete |
+| AUTH-02 | Phase 1 | Complete |
+| AUTH-03 | Phase 1 | Complete |
+| AUTH-04 | Phase 1 | Complete |
+| SHEL-01 | Phase 1 | Complete |
+| SHEL-02 | Phase 1 | Complete |
 | SHEL-03 | Phase 2 | Complete |
 | CHAT-01 | Phase 2 | Complete |
 | CHAT-02 | Phase 2 | Complete |
