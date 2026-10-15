@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { formatCallDuration, type CallKind, type MeResponse, type ServerFrame, type UserSummary } from "@duet/shared"
+import { clearNotifications } from "@/lib/chat/push"
 import { sendFrame } from "@/lib/chat/realtime"
 import { chatStore } from "@/lib/chat/store"
 import { fetchIceServers } from "@/lib/rtc/ice"
@@ -102,7 +103,13 @@ function commit(next: CallState): void {
     else stopTones()
   }
   state = { ...next, tone }
-  if (state.phase !== prev.phase || state.callId !== prev.callId) armGuard()
+  if (state.phase !== prev.phase || state.callId !== prev.callId) {
+    armGuard()
+    // Pitfall 10: the in-app incoming screen replaces the push heads-up, and a call that ended leaves
+    // no "Incoming call" behind in this phone's tray.
+    const ended = (state.phase === "idle" || state.phase === "ended") && prev.phase !== "idle" && prev.phase !== "ended"
+    if (state.phase === "ringing-in" || ended) void clearNotifications()
+  }
   for (const l of listeners) l()
 }
 
@@ -442,7 +449,9 @@ export const callStore = {
   handleFrame(frame: ServerFrame): void {
     switch (frame.t) {
       case "call.ring":
+        // Ring-on-attach re-sends the ring after a reconnect: the call already ringing here stays as is.
         // A ring replaces a terminal text that is still showing.
+        if (frame.callId === state.callId && state.phase === "ringing-in") return
         if (state.phase !== "idle" && state.phase !== "ended") return
         clearCloseTimer()
         releaseMedia()

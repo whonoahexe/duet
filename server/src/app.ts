@@ -15,7 +15,7 @@ import { usersRoutes } from "./routes/users"
 import { rtcRoutes } from "./rtc/routes"
 import { chatRoutes } from "./chat/routes"
 import { pushRoutes } from "./push/routes"
-import type { WebPushSend } from "./push/sender"
+import { createPushSender, type PushSender, type WebPushSend } from "./push/sender"
 import { createChatEvents, type ChatEvents } from "./chat/events"
 import { messageChangedForAttachment } from "./chat/service"
 import { createMediaProcessor, type MediaProcessor } from "./media/process"
@@ -24,7 +24,7 @@ import { uploadRoutes } from "./media/uploads"
 import { createHub, type Hub } from "./ws/hub"
 import { createCallRegistry, type CallRegistry } from "./calls/registry"
 import { users } from "./db/schema"
-import { ne } from "drizzle-orm"
+import { eq, ne } from "drizzle-orm"
 import { wsRoutes } from "./ws/routes"
 
 declare module "fastify" {
@@ -39,6 +39,8 @@ declare module "fastify" {
     media: MediaProcessor
     /** In-memory single-call registry (Phase 3): ringing, accept/decline/end, call rooms. */
     calls: CallRegistry
+    /** The one Web Push sender: chat pushes (pushRoutes) and call pushes (the call registry). */
+    push: PushSender
   }
 }
 
@@ -104,11 +106,28 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   })
   app.decorate("hub", hub)
 
+  const push = createPushSender({ db, config, log: app.log, send: deps.webPushSend })
+  app.decorate("push", push)
+
+  /** The display name in a call push title ("duet" when the account is gone). */
+  function displayNameOf(userId: string): string {
+    return db.select({ name: users.displayName }).from(users).where(eq(users.id, userId)).get()?.name ?? "duet"
+  }
+
   // Phase 3: call.* frames go to the registry, which answers through the hub. Two accounts only: the
   // callee of any call is the one other user.
   const calls = createCallRegistry({
     log: app.log,
     transport: hub,
+    // D-09 / D-11: ring the callee's phones by push, except sessions that show the in-app incoming
+    // screen right now (research A1). Never awaited: the ring over /ws must not wait for push services.
+    push: {
+      notifyCall(call) {
+        void Promise.resolve()
+          .then(() => push.notifyCall(call.calleeId, call, displayNameOf(call.callerId), (sid) => hub.isSessionViewing(sid)))
+          .catch(() => app.log.warn({ evt: "push_call_failed", callId: call.id }))
+      },
+    },
     otherUser: (userId) => db.select({ id: users.id }).from(users).where(ne(users.id, userId)).get()?.id,
     ringTimeoutMs: deps.callTimers?.ringTimeoutMs ?? config.CALL_RING_TIMEOUT_MS,
     callerAbsentMs: deps.callTimers?.callerAbsentMs,
@@ -151,7 +170,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   await app.register(authRoutes)
   await app.register(rtcRoutes, { fetch: deps.fetch ?? globalThis.fetch, timeoutMs: deps.turnTimeoutMs ?? 5000 })
   await app.register(chatRoutes)
-  await app.register(pushRoutes, { send: deps.webPushSend })
+  await app.register(pushRoutes)
   await app.register(wsRoutes)
 
   // One line at boot so a deploy without TURN is visible in the logs (never the key id or bearer).

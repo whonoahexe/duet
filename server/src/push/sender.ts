@@ -26,6 +26,17 @@ export const PUSH_PAYLOAD_MAX_BYTES = 3072
  */
 const PUSH_TTL_SECONDS = 86_400
 const PUSH_TIMEOUT_MS = 10_000
+/**
+ * D-09: an incoming-call push is worthless once the ring is over (45 s), so the push service drops it
+ * instead of delivering a stale "Incoming call" to a phone that comes back online later.
+ */
+export const CALL_PUSH_TTL_SECONDS = 45
+
+/** UI-SPEC section 9: the body of an incoming or missed call push. */
+export function callPushBody(kind: "voice" | "video", which: "incoming" | "missed"): string {
+  const icon = kind === "video" ? "🎥" : "📞"
+  return `${icon} ${which === "incoming" ? "Incoming" : "Missed"} ${kind} call`
+}
 
 /** The push service's refusal reason is cut to this many code points before it is logged. */
 export const PUSH_REASON_MAX_CHARS = 120
@@ -118,10 +129,22 @@ export interface PushSender {
    * never the text or a caption, to every saved subscription of the recipient. Returns successes.
    */
   notifyMessage(recipientId: string, message: MessageDto, senderName: string): Promise<number>
+  /**
+   * D-09 / D-11: "Incoming voice call" (or video) to every subscription of the callee except those of
+   * sessions for which `skipSession` is true (they show the in-app incoming screen already). TTL
+   * CALL_PUSH_TTL_SECONDS. Returns successes.
+   */
+  notifyCall(recipientId: string, call: CallPushInfo, callerName: string, skipSession: (sessionId: string) => boolean): Promise<number>
   /** SHEL-03: push the test notification to this session's subscriptions only. Returns successes. */
   sendTest(sessionId: string): Promise<number>
   /** Upsert a subscription by endpoint, re-binding it to this user and session. */
   saveSubscription(userId: string, sessionId: string, sub: { endpoint: string; p256dh: string; auth: string }): void
+}
+
+/** What a call push needs to know about the call. */
+export interface CallPushInfo {
+  id: string
+  kind: "voice" | "video"
 }
 
 export interface PushSenderDeps {
@@ -132,11 +155,16 @@ export interface PushSenderDeps {
 }
 
 /** Cut the body until the JSON payload fits PUSH_PAYLOAD_MAX_BYTES (emoji sequences can be long). */
-export function buildPayload(t: PushPayload["t"], title: string, fullBody: string): string {
+export function buildPayload(
+  t: PushPayload["t"],
+  title: string,
+  fullBody: string,
+  extra?: Pick<PushPayload, "callId" | "kind">,
+): string {
   const safeTitle = truncateGraphemes(title, 60)
   let max = PUSH_BODY_MAX_GRAPHEMES
   for (;;) {
-    const payload: PushPayload = { t, title: safeTitle, body: truncateGraphemes(fullBody, max) }
+    const payload: PushPayload = { t, title: safeTitle, body: truncateGraphemes(fullBody, max), ...extra }
     const json = JSON.stringify(payload)
     if (Buffer.byteLength(json, "utf8") <= PUSH_PAYLOAD_MAX_BYTES || max <= 10) return json
     max = Math.floor(max / 2)
@@ -154,10 +182,10 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
    * One send, without a Topic header (G-02-7). 404/410 means the subscription is gone for good:
    * delete it. Logs code, host and a sanitized reason only.
    */
-  async function sendOne(sub: SubscriptionRow, payload: string): Promise<boolean> {
+  async function sendOne(sub: SubscriptionRow, payload: string, ttlSeconds = PUSH_TTL_SECONDS): Promise<boolean> {
     try {
       await doSend({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, {
-        TTL: PUSH_TTL_SECONDS,
+        TTL: ttlSeconds,
         urgency: "high",
         timeout: PUSH_TIMEOUT_MS,
       })
@@ -184,9 +212,29 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
     }
   }
 
-  async function sendAll(subs: SubscriptionRow[], payload: string): Promise<number> {
-    const results = await Promise.all(subs.map((s) => sendOne(s, payload)))
+  async function sendAll(subs: SubscriptionRow[], payload: string, ttlSeconds = PUSH_TTL_SECONDS): Promise<number> {
+    const results = await Promise.all(subs.map((s) => sendOne(s, payload, ttlSeconds)))
     return results.filter(Boolean).length
+  }
+
+  /**
+   * One call push (incoming or missed) to the recipient's subscriptions minus the skipped sessions.
+   * Logs the call id and counts only, never an endpoint or a key (T-03-12).
+   */
+  async function sendCallPush(
+    evt: "push_call" | "push_call_missed",
+    recipientId: string,
+    call: CallPushInfo,
+    payload: string,
+    ttlSeconds: number,
+    skipSession: (sessionId: string) => boolean,
+  ): Promise<number> {
+    if (!configured) return 0
+    const all = db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, recipientId)).all()
+    const subs = all.filter((s) => !skipSession(s.sessionId))
+    const ok = subs.length === 0 ? 0 : await sendAll(subs, payload, ttlSeconds)
+    log.info({ evt, callId: call.id, subs: subs.length, skipped: all.length - subs.length, ok })
+    return ok
   }
 
   return {
@@ -212,6 +260,11 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
       const ok = await sendAll(subs, payload)
       log.info({ evt: "push_sent", userId: recipientId, seq: message.seq, subs: subs.length, ok })
       return ok
+    },
+
+    notifyCall(recipientId, call, callerName, skipSession) {
+      const payload = buildPayload("call", callerName, callPushBody(call.kind, "incoming"), { callId: call.id, kind: call.kind })
+      return sendCallPush("push_call", recipientId, call, payload, CALL_PUSH_TTL_SECONDS, skipSession)
     },
 
     async sendTest(sessionId) {

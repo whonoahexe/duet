@@ -23,10 +23,27 @@ export interface CallTransport {
   sessionOf(connId: string): string | undefined
 }
 
+/** The call that a push is about. */
+export interface CallPushCall {
+  id: string
+  kind: CallKind
+  callerId: string
+  calleeId: string
+}
+
+/** Ringing pushes (D-09, D-12); app.ts adapts these to the push sender. Must never throw. */
+export interface CallPush {
+  /** An invite started ringing: push "Incoming call" to the callee's phones. */
+  notifyCall(call: CallPushCall): void
+}
+
 export interface CallRegistry {
   /** One call.* frame from an authenticated connection. */
   onFrame(connId: string, userId: string, frame: CallClientFrame): void
-  /** A connection said hello (ring-on-attach arrives in 03-02). */
+  /**
+   * A connection said hello. Ring-on-attach (CALL-03, Pitfall 4): a new connection of the callee while
+   * the call rings gets call.ring at once, so opening duet by any route shows the incoming screen.
+   */
   onAttach(connId: string, userId: string): void
   /**
    * A connection closed. A party's socket blinking never ends a call at once (Pitfall 3): the caller
@@ -43,6 +60,8 @@ export interface CallRegistryOptions {
   transport: CallTransport
   /** The other account (there are exactly two). undefined while the second account does not exist. */
   otherUser: (userId: string) => string | undefined
+  /** Ringing pushes. Default: none. */
+  push?: CallPush
   /** Clock, injectable for tests. */
   now?: () => number
   /** D-07: the server-owned ring timeout. Default CALL_RING_TIMEOUT_MS (45 s). */
@@ -85,6 +104,7 @@ export function createCallRegistry({
   log,
   transport,
   otherUser,
+  push,
   now = Date.now,
   ringTimeoutMs = CALL_RING_TIMEOUT_MS,
   callerAbsentMs = CALLER_ABSENT_MS,
@@ -207,6 +227,7 @@ export function createCallRegistry({
     call.ringTimer = timer(() => end(call, "no-answer"), ringTimeoutMs)
     log.info({ evt: "call_invite", callId, callerId: userId, calleeId, kind })
     transport.sendToUser(calleeId, { t: "call.ring", callId, kind, from: userId })
+    push?.notifyCall({ id: callId, kind, callerId: userId, calleeId })
   }
 
   function accept(connId: string, userId: string, call: Call): void {
@@ -297,7 +318,12 @@ export function createCallRegistry({
       }
     },
 
-    onAttach() {},
+    onAttach(connId, userId) {
+      const call = current
+      if (!call || call.status !== "ringing" || userId !== call.calleeId) return
+      log.info({ evt: "call_ring_attach", callId: call.id, connId })
+      transport.sendToConn(connId, { t: "call.ring", callId: call.id, kind: call.kind, from: call.callerId })
+    },
 
     onClose(connId) {
       const call = current

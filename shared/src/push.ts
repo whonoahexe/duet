@@ -40,7 +40,12 @@ export type PushTestResponse = z.infer<typeof PushTestResponse>
 
 /** What the service worker receives (JSON push payload). */
 export interface PushPayload {
-  t: "chat" | "test"
+  /** "call" rings a closed app (D-09); "call-missed" replaces that ring when nobody answered (D-12). */
+  t: "chat" | "test" | "call" | "call-missed"
   title: string
   body: string
+  /** Call pushes only: the call's id (the tap opens /?call=<id> or /?missed=<id>). */
+  callId?: string
+  /** Call pushes only: voice or video. */
+  kind?: "voice" | "video"
 }

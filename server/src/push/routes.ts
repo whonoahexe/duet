@@ -3,12 +3,7 @@ import { ne } from "drizzle-orm"
 import { PushSubscriptionBody, type OkResponse, type PushTestResponse, type VapidKeyResponse } from "@duet/shared"
 import { requireUser } from "../auth/session"
 import { users } from "../db/schema"
-import { createPushSender, isAllowedPushEndpoint, type WebPushSend } from "./sender"
-
-export interface PushRoutesOptions {
-  /** Injected web-push send (tests). Default: webpush.sendNotification. */
-  send?: WebPushSend
-}
+import { isAllowedPushEndpoint } from "./sender"
 
 function headerValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
@@ -40,8 +35,9 @@ function perIpLimit(max: number) {
  * viewing the chat right now (D-15); suppression happens here, never in the service worker
  * (Pitfall 3). Logs never carry an endpoint path, a key or a message body.
  */
-export async function pushRoutes(app: FastifyInstance, opts: PushRoutesOptions = {}) {
-  const sender = createPushSender({ db: app.db, config: app.config, log: app.log, send: opts.send })
+export async function pushRoutes(app: FastifyInstance) {
+  // One sender per app (app.push), shared with the call registry's ringing pushes (Phase 3).
+  const sender = app.push
 
   app.get("/api/push/vapid-public-key", { preHandler: requireUser }, async (_request, reply) => {
     reply.header("Cache-Control", "no-store")

@@ -38,6 +38,11 @@ export interface Hub {
    * counting within 45 s). Push is suppressed for them while this holds.
    */
   isViewing(userId: string, now?: number): boolean
+  /**
+   * Same rule as isViewing, for one session (one phone): the call push skips a session that shows the
+   * in-app incoming screen right now, without silencing the person's other phone (Pitfall 10).
+   */
+  isSessionViewing(sessionId: string, now?: number): boolean
   /** Route call.* frames and connection lifecycle to the call registry (Phase 3). */
   setCallHooks(hooks: CallHooks): void
   /** One frame to one open connection (dropped when it is gone). */
@@ -316,6 +321,15 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
     isViewing(userId, now = Date.now()) {
       for (const conn of conns.values()) {
         if (conn.userId === userId && !conn.closing && conn.visible && now - conn.lastSeenAt < VIEWING_FRESH_MS) {
+          return true
+        }
+      }
+      return false
+    },
+
+    isSessionViewing(sessionId, now = Date.now()) {
+      for (const conn of conns.values()) {
+        if (conn.sessionId === sessionId && !conn.closing && conn.visible && now - conn.lastSeenAt < VIEWING_FRESH_MS) {
           return true
         }
       }

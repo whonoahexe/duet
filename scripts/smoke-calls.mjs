@@ -75,8 +75,22 @@ async function sessionCookie(ctx, fixture, slot) {
  * (like a separate phone) on session `slot`. Registered for closing in `opened`.
  */
 async function openApp(ctx, fixture, peer, opened, { denyMic = false, slot = 0 } = {}) {
+  const context = await loggedInContext(ctx, fixture, slot)
+  const page = await newAppPage(context, fixture, opened, { denyMic, slot })
+  await page.goto(`${BASE}/`)
+  await page.getByPlaceholder(`Message ${peer.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
+  return page
+}
+
+/** A fresh browser context (a phone) logged in as `fixture` on session `slot`, with no page open yet. */
+async function loggedInContext(ctx, fixture, slot = 0) {
   const context = await ctx.browser.newContext()
   await context.addCookies([{ name: "duet_session", value: await sessionCookie(ctx, fixture, slot), url: BASE }])
+  return context
+}
+
+/** A new page in `context` with error capture and getUserMedia recording; not navigated yet. */
+async function newAppPage(context, fixture, opened, { denyMic = false, slot = 0 } = {}) {
   const page = await context.newPage()
   const errors = []
   page.__errors = errors
@@ -88,8 +102,6 @@ async function openApp(ctx, fixture, peer, opened, { denyMic = false, slot = 0 }
   opened.push(page)
   await page.addInitScript(recordTracks)
   if (denyMic) await page.addInitScript(denyMedia)
-  await page.goto(`${BASE}/`)
-  await page.getByPlaceholder(`Message ${peer.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
   return page
 }
 
@@ -339,6 +351,34 @@ const scenarios = {
     if (b.phase !== "live") throw new Error(`Bob's call is "${b.phase}" after the busy attempt, expected live`)
     await expectTracksEnded(ada2)
     await hangUpBoth(ada, BOB, bob)
+  },
+
+  /**
+   * CALL-03 / Pitfall 4: Bob's app is closed while Ada calls; opening duet at "/" shows the incoming
+   * screen (ring-on-attach) and he can answer. No microphone is touched before Accept.
+   */
+  async "ring-on-open"(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bobContext = await loggedInContext(ctx, BOB)
+    try {
+      await ada.getByRole("button", { name: "Voice call" }).click()
+      await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
+      await sleep(1_000)
+      const bob = await newAppPage(bobContext, BOB, opened)
+      await bob.goto(`${BASE}/`)
+      const incoming = incomingDialog(bob, ADA)
+      await incoming.waitFor({ state: "visible", timeout: 6_000 })
+      const before = await bob.evaluate(() => (window.__duetTracks ?? []).length)
+      if (before !== 0) throw new Error(`Bob captured ${before} track(s) before tapping Accept`)
+      await incoming.getByRole("button", { name: "Accept" }).click()
+      await Promise.all([waitPhase(ada, "live", 30_000), waitPhase(bob, "live", 30_000)])
+      const [a, b] = await Promise.all([diag(ada), diag(bob)])
+      if (!a.callId || a.callId !== b.callId) throw new Error("the two pages are live in different calls")
+      await hangUpBoth(ada, BOB, bob)
+      await expectTracksEnded(bob)
+    } finally {
+      await bobContext.close().catch(() => {})
+    }
   },
 
   /** D-19: a denied microphone starts no call and opens the "Allow the microphone" drawer. */

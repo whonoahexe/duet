@@ -106,6 +106,44 @@ describe("service worker push (NOTF-01, D-14, Pitfall 3)", () => {
   })
 })
 
+describe("service worker call pushes (D-09, D-12)", () => {
+  const callId = "0b9d3c4e-6f1a-4c2b-9d8e-7a6b5c4d3e2f"
+
+  it("closes open notifications, then shows the incoming call tagged duet-call with a /?call= link", async () => {
+    const open = [{ close: vi.fn() }]
+    const { self, listeners } = loadSw({ open })
+    await dispatch(listeners, "push", {
+      data: pushData({ t: "call", title: "Ada", body: "📞 Incoming voice call", callId, kind: "voice" }),
+    })
+    expect(open[0]!.close).toHaveBeenCalledTimes(1)
+    expect(self.registration.showNotification).toHaveBeenCalledTimes(1)
+    expect(self.registration.showNotification).toHaveBeenCalledWith("Ada", {
+      body: "📞 Incoming voice call",
+      tag: "duet-call",
+      renotify: true,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/badge-96.png",
+      data: { url: `/?call=${callId}`, callId },
+    })
+  })
+
+  it("links a call push whose call id is not a uuid to / only", async () => {
+    const { self, listeners } = loadSw()
+    await dispatch(listeners, "push", {
+      data: pushData({ t: "call", title: "Ada", body: "📞 Incoming voice call", callId: "../../evil?x=1" }),
+    })
+    expect(self.registration.showNotification).toHaveBeenCalledWith("Ada", expect.objectContaining({ tag: "duet-call", data: { url: "/" } }))
+  })
+
+  it("keeps chat and test pushes on duet-chat and duet-test", async () => {
+    const { self, listeners } = loadSw()
+    await dispatch(listeners, "push", { data: pushData({ t: "chat", title: "A", body: "b", callId }) })
+    await dispatch(listeners, "push", { data: pushData({ t: "test", title: "duet", body: "Test" }) })
+    expect(self.registration.showNotification).toHaveBeenNthCalledWith(1, "A", expect.objectContaining({ tag: "duet-chat", data: { url: "/" } }))
+    expect(self.registration.showNotification).toHaveBeenNthCalledWith(2, "duet", expect.objectContaining({ tag: "duet-test", data: { url: "/" } }))
+  })
+})
+
 describe("service worker notificationclick (NOTF-02)", () => {
   it("focuses an open window and posts open-chat", async () => {
     const win: FakeWindow = { focus: vi.fn(async () => undefined), postMessage: vi.fn() }

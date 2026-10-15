@@ -9,8 +9,13 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim())
 })
 
+// A call id as the server sends it (lowercase uuid). Anything else never reaches a URL (T-03-10).
+const CALL_ID = /^[0-9a-f-]{36}$/
+
 // Every push shows a notification on every path (iOS revokes push permission for pushes that show
 // nothing, Pitfall 3). "Don't notify while viewing" is decided on the server, never here.
+// Call pushes (D-09, D-12): "call" rings, "call-missed" replaces it; both carry the call id so a tap
+// can open /?call=<id> or /?missed=<id>.
 self.addEventListener("push", (event) => {
   let d = {}
   try {
@@ -21,6 +26,12 @@ self.addEventListener("push", (event) => {
   if (!d || typeof d !== "object") d = {}
   const title = typeof d.title === "string" && d.title ? d.title : "duet"
   const body = typeof d.body === "string" && d.body ? d.body : "New message"
+  const isCall = d.t === "call" || d.t === "call-missed"
+  const tag = isCall ? "duet-call" : d.t === "test" ? "duet-test" : "duet-chat"
+  let data = { url: "/" }
+  if (isCall && typeof d.callId === "string" && CALL_ID.test(d.callId)) {
+    data = { url: (d.t === "call" ? "/?call=" : "/?missed=") + d.callId, callId: d.callId }
+  }
   event.waitUntil(
     (async () => {
       // D-14: one notification. iOS ignores tag/renotify, so close what is showing first.
@@ -32,12 +43,12 @@ self.addEventListener("push", (event) => {
       }
       await self.registration.showNotification(title, {
         body,
-        tag: d.t === "test" ? "duet-test" : "duet-chat",
+        tag,
         renotify: true,
         icon: "/icons/icon-192.png",
         // Android status-bar glyph: white duet heart on transparent (iOS ignores it).
         badge: "/icons/badge-96.png",
-        data: { url: "/" },
+        data,
       })
     })(),
   )
