@@ -1,10 +1,20 @@
 import { createECDH, randomBytes, randomUUID } from "node:crypto"
+import sharp from "sharp"
 import { Writable } from "node:stream"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { eq, sql } from "drizzle-orm"
 import { messages, pushSubscriptions, users } from "../src/db/schema"
-import { PUSH_REASON_MAX_CHARS, pushFailureReason, type WebPushSend } from "../src/push/sender"
-import { loginCookie, makeTestApp, openWs, TEST_ORIGIN, vapidTestEnv, type TestApp, type WsTestClient } from "./helpers"
+import { buildPayload, PUSH_REASON_MAX_CHARS, pushFailureReason, type WebPushSend } from "../src/push/sender"
+import {
+  loginCookie,
+  makeTestApp,
+  openWs,
+  TEST_ORIGIN,
+  uploadBytes,
+  vapidTestEnv,
+  type TestApp,
+  type WsTestClient,
+} from "./helpers"
 
 const logLines: string[] = []
 const logStream = new Writable({
@@ -110,7 +120,9 @@ describe("push on a new message (NOTF-01, D-13)", () => {
     expect(options).toMatchObject({ TTL: 86400, urgency: "high", timeout: 10000 })
     // G-02-7: no Topic header to any push service (Apple answers any Topic with 400 BadWebPushTopic).
     expect(options).not.toHaveProperty("topic")
-    expect(payloadOf(0)).toEqual({ t: "chat", title: "Bob Test", body: "hello alice" })
+    // Privacy: the body is the type only. The text never reaches Apple's or Google's push service.
+    expect(payloadOf(0)).toEqual({ t: "chat", title: "Bob Test", body: "Message" })
+    expect(send.mock.calls[0]![1]).not.toContain("hello alice")
     // The sender gets nothing back.
     await message(aliceCookie, "hi bob")
     await sleep(30)
@@ -127,24 +139,53 @@ describe("push on a new message (NOTF-01, D-13)", () => {
     expect(options).not.toHaveProperty("topic")
   })
 
-  it("titles the push with the unread count from 2 and cuts a long body to 120 graphemes + …", async () => {
+  it("titles the push with the unread count from 2 and never carries the text", async () => {
     await subscribe(aliceCookie)
     await message(bobCookie, "first")
     await message(bobCookie, "x".repeat(300))
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2))
     expect(payloadOf(0).title).toBe("Bob Test")
     expect(payloadOf(1).title).toBe("Bob Test · 2 new messages")
-    expect(payloadOf(1).body).toBe(`${"x".repeat(120)}…`)
+    expect(payloadOf(1).body).toBe("Message")
+    expect(send.mock.calls[1]![1]).not.toContain("x".repeat(300))
+    expect(send.mock.calls[0]![1]).not.toContain("first")
   })
 
-  it("never splits an emoji sequence and keeps the payload under 4 KB", async () => {
+  it("pushes 'Message' for an emoji-only text message", async () => {
     await subscribe(aliceCookie)
     const family = "👨‍👩‍👧‍👦"
     await message(bobCookie, family.repeat(200))
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
-    const raw = send.mock.calls[0]![1]
+    expect(payloadOf(0).body).toBe("Message")
+    expect(send.mock.calls[0]![1]).not.toContain(family)
+  })
+
+  it("never puts a photo caption in the push", async () => {
+    await subscribe(aliceCookie)
+    const bytes = await sharp({ create: { width: 64, height: 48, channels: 3, background: { r: 180, g: 40, b: 70 } } })
+      .jpeg({ quality: 80 })
+      .toBuffer()
+    const { id } = await uploadBytes(t.app, bobCookie, bytes)
+    await t.app.media.idle()
+    const res = await post(t.app, "/api/messages", bobCookie, { id: randomUUID(), body: "secret caption", attachmentIds: [id] })
+    expect(res.statusCode).toBeLessThan(300)
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    expect(payloadOf(0)).toEqual({ t: "chat", title: "Bob Test", body: "Photo" })
+    expect(send.mock.calls[0]![1]).not.toContain("secret caption")
+  })
+})
+
+describe("buildPayload (D-13 truncation, 4 KB cap)", () => {
+  it("cuts a long body to 120 graphemes + …", () => {
+    const p = JSON.parse(buildPayload("chat", "T", "x".repeat(300))) as { body: string }
+    expect(p.body).toBe(`${"x".repeat(120)}…`)
+  })
+
+  it("never splits an emoji sequence and keeps the payload under 4 KB", () => {
+    const family = "👨‍👩‍👧‍👦"
+    const raw = buildPayload("chat", "T", family.repeat(200))
     expect(Buffer.byteLength(raw, "utf8")).toBeLessThan(4096)
-    const body = payloadOf(0).body
+    const body = (JSON.parse(raw) as { body: string }).body
     expect(body.endsWith("…")).toBe(true)
     expect(body.slice(0, -1).split(family).join("")).toBe("")
   })

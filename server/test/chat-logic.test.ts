@@ -3,6 +3,7 @@ import {
   mediaLabel,
   mergeMessages,
   messageLabel,
+  messageTypeLabel,
   nextOutboxState,
   reactionSummary,
   truncateGraphemes,
@@ -70,6 +71,34 @@ describe("messageLabel / mediaLabel (D-13)", () => {
     expect(mediaLabel(["image", "video", "image", "video"], { emoji: false })).toBe("4 items")
     expect(mediaLabel(["audio"], { emoji: false })).toBe("Voice note")
     expect(mediaLabel(["image"], { emoji: true })).toBe("📷 Photo")
+  })
+})
+
+describe("messageTypeLabel (push privacy)", () => {
+  it("labels by type only: text and voice", () => {
+    expect(messageTypeLabel({ kind: "text", attachments: [] })).toBe("Message")
+    // A full message object still never leaks its text: the helper cannot see the body.
+    expect(messageTypeLabel(msg(1, { body: "are you home yet?" }))).toBe("Message")
+    expect(messageTypeLabel({ kind: "voice", attachments: [att("audio", 0)] })).toBe("Voice note")
+  })
+
+  it("labels photos, videos and mixed albums without emoji", () => {
+    expect(messageTypeLabel(media(["image"]))).toBe("Photo")
+    expect(messageTypeLabel(media(["image", "image", "image"]))).toBe("3 photos")
+    expect(messageTypeLabel(media(["video"]))).toBe("Video")
+    expect(messageTypeLabel(media(["video", "video"]))).toBe("2 videos")
+    expect(messageTypeLabel(media(["image", "video", "image", "video"]))).toBe("4 items")
+  })
+
+  it("never includes a caption", () => {
+    const label = messageTypeLabel(media(["image"], "secret caption"))
+    expect(label).toBe("Photo")
+    expect(label).not.toContain("secret")
+    expect(label).not.toContain(" · ")
+  })
+
+  it("falls back to 'Message' for media without attachments", () => {
+    expect(messageTypeLabel(media([]))).toBe("Message")
   })
 })
 
