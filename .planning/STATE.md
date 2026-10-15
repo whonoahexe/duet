@@ -4,10 +4,10 @@ current_phase: 3
 current_phase_name: Voice & Video Calls
 status: planning
 stopped_at: Phase 3 context gathered
-last_updated: "2026-10-15T17:11:17.247Z"
+last_updated: "2026-10-15T18:17:06.343Z"
 last_activity: 2026-10-15
 last_activity_desc: Phase 01 complete, transitioned to Phase 3
-state_head: 52b78200e571684d4856d4d444622d86266abf7e
+state_head: 971434a8f53561425031f16f23762c8823c5ba1c
 progress:
   total_phases: 3
   completed_phases: 2
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-10-15)
 Phase: 3 — Voice & Video Calls
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-10-15 — Phase 01 complete, transitioned to Phase 3
+Last activity: 2026-10-15 - Completed quick task 261015-vkv: Push notification tweaks: hide message preview, duet logo badge, custom notification sound
 
 Progress: [███████░░░] 67%
 
@@ -138,6 +138,12 @@ None yet.
 - [Phase 1]: End-of-phase human UAT still pending: install the PWA on iPhone (Safari) and Pixel (Chrome), stay logged in after force-quit, /signup is not found.
 - [Phase 1]: TOTP dropped (password-only); re-running the seed script is the password-reset stopgap until AUTH-06.
 - [Phase 2]: Phase 2 is now the largest phase (18 requirements: chat, push, rich media). Expect plan-phase to split it into several plans. Rich-media plans (HEIC/HEVC transcoding, cross-platform voice-note format) need research before planning.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 261015-vkv | Push notification tweaks: hide message preview, duet logo badge, custom notification sound | 2026-10-15 | 971434a | [261015-vkv-push-notification-tweaks-hide-message-pr](./quick/261015-vkv-push-notification-tweaks-hide-message-pr/) |
 
 ## Deferred Items
 
