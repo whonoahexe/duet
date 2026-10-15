@@ -99,7 +99,21 @@ Plans:
   3. During a call, user can mute/unmute, turn the camera on/off, switch between front and back camera, and hang up, and the screen does not lock for the duration of the call
   4. A brief network drop mid-call shows "Reconnecting…" and the call resumes automatically without either person redialing
 
-**Plans**: TBD
+**Plans:** 4 plans
+
+Plans:
+**Wave 1**
+- [ ] 03-01-PLAN.md — Voice call end to end: shared call contract, server call registry (45 s ring, cancel, decline, absence grace, multi-device first wins, glare merge, busy, invite limit), fixed-role peer with pre-negotiated transceivers, call/incoming screens, tones, mic drawer, smoke-calls E2E (CALL-01, CALL-04)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03-02-PLAN.md — Push-to-answer: incoming-call push (TTL 45, viewing sessions skipped), ring-on-attach, missed-call push, SW call branch and tap routing, GET /api/calls/:id, stale-push toast; deployed (CALL-03, CALL-04)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 03-03-PLAN.md — Video and in-call controls: Video call button, camera via replaceTrack + call.media, Mode B with draggable/swappable PiP and auto-hide, Mute / Switch camera, no speaker toggle (D-05 dropped), minimize + on-call bar, wake lock, iOS tip (CALL-02, CALL-05, CALL-06, CALL-08)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 03-04-PLAN.md — Reconnect and ship: call.rejoin with stale-connection eviction, rollback + ICE restart, 30 s give-up (Call dropped), Poor connection badge, iOS track re-acquire, forced-relay proof, final deploy, README, device UAT (CALL-07, CALL-09)
+
 **UI hint**: yes
 
 ## Progress
@@ -111,4 +125,4 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 |-------|----------------|--------|-----------|
 | 1. Foundation, Auth & Media Plane | 5/5 | Complete    | 2026-10-15 |
 | 2. Chat, Media & Push | 6/6 | Complete    | 2026-10-15 |
-| 3. Voice & Video Calls | 0/TBD | Not started | - |
+| 3. Voice & Video Calls | 0/4 | Planned | - |
