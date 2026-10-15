@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { and, count, eq, gt } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 import webpush from "web-push"
-import { messageLabel, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
+import { messageTypeLabel, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
 import type { Config } from "../config"
 import type { Db } from "../db/client"
 import { messages, pushSubscriptions, readState } from "../db/schema"
@@ -113,7 +113,10 @@ export interface PushSender {
   /** True when the VAPID pair and subject are configured. Otherwise nothing is ever sent. */
   configured: boolean
   publicKey: string | null
-  /** Push "{senderName}: {label}" to every saved subscription of the recipient. Returns successes. */
+  /**
+   * Push the sender's name as the title and the type-only label (messageTypeLabel) as the body,
+   * never the text or a caption, to every saved subscription of the recipient. Returns successes.
+   */
   notifyMessage(recipientId: string, message: MessageDto, senderName: string): Promise<number>
   /** SHEL-03: push the test notification to this session's subscriptions only. Returns successes. */
   sendTest(sessionId: string): Promise<number>
@@ -205,7 +208,7 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
           .where(and(eq(messages.senderId, message.senderId), gt(messages.seq, lastRead)))
           .get()?.n ?? 1
       const title = unread >= 2 ? `${senderName} · ${unread} new messages` : senderName
-      const payload = buildPayload("chat", title, messageLabel(message))
+      const payload = buildPayload("chat", title, messageTypeLabel(message))
       const ok = await sendAll(subs, payload)
       log.info({ evt: "push_sent", userId: recipientId, seq: message.seq, subs: subs.length, ok })
       return ok

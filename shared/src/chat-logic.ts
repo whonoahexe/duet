@@ -43,7 +43,27 @@ export function mediaLabel(kinds: AttachmentKind[], { emoji }: { emoji: boolean 
   return emoji ? `${icon} ${label}` : label
 }
 
-/** One-line description of a message for notifications and announcements (D-13, UI-SPEC section 7). */
+/**
+ * The push notification body: the message type only ("Message", "Voice note", "Photo", "3 photos",
+ * "Video", "2 videos", "4 items"). It must never include message text or a caption, so neither the
+ * lock screen nor Apple's and Google's push services ever see what was written (quick 261015-vkv).
+ * The parameter type deliberately omits `body`, so the text cannot leak even by accident.
+ */
+export function messageTypeLabel(m: Pick<MessageDto, "kind" | "attachments">): string {
+  if (m.kind === "text") return "Message"
+  if (m.kind === "voice") return "Voice note"
+  return (
+    mediaLabel(
+      m.attachments.map((a) => a.kind),
+      { emoji: false },
+    ) || "Message"
+  )
+}
+
+/**
+ * One-line description of a message, including its text or caption, for the in-app screen-reader
+ * announcement only (UI-SPEC section 7). Never use it for push notifications: use messageTypeLabel.
+ */
 export function messageLabel(m: Pick<MessageDto, "kind" | "body" | "attachments">): string {
   if (m.kind === "text") return m.body ?? ""
   if (m.kind === "voice") return "🎤 Voice note"
