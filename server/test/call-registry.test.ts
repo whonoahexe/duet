@@ -240,6 +240,129 @@ describe("close()", () => {
   })
 })
 
+describe("every device rings, the first answer wins (D-11)", () => {
+  it("binds the accepting device and stops the others; a later accept from another device only stops it", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const b1 = h.attach(BOB)
+    const b2 = h.attach(BOB)
+    const callId = h.invite(a)
+    expect(h.to(b1, "call.ring")).toHaveLength(1)
+    expect(h.to(b2, "call.ring")).toHaveLength(1)
+    h.frame(b2, { t: "call.accept", callId })
+    expect(h.to(b1, "call.stop-ringing")).toHaveLength(1)
+    expect(h.to(b1, "call.stop-ringing")).toEqual([{ t: "call.stop-ringing", callId, reason: "answered-elsewhere" }])
+    expect(h.to(b2, "call.accepted")).toEqual([{ t: "call.accepted", callId }])
+    h.sent.length = 0
+    h.frame(b1, { t: "call.accept", callId })
+    expect(h.to(b1)).toEqual([{ t: "call.stop-ringing", callId, reason: "answered-elsewhere" }])
+    expect([...(h.rooms.get(`call-${callId}`) ?? [])].sort()).toEqual([a, b2].sort())
+    h.frame(b2, { t: "call.end", callId })
+    expect(h.to(a, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "hangup" }])
+    h.registry.close()
+  })
+
+  it("ends the call on a decline from one device, for every connection of both people", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const a2 = h.attach(ALICE)
+    const b1 = h.attach(BOB)
+    const b2 = h.attach(BOB)
+    const callId = h.invite(a)
+    h.frame(b1, { t: "call.decline", callId })
+    for (const conn of [a, a2, b1, b2]) {
+      expect(h.to(conn, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "declined" }])
+    }
+    h.registry.close()
+  })
+})
+
+describe("glare (D-14)", () => {
+  it("merges the callee's own invite into the ringing call as an accept", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const x = h.invite(a, "voice")
+    const y = h.invite(b, "video")
+    expect(h.to(b, "call.accepted")).toHaveLength(1)
+    expect(h.to(b, "call.accepted")).toEqual([{ t: "call.accepted", callId: x, replaces: y }])
+    expect(h.to(a, "call.accepted")).toEqual([{ t: "call.accepted", callId: x }])
+    expect([...(h.rooms.get(`call-${x}`) ?? [])].sort()).toEqual([a, b].sort())
+    expect(h.to(a, "call.ring")).toEqual([])
+    expect(h.ofType("call.ended")).toEqual([])
+    vi.advanceTimersByTime(60_000)
+    expect(h.ofType("call.ended")).toEqual([])
+    h.registry.close()
+  })
+})
+
+describe("busy", () => {
+  it("refuses an invite from a second device while a call is active, without ringing", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const a2 = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const x = h.invite(a)
+    h.frame(b, { t: "call.accept", callId: x })
+    h.sent.length = 0
+    const z = h.invite(a2)
+    expect(h.to(a2)).toEqual([{ t: "call.ended", callId: z, reason: "busy" }])
+    expect(h.to(b, "call.ring")).toEqual([])
+    expect(h.to(a, "call.ended")).toEqual([])
+    h.frame(a, { t: "call.end", callId: x })
+    expect(h.to(b, "call.ended")).toEqual([{ t: "call.ended", callId: x, reason: "hangup" }])
+    h.registry.close()
+  })
+
+  it("refuses an invite from the caller's second device while the first still rings", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const a2 = h.attach(ALICE)
+    const b = h.attach(BOB)
+    h.invite(a)
+    h.sent.length = 0
+    const z = h.invite(a2)
+    expect(h.to(a2)).toEqual([{ t: "call.ended", callId: z, reason: "busy" }])
+    expect(h.to(b)).toEqual([])
+    h.registry.close()
+  })
+
+  it("ignores a repeated invite with the current id from the caller's connection", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const x = h.invite(a)
+    h.sent.length = 0
+    h.frame(a, { t: "call.invite", callId: x, kind: "voice" })
+    expect(h.sent).toEqual([])
+    h.frame(b, { t: "call.accept", callId: x })
+    expect(h.to(a, "call.accepted")).toEqual([{ t: "call.accepted", callId: x }])
+    h.registry.close()
+  })
+})
+
+describe("invite flood guard (T-03-03)", () => {
+  it("refuses the 11th invite within 60 s without ringing, and rings again after 60 s", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    for (let i = 0; i < 10; i++) {
+      const id = h.invite(a)
+      h.frame(a, { t: "call.end", callId: id })
+      vi.advanceTimersByTime(1_000)
+    }
+    expect(h.to(b, "call.ring")).toHaveLength(10)
+    h.sent.length = 0
+    const refused = h.invite(a)
+    expect(h.to(a)).toEqual([{ t: "call.ended", callId: refused, reason: "failed" }])
+    expect(h.to(b)).toEqual([])
+    vi.advanceTimersByTime(60_000)
+    const later = h.invite(a)
+    expect(h.to(b, "call.ring")).toEqual([{ t: "call.ring", callId: later, kind: "voice", from: ALICE }])
+    h.registry.close()
+  })
+})
+
 describe("CALL_RING_TIMEOUT_MS config", () => {
   const base = { NODE_ENV: "test", APP_ORIGIN: "http://localhost:3000" }
   it("defaults to 45000", () => {
