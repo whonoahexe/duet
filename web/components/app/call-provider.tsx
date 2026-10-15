@@ -64,6 +64,8 @@ export function CallProvider({ me }: { me: MeResponse }) {
         data-local-type={call.localType ?? ""}
         data-inbound-bytes={call.inboundBytes}
         data-tone={call.tone}
+        data-camera={call.camera ? "true" : "false"}
+        data-peer-camera={call.peerCamera ? "true" : "false"}
       />
       <CallScreen />
       <IncomingCall />

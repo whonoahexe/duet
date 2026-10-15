@@ -2,7 +2,15 @@
 
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { BellIcon, ChatCircleIcon, DotsThreeVerticalIcon, PhoneCallIcon, PhoneIcon, SignOutIcon } from "@phosphor-icons/react"
+import {
+  BellIcon,
+  ChatCircleIcon,
+  DotsThreeVerticalIcon,
+  PhoneCallIcon,
+  PhoneIcon,
+  SignOutIcon,
+  VideoCameraIcon,
+} from "@phosphor-icons/react"
 import { OkResponse, type MeResponse } from "@duet/shared"
 import { CallProvider } from "@/components/app/call-provider"
 import { ChatView } from "@/components/app/chat-view"
@@ -54,20 +62,34 @@ function ConnectionSubline() {
   )
 }
 
-/** D-01: the header's voice call button (its own component, so call-state ticks never re-render the chat). */
-function VoiceCallButton() {
+/**
+ * D-01: the header's voice and video call buttons (their own component, so call-state ticks never
+ * re-render the chat). A video call starts with the camera on (CALL-02).
+ */
+function CallButtons() {
   // Disabled while a call rings or runs on this device (UI-SPEC section 1).
   const { phase } = useCall()
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      aria-label="Voice call"
-      disabled={phase !== "idle"}
-      onClick={() => void callStore.startCall("voice")}
-    >
-      <PhoneIcon />
-    </Button>
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Voice call"
+        disabled={phase !== "idle"}
+        onClick={() => void callStore.startCall("voice")}
+      >
+        <PhoneIcon />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Video call"
+        disabled={phase !== "idle"}
+        onClick={() => void callStore.startCall("video")}
+      >
+        <VideoCameraIcon />
+      </Button>
+    </>
   )
 }
 
@@ -203,7 +225,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
                 <span className="truncate font-heading font-medium">{peer.displayName}</span>
                 <ConnectionSubline />
               </div>
-              <VoiceCallButton />
+              <CallButtons />
             </>
           ) : (
             <span className="min-w-0 flex-1 truncate font-heading font-medium text-muted-foreground">

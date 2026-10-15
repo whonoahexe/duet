@@ -20,7 +20,7 @@ async function until(fn, timeout, message) {
   const deadline = Date.now() + timeout
   for (;;) {
     if (await fn()) return
-    if (Date.now() > deadline) throw new Error(message)
+    if (Date.now() > deadline) throw new Error(typeof message === "function" ? message() : message)
     await new Promise((r) => setTimeout(r, 100))
   }
 }
@@ -140,7 +140,33 @@ async function diag(page) {
     localType: await el.getAttribute("data-local-type"),
     inboundBytes: Number(await el.getAttribute("data-inbound-bytes")),
     tone: await el.getAttribute("data-tone"),
+    camera: await el.getAttribute("data-camera"),
+    peerCamera: await el.getAttribute("data-peer-camera"),
   }
+}
+
+/** videoWidth of the page's remote video (0 when it has no decoded frame or is not mounted). */
+async function remoteVideoWidth(page) {
+  return page.evaluate(() => document.querySelector('[data-testid="remote-video"]')?.videoWidth ?? 0)
+}
+
+/** readyState of every camera track getUserMedia handed out on the page. */
+async function cameraTrackStates(page) {
+  return page.evaluate(() => (window.__duetTracks ?? []).filter((t) => t.kind === "video").map((t) => t.readyState))
+}
+
+/** Wait until `page`'s button `name` (inside the call dialog) reports aria-pressed `value`. */
+async function waitPressed(page, peer, name, value, timeout) {
+  const button = callDialog(page, peer).getByRole("button", { name, exact: true })
+  let last = null
+  await until(
+    async () => {
+      last = await button.getAttribute("aria-pressed")
+      return last === value
+    },
+    timeout,
+    () => `${page.__name}'s "${name}" aria-pressed is "${last}", expected "${value}"`,
+  )
 }
 
 async function waitPhase(page, phase, timeout) {
@@ -151,7 +177,7 @@ async function waitPhase(page, phase, timeout) {
       return last === phase
     },
     timeout,
-    `${page.__name}'s call phase stayed "${last}", expected "${phase}"`,
+    () => `${page.__name}'s call phase stayed "${last}", expected "${phase}"`,
   )
 }
 
@@ -203,6 +229,56 @@ async function expectNoIncoming(page, peer, ms) {
 
 /** name -> async (ctx, opened) => void. Each prints "scenario <name> ok" on success. */
 const scenarios = {
+  /**
+   * CALL-02 / D-02 / D-03: Ada starts a video call, Bob accepts with his camera on, both see each other
+   * full-screen; Bob turns his camera off and Ada falls back to his avatar, with his camera released.
+   */
+  async video(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await ada.getByRole("button", { name: "Video call" }).click()
+    const incoming = incomingDialog(bob, ADA)
+    await incoming.waitFor({ state: "visible", timeout: 10_000 })
+    await incoming.getByText("Incoming video call", { exact: true }).waitFor({ state: "visible", timeout: 2_000 })
+    await incoming.getByRole("button", { name: "Accept" }).click()
+    let last = ""
+    await until(
+      async () => {
+        const [wa, wb, a, b] = await Promise.all([remoteVideoWidth(ada), remoteVideoWidth(bob), diag(ada), diag(bob)])
+        last = `widths ${wa}/${wb}, peer-camera ${a.peerCamera}/${b.peerCamera}`
+        return wa > 0 && wb > 0 && a.peerCamera === "true" && b.peerCamera === "true"
+      },
+      20_000,
+      "the two pages never saw each other's video",
+    ).catch((err) => {
+      throw new Error(`${err.message} (${last})`)
+    })
+    await Promise.all([waitPhase(ada, "live", 10_000), waitPhase(bob, "live", 10_000)])
+    // Mode B on both: the remote video fills the screen and the avatar block is gone.
+    for (const [page, peer] of [
+      [ada, BOB],
+      [bob, ADA],
+    ]) {
+      await until(
+        async () => (await callDialog(page, peer).getByTestId("call-avatar").count()) === 0,
+        5_000,
+        `${page.__name} still shows the avatar while both cameras are on`,
+      )
+    }
+    await waitPressed(bob, ADA, "Camera", "true", 2_000)
+    await callDialog(bob, ADA).getByRole("button", { name: "Camera", exact: true }).click()
+    await waitPressed(bob, ADA, "Camera", "false", 2_000)
+    await callDialog(ada, BOB).getByTestId("call-avatar").waitFor({ state: "visible", timeout: 5_000 })
+    const a = await diag(ada)
+    if (a.peerCamera !== "false") throw new Error(`Ada's data-peer-camera is "${a.peerCamera}" after Bob's camera went off`)
+    const bobCams = await cameraTrackStates(bob)
+    if (bobCams.length === 0) throw new Error("Bob captured no camera track")
+    if (bobCams.some((s) => s !== "ended")) throw new Error(`Bob's camera is still live: [${bobCams.join(", ")}]`)
+    await hangUpBoth(ada, BOB, bob)
+    await expectTracksEnded(ada)
+    await expectTracksEnded(bob)
+  },
+
   /** CALL-01: a voice call from the header connects both ways, shows the timer and ends cleanly. */
   async voice(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened)

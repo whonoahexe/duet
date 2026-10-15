@@ -95,6 +95,9 @@ interface Call {
   callerSession: string | undefined
   calleeConn?: string
   calleeSession?: string
+  /** D-03: each party's last call.media camera flag (kept for the 03-04 call.state resend). */
+  callerCamera: boolean
+  calleeCamera: boolean
   startedAt: number
   activeAt?: number
   ringTimer?: ReturnType<typeof setTimeout>
@@ -239,6 +242,8 @@ export function createCallRegistry({
       status: "ringing",
       callerConn: connId,
       callerSession: transport.sessionOf(connId),
+      callerCamera: false,
+      calleeCamera: false,
       startedAt: now(),
     }
     current = call
@@ -309,6 +314,22 @@ export function createCallRegistry({
     end(call, "hangup")
   }
 
+  /**
+   * call.media (D-03, T-03-14): only a bound connection of an active call may change its camera flag, and
+   * only the other bound connection hears it (never the sender's other devices).
+   */
+  function media(connId: string, call: Call, camera: boolean): void {
+    if (call.status !== "active" || (connId !== call.callerConn && connId !== call.calleeConn)) {
+      notAllowed(connId)
+      return
+    }
+    const fromCaller = connId === call.callerConn
+    if (fromCaller) call.callerCamera = camera
+    else call.calleeCamera = camera
+    const other = fromCaller ? call.calleeConn : call.callerConn
+    if (other) transport.sendToConn(other, { t: "call.media", callId: call.id, camera })
+  }
+
   return {
     onFrame(connId, userId, frame) {
       if (frame.t === "call.invite") {
@@ -333,6 +354,9 @@ export function createCallRegistry({
           return
         case "call.end":
           hangUp(connId, call)
+          return
+        case "call.media":
+          media(connId, call, frame.camera)
           return
       }
     },

@@ -61,6 +61,11 @@ export const ClientFrame = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("call.decline"), callId: CallId }),
   /** Hang up an active call, or cancel it while it rings (CALL-04). */
   z.strictObject({ t: z.literal("call.end"), callId: CallId }),
+  /**
+   * This side's camera turned on or off (D-03): only a bound party connection of an active call may send
+   * it, and the server relays it to the other bound connection (the video track itself never renegotiates).
+   */
+  z.strictObject({ t: z.literal("call.media"), callId: CallId, camera: z.boolean() }),
 ])
 export type ClientFrame = z.infer<typeof ClientFrame>
 
@@ -107,5 +112,7 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("call.stop-ringing"), callId: CallId, reason: StopRingingReason }),
   /** The call is over (or never started) for this reason. */
   z.object({ t: z.literal("call.ended"), callId: CallId, reason: CallEndReason }),
+  /** The other party's camera is on or off (D-03, Pitfall 7: the remote track alone never says so). */
+  z.object({ t: z.literal("call.media"), callId: CallId, camera: z.boolean() }),
 ])
 export type ServerFrame = z.infer<typeof ServerFrame>

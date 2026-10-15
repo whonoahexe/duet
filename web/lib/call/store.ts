@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import {
+  callRoom,
   CallStatusResponse,
   formatCallDuration,
   type CallKind,
@@ -16,7 +17,7 @@ import { sendFrame } from "@/lib/chat/realtime"
 import { chatStore } from "@/lib/chat/store"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import type { CallSample } from "@/lib/rtc/stats"
-import { getMic, type MicResult } from "./media"
+import { getCallMedia, getCamera, type CallMediaResult, type Facing } from "./media"
 import { CallSession, forceRelayFlag } from "./session"
 import { startRingback, startRingtone, stopTones, unlockAudio, type Tone } from "./tones"
 
@@ -46,6 +47,18 @@ export interface CallState {
   tone: Tone
   /** A denied capture device: the permission drawer shows how to allow it (D-19). */
   permission: "microphone" | "camera" | null
+  /** This device's camera is on and sent to the peer (D-03). */
+  camera: boolean
+  /** The peer's camera flag from call.media (Pitfall 7: never inferred from the remote track). */
+  peerCamera: boolean
+  /** Which camera is open (or would open next): the self-view is mirrored only for "user". */
+  facing: Facing
+  /** The self-view stream (null while the camera is off). */
+  localVideo: MediaStream | null
+  /** The remote video stream (present from setup; shown only while peerCamera and a frame decoded). */
+  remoteVideo: MediaStream | null
+  /** The camera was refused for this call (D-19): the call runs audio-only. */
+  cameraDenied: boolean
 }
 
 /** How long each terminal text stays before the call screen closes (UI-SPEC section 5). */
@@ -76,6 +89,12 @@ const EMPTY: CallState = {
   inboundBytes: 0,
   tone: "none",
   permission: null,
+  camera: false,
+  peerCamera: false,
+  facing: "user",
+  localVideo: null,
+  remoteVideo: null,
+  cameraDenied: false,
 }
 
 let state: CallState = EMPTY
@@ -84,6 +103,10 @@ let peer: UserSummary | null = null
 let session: CallSession | null = null
 /** The microphone of the call being set up, before a session owns it. */
 let pendingMic: MediaStreamTrack | null = null
+/** The camera of the call being set up (video call, or turned on while ringing), before a session owns it. */
+let pendingCamera: MediaStreamTrack | null = null
+/** A camera-on tap is waiting for getUserMedia (a second tap must not open a second camera). */
+let cameraBusy = false
 let pendingIce: RTCIceServer[] | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 let guardTimer: ReturnType<typeof setTimeout> | null = null
@@ -165,7 +188,53 @@ function releaseMedia(): void {
   session = null
   pendingMic?.stop()
   pendingMic = null
+  pendingCamera?.stop()
+  pendingCamera = null
   pendingIce = null
+}
+
+/** Media fields of a call that is over: no camera, no videos (every track was stopped by releaseMedia). */
+const NO_MEDIA: Partial<CallState> = {
+  remoteAudio: null,
+  remoteVideo: null,
+  localVideo: null,
+  camera: false,
+  peerCamera: false,
+}
+
+/** A call this device is part of, from the first ring out to the end (camera and mute work here). */
+function inCall(phase: CallPhase): boolean {
+  return phase === "ringing-out" || phase === "connecting" || phase === "live"
+}
+
+/**
+ * D-03: tell the peer whether this side's camera is on. Only once the server bound this connection
+ * (connecting or live); resent after call.accepted, on every camera change and on room.peer-joined.
+ */
+function sendMedia(): void {
+  const { callId, phase, camera } = state
+  if (!callId || (phase !== "connecting" && phase !== "live")) return
+  sendFrame({ t: "call.media", callId, camera })
+}
+
+/** D-19 (camera half): the call continues audio-only; the action opens "Allow the camera". */
+function cameraDeniedToast(): void {
+  toast("duet can't use the camera.", {
+    id: "camera-denied",
+    action: { label: "How to allow", onClick: () => set({ permission: "camera" }) },
+  })
+}
+
+/** Hold freshly captured call media until the session takes it, and show the self-view. */
+function holdMedia(media: Extract<CallMediaResult, { ok: true }>): void {
+  pendingMic = media.mic
+  pendingCamera = media.camera
+  set({
+    camera: media.camera !== null,
+    localVideo: media.camera ? new MediaStream([media.camera]) : null,
+    cameraDenied: media.cameraDenied,
+  })
+  if (media.cameraDenied) cameraDeniedToast()
 }
 
 /** Back to the chat at once. */
@@ -179,7 +248,7 @@ function closeNow(): void {
 function showEnded(text: string, ms: number): void {
   clearCloseTimer()
   releaseMedia()
-  set({ phase: "ended", endText: text, endState: null, accepting: false, remoteAudio: null })
+  set({ ...NO_MEDIA, phase: "ended", endText: text, endState: null, accepting: false })
   const callId = state.callId
   closeTimer = setTimeout(() => {
     closeTimer = null
@@ -191,7 +260,7 @@ function showEnded(text: string, ms: number): void {
 function showFailure(): void {
   clearCloseTimer()
   releaseMedia()
-  set({ phase: "ended", endText: null, endState: "couldnt-connect", accepting: false, remoteAudio: null })
+  set({ ...NO_MEDIA, phase: "ended", endText: null, endState: "couldnt-connect", accepting: false })
 }
 
 function callEndedText(): string {
@@ -217,9 +286,11 @@ function onPeerState(callId: string, pcState: RTCPeerConnectionState): void {
 /** Build the call's session from the captured mic and ICE servers. False when setup threw. */
 function startSession(callId: string, role: "caller" | "callee"): boolean {
   const mic = pendingMic
+  const camera = pendingCamera
   const iceServers = pendingIce
   if (!mic || !iceServers) return false
   pendingMic = null
+  pendingCamera = null
   pendingIce = null
   try {
     session = new CallSession({
@@ -228,8 +299,10 @@ function startSession(callId: string, role: "caller" | "callee"): boolean {
       iceServers,
       forceRelay: forceRelayFlag(),
       mic,
+      camera,
       send: sendFrame,
       onRemoteAudio: (stream) => set({ remoteAudio: stream }),
+      onRemoteVideo: (stream) => set({ remoteVideo: stream }),
       onSample,
       onState: (s) => onPeerState(callId, s),
     })
@@ -237,6 +310,7 @@ function startSession(callId: string, role: "caller" | "callee"): boolean {
   } catch (err) {
     console.error("call: setup failed", err)
     mic.stop()
+    camera?.stop()
     return false
   }
 }
@@ -288,18 +362,26 @@ function handleEnded(frame: Extract<ServerFrame, { t: "call.ended" }>): void {
   }
 }
 
+/** Stop every track of a capture that is not going to be used. */
+function dropMedia(media: CallMediaResult): void {
+  if (!media.ok) return
+  media.mic.stop()
+  media.camera?.stop()
+}
+
 /**
- * Answer ringing call `callId` with a microphone captured in a tap (Accept, or a Start tap that lost
- * a glare race on this device): ICE servers, the callee session, then call.accept.
+ * Answer ringing call `callId` with media captured in a tap (Accept, or a Start tap that lost a glare
+ * race on this device, which keeps its own camera choice, D-14): ICE servers, the callee session,
+ * then call.accept.
  */
-async function answer(callId: string, mic: MicResult): Promise<void> {
+async function answer(callId: string, media: CallMediaResult): Promise<void> {
   if (state.callId !== callId || state.phase !== "ringing-in") {
-    if (mic.ok) mic.track.stop()
+    dropMedia(media)
     return
   }
-  if (!mic.ok) {
+  if (!media.ok) {
     sendFrame({ t: "call.decline", callId })
-    if (mic.reason === "denied") {
+    if (media.reason === "denied") {
       closeNow()
       set({ permission: "microphone" })
     } else {
@@ -307,7 +389,7 @@ async function answer(callId: string, mic: MicResult): Promise<void> {
     }
     return
   }
-  pendingMic = mic.track
+  holdMedia(media)
   try {
     const { iceServers } = await fetchIceServers()
     if (state.callId !== callId || state.phase !== "ringing-in") {
@@ -359,9 +441,9 @@ export const callStore = {
       return
     }
     starting = true
-    let mic: Awaited<ReturnType<typeof getMic>>
+    let media: CallMediaResult
     try {
-      mic = await getMic()
+      media = await getCallMedia(kind)
     } finally {
       starting = false
     }
@@ -370,25 +452,25 @@ export const callStore = {
     if (phaseNow() === "ringing-in" && state.callId && !state.accepting) {
       const ringing = state.callId
       set({ accepting: true })
-      await answer(ringing, mic)
+      await answer(ringing, media)
       return
     }
     if (!peer || (state.phase !== "idle" && state.phase !== "ended")) {
-      if (mic.ok) mic.track.stop()
+      dropMedia(media)
       return
     }
     clearCloseTimer()
     releaseMedia()
     const callId = crypto.randomUUID()
     const base = { ...idleState(), callId, kind, role: "caller" as const, peerId: peer.id, peerName: peer.displayName }
-    if (!mic.ok) {
+    if (!media.ok) {
       // Denied: the call does not start and the drawer explains how to allow it (D-19).
-      if (mic.reason === "denied") commit({ ...idleState(), permission: "microphone" })
+      if (media.reason === "denied") commit({ ...idleState(), permission: "microphone" })
       else commit({ ...base, phase: "ended", endState: "couldnt-connect" })
       return
     }
     commit({ ...base, phase: "ringing-out" })
-    pendingMic = mic.track
+    holdMedia(media)
     try {
       const { iceServers } = await fetchIceServers()
       if (state.callId !== callId || phaseNow() !== "ringing-out") return
@@ -444,8 +526,54 @@ export const callStore = {
     const callId = state.callId
     if (state.phase !== "ringing-in" || state.accepting || !callId) return
     set({ accepting: true })
-    const mic = await getMic()
-    await answer(callId, mic)
+    // D-03: accepting a video call turns this side's camera on; a voice call stays camera-off.
+    const media = await getCallMedia(state.kind, state.facing)
+    await answer(callId, media)
+  },
+
+  /**
+   * Turn this side's camera on or off in any call (D-03): replaceTrack on the video transceiver
+   * negotiated at call start (no renegotiation), then call.media to the peer. A refused camera keeps
+   * the call audio-only with the "How to allow" toast (D-19). Turning it off stops the track (T-03-13).
+   */
+  async toggleCamera(): Promise<void> {
+    const callId = state.callId
+    if (!callId || !inCall(state.phase) || cameraBusy) return
+    if (state.camera) {
+      set({ camera: false, localVideo: null })
+      // The camera is released (replaceTrack(null), then stop) before the peer hears it is off.
+      if (session) await session.setCamera(null)
+      else {
+        pendingCamera?.stop()
+        pendingCamera = null
+      }
+      if (state.callId === callId && !state.camera) sendMedia()
+      return
+    }
+    cameraBusy = true
+    let result: Awaited<ReturnType<typeof getCamera>>
+    try {
+      result = await getCamera(state.facing)
+    } finally {
+      cameraBusy = false
+    }
+    if (state.callId !== callId || !inCall(phaseNow()) || state.camera) {
+      if (result.ok) result.track.stop()
+      return
+    }
+    if (!result.ok) {
+      if (result.reason === "denied") cameraDeniedToast()
+      else toast("duet can't use the camera.", { id: "camera-denied" })
+      return
+    }
+    if (session) await session.setCamera(result.track)
+    else {
+      pendingCamera?.stop()
+      pendingCamera = result.track
+    }
+    if (state.callId !== callId || !inCall(phaseNow())) return
+    set({ camera: true, localVideo: new MediaStream([result.track]), cameraDenied: false })
+    sendMedia()
   },
 
   /** Refuse the ringing call; this device closes at once (D-13). */
@@ -501,6 +629,7 @@ export const callStore = {
             return
           }
           set({ callId: frame.callId, role: "callee", phase: "connecting" })
+          sendMedia()
           return
         }
         if (frame.callId !== state.callId) return
@@ -512,6 +641,16 @@ export const callStore = {
           }
           set({ phase: "connecting" })
         }
+        // Both roles: the peer learns this side's camera state once the server bound the call (D-03).
+        sendMedia()
+        return
+      case "call.media":
+        if (frame.callId === state.callId && (state.phase === "connecting" || state.phase === "live")) {
+          set({ peerCamera: frame.camera })
+        }
+        return
+      case "room.peer-joined":
+        if (state.callId && frame.room === callRoom(state.callId)) sendMedia()
         return
       case "call.ended":
         handleEnded(frame)

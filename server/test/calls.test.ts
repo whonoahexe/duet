@@ -26,8 +26,8 @@ afterEach(async () => {
   await new Promise((r) => setTimeout(r, 20))
 })
 
-async function connect(cookie: string): Promise<Client> {
-  const c = await openWs(t.app, cookie, TEST_ORIGIN)
+async function connect(cookie: string, app: TestApp = t): Promise<Client> {
+  const c = await openWs(app.app, cookie, TEST_ORIGIN)
   const hello = await c.next()
   expect(hello.t).toBe("hello")
   const client = Object.assign(c, { connId: hello.connId as string, userId: hello.userId as string })
@@ -190,5 +190,77 @@ describe("call.decline", () => {
     const callId = await ring(alice, bob)
     bob.send({ t: "call.decline", callId })
     expect(await nextOf(alice, "call.ended")).toEqual({ t: "call.ended", callId, reason: "declined" })
+  })
+})
+
+describe("call.media (D-03, T-03-14)", () => {
+  // Its own app: the file's earlier describes already used most of Alice's 10 invites per minute.
+  let m: TestApp
+  let aCookie: string
+  let a2Cookie: string
+  let bCookie: string
+  beforeAll(async () => {
+    m = await makeTestApp({ seed: true })
+    aCookie = await loginCookie(m.app, "alice")
+    a2Cookie = await loginCookie(m.app, "alice")
+    bCookie = await loginCookie(m.app, "bob")
+  })
+  afterAll(async () => {
+    await m.close()
+  })
+  const connectAlice = () => connect(aCookie, m)
+  const connectAlice2 = () => connect(a2Cookie, m)
+  const connectBob = () => connect(bCookie, m)
+
+  it("relays the camera flag from one bound connection to the other bound connection only", async () => {
+    const alice = await connectAlice()
+    const alice2 = await connectAlice2()
+    const bob = await connectBob()
+    const callId = await activeCall(alice, bob)
+    alice.send({ t: "call.media", callId, camera: true })
+    expect(await nextOf(bob, "call.media")).toEqual({ t: "call.media", callId, camera: true })
+    bob.send({ t: "call.media", callId, camera: false })
+    expect(await nextOf(alice, "call.media")).toEqual({ t: "call.media", callId, camera: false })
+    // Alice's other device and Alice's own socket hear nothing about her camera.
+    expect((await alice2.collect(150)).filter((f) => f.t === "call.media")).toEqual([])
+    expect((await alice.collect(150)).filter((f) => f.t === "call.media")).toEqual([])
+    alice.send({ t: "call.end", callId })
+    await nextOf(bob, "call.ended")
+  })
+
+  it("refuses call.media from an unbound second socket and relays nothing", async () => {
+    const alice = await connectAlice()
+    const alice2 = await connectAlice2()
+    const bob = await connectBob()
+    const callId = await activeCall(alice, bob)
+    alice2.send({ t: "call.media", callId, camera: true })
+    expect(await nextOf(alice2, "error")).toEqual({ t: "error", code: "not_allowed" })
+    expect((await bob.collect(150)).filter((f) => f.t === "call.media")).toEqual([])
+    alice.send({ t: "call.end", callId })
+    await nextOf(bob, "call.ended")
+  })
+
+  it("refuses call.media while the call still rings", async () => {
+    const alice = await connectAlice()
+    const bob = await connectBob()
+    const callId = await ring(alice, bob)
+    alice.send({ t: "call.media", callId, camera: true })
+    expect(await nextOf(alice, "error")).toEqual({ t: "error", code: "not_allowed" })
+    expect((await bob.collect(150)).filter((f) => f.t === "call.media")).toEqual([])
+    alice.send({ t: "call.end", callId })
+    await nextOf(bob, "call.ended")
+  })
+
+  it("answers bad_frame to a non-boolean camera or an extra key", async () => {
+    const alice = await connectAlice()
+    const bob = await connectBob()
+    const callId = await activeCall(alice, bob)
+    alice.send({ t: "call.media", callId, camera: "yes" })
+    expect(await nextOf(alice, "error")).toEqual({ t: "error", code: "bad_frame" })
+    alice.send({ t: "call.media", callId, camera: true, extra: 1 })
+    expect(await nextOf(alice, "error")).toEqual({ t: "error", code: "bad_frame" })
+    expect((await bob.collect(150)).filter((f) => f.t === "call.media")).toEqual([])
+    alice.send({ t: "call.end", callId })
+    await nextOf(bob, "call.ended")
   })
 })
