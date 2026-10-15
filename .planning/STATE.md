@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 02
 current_phase_name: Chat, Media & Push
 status: verifying
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-10-13T09:29:54.246Z"
-last_activity: 2026-10-13
-last_activity_desc: Completed 02-05 video clips and voice notes and deployed all of Phase 2; end-of-phase device UAT next
-state_head: 3ba798e5f39653227628ef1a90314411e11be792
+stopped_at: Completed 02-06-PLAN.md
+last_updated: "2026-10-15T09:05:02.933Z"
+last_activity: 2026-10-15
+last_activity_desc: Completed 02-06 gap closure (scroll-on-send G-02-42, topic-free iPhone push G-02-7) and redeployed; device re-test of UAT 7 and 42 next
+state_head: 279e5ba5d5595893a6e5c0e24d230b12ef6246bc
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 11
+  completed_plans: 11
   percent: 33
 ---
 
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-10-08)
 ## Current Position
 
 Phase: 02 (Chat, Media & Push) — EXECUTING
-Plan: 5 of 5
+Plan: 6 of 6
 Status: Phase complete — ready for verification
-Last activity: 2026-10-13 — Completed 02-05: ffprobe allowlist gate, H.264/AAC video transcode with HDR tone-map and poster, AAC voice notes with server waveform, hold/slide/lock recorder and scrubbable voice bubble; whole Phase 2 deployed (container self-test heic/video/voice ok); device UAT pending
+Last activity: 2026-10-15 — Completed 02-06: own sends jump to the newest message (duet:scroll-to-latest), pushes sent without Topic header (Apple BadWebPushTopic), sanitized push_failed reason, sent-0 test toast; redeployed; device re-test of UAT 7 and 42 pending
 
 Progress: [███░░░░░░░] 33%
 
@@ -66,6 +66,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 02 P03 | 27min | 3 tasks | 24 files |
 | Phase 02 P04 | 21min | 3 tasks | 32 files |
 | Phase 02 P05 | 30min | 3 tasks | 25 files |
+| Phase 02 P06 | 8min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -121,6 +122,9 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-05: Transcoded video/voice carry no container metadata (-map_metadata -1), like photos drop EXIF/GPS
 - [Phase 02]: 02-05: Voice note = exactly one audio attachment, no body (kind voice); other audio mixes are bad_attachment; no voice length cap (200 MB backstop)
 - [Phase 02]: 02-05: Tap under 300 ms, a release during the permission prompt, or a pointercancel continue the recording locked; Send ignores clicks for 400 ms after locking
+- [Phase 02]: 02-06: Push requests carry no Topic header for any push service (Apple 400 BadWebPushTopic since mid-Sept 2026); collapse stays on-device via SW close-before-show (D-14)
+- [Phase 02]: 02-06: Own sends dispatch duet:scroll-to-latest; ScrollFollower calls scrollToEnd auto now + next frame (re-arms following-bottom)
+- [Phase 02]: 02-06: push_failed logs a sanitized reason (Apple identifier codes as-is; else endpoint segments/URLs redacted, control chars flattened, 120-char cap)
 
 ### Pending Todos
 
@@ -144,6 +148,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-13T09:29:54.200Z
-Stopped at: Completed 02-05-PLAN.md
+Last session: 2026-10-15T09:05:02.868Z
+Stopped at: Completed 02-06-PLAN.md
 Resume file: None

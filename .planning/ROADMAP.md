@@ -66,7 +66,7 @@ Plans:
   4. User can send a photo from the camera or photo library (an iPhone HEIC photo displays correctly on the Pixel, and tapping any image opens it full screen) and a short video clip from either phone (including an iPhone HEVC `.MOV`) that plays on both phones
   5. User can record and send a voice note that the other person plays with a working scrubber on either phone; seeking within videos and voice notes works (Range requests), and media URLs return no content without a logged-in session
 
-**Plans:** 5/6 plans executed (02-06 = UAT gap closure)
+**Plans:** 6/6 plans executed (02-06 = UAT gap closure)
 
 Plans:
 **Wave 1**
@@ -83,7 +83,7 @@ Plans:
 - [x] 02-05-PLAN.md — Video clips (H.264 MP4, HDR tone-map, poster) and voice notes with waveform scrubber; final deploy and end-of-phase device UAT (MDIA-03, MDIA-04)
 
 **Wave 5** *(gap closure; blocked on Wave 4 completion)*
-- [ ] 02-06-PLAN.md — UAT gap closure: scroll to the latest message on every own send (G-02-42); iPhone push fixed by sending no Topic header, sanitized push_failed reason, accurate sent-0 test toast (G-02-7); redeploy (CHAT-01, NOTF-01, SHEL-03)
+- [x] 02-06-PLAN.md — UAT gap closure: scroll to the latest message on every own send (G-02-42); iPhone push fixed by sending no Topic header, sanitized push_failed reason, accurate sent-0 test toast (G-02-7); redeploy (CHAT-01, NOTF-01, SHEL-03)
 
 **UI hint**: yes
 
@@ -110,5 +110,5 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation, Auth & Media Plane | 5/5 | In Progress | - |
-| 2. Chat, Media & Push | 5/5 | In Progress | - |
+| 2. Chat, Media & Push | 6/6 | In Progress | - |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |
