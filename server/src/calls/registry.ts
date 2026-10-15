@@ -1,8 +1,12 @@
-import { callRoom, type CallClientFrame, type CallEndReason, type CallKind, type ServerFrame } from "@duet/shared"
+import { callRoom, CALL_RING_TIMEOUT_MS, type CallClientFrame, type CallEndReason, type CallKind, type ServerFrame } from "@duet/shared"
 
 /** Ended calls kept for answering late frames (a stale accept, a repeated end) with their real reason. */
 export const RECENT_CALL_MAX = 50
 export const RECENT_CALL_TTL_MS = 24 * 60 * 60 * 1000
+/** A caller whose connection closed while ringing has this long to come back before the call is cancelled. */
+export const CALLER_ABSENT_MS = 10_000
+/** A bound party whose connection closed during an active call has this long before it ends as dropped. */
+export const ABSENT_GRACE_MS = 35_000
 
 /** What the registry needs from the /ws hub. Connections are addressed by connId (one per device). */
 export interface CallTransport {
@@ -21,7 +25,11 @@ export interface CallRegistry {
   onFrame(connId: string, userId: string, frame: CallClientFrame): void
   /** A connection said hello (ring-on-attach arrives in 03-02). */
   onAttach(connId: string, userId: string): void
-  /** A connection closed (absence grace arrives with the timers). */
+  /**
+   * A connection closed. A party's socket blinking never ends a call at once (Pitfall 3): the caller
+   * gone while ringing cancels after CALLER_ABSENT_MS, a bound party gone while active drops after
+   * ABSENT_GRACE_MS.
+   */
   onClose(connId: string, userId: string): void
   /** Clear every timer (app shutdown). */
   close(): void
@@ -34,6 +42,10 @@ export interface CallRegistryOptions {
   otherUser: (userId: string) => string | undefined
   /** Clock, injectable for tests. */
   now?: () => number
+  /** D-07: the server-owned ring timeout. Default CALL_RING_TIMEOUT_MS (45 s). */
+  ringTimeoutMs?: number
+  callerAbsentMs?: number
+  absentGraceMs?: number
 }
 
 interface Call {
@@ -48,6 +60,8 @@ interface Call {
   calleeSession?: string
   startedAt: number
   activeAt?: number
+  ringTimer?: ReturnType<typeof setTimeout>
+  absentTimer?: ReturnType<typeof setTimeout>
 }
 
 interface RecentCall {
@@ -64,7 +78,15 @@ interface RecentCall {
  * accept, decline and end, joins exactly the two bound connections to the call room and tells every
  * device of both people how the call ended. Logs carry evt keys, ids, reasons and durations only.
  */
-export function createCallRegistry({ log, transport, otherUser, now = Date.now }: CallRegistryOptions): CallRegistry {
+export function createCallRegistry({
+  log,
+  transport,
+  otherUser,
+  now = Date.now,
+  ringTimeoutMs = CALL_RING_TIMEOUT_MS,
+  callerAbsentMs = CALLER_ABSENT_MS,
+  absentGraceMs = ABSENT_GRACE_MS,
+}: CallRegistryOptions): CallRegistry {
   let current: Call | null = null
   const recent = new Map<string, RecentCall>()
 
@@ -77,6 +99,20 @@ export function createCallRegistry({ log, transport, otherUser, now = Date.now }
       if (oldest === undefined) break
       recent.delete(oldest)
     }
+  }
+
+  /** Every registry timer is unref'd (it never keeps the process alive) and cleared in end()/close(). */
+  function timer(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
+    const t = setTimeout(fn, ms)
+    t.unref?.()
+    return t
+  }
+
+  function clearTimers(call: Call): void {
+    if (call.ringTimer !== undefined) clearTimeout(call.ringTimer)
+    if (call.absentTimer !== undefined) clearTimeout(call.absentTimer)
+    call.ringTimer = undefined
+    call.absentTimer = undefined
   }
 
   function notAllowed(connId: string): void {
@@ -92,6 +128,7 @@ export function createCallRegistry({ log, transport, otherUser, now = Date.now }
   function end(call: Call, reason: CallEndReason): void {
     if (current !== call) return
     current = null
+    clearTimers(call)
     const at = now()
     const frame: ServerFrame = { t: "call.ended", callId: call.id, reason }
     transport.sendToUser(call.callerId, frame)
@@ -133,6 +170,8 @@ export function createCallRegistry({ log, transport, otherUser, now = Date.now }
       startedAt: now(),
     }
     current = call
+    // D-07 / D-16: the call rings for the full timeout even when the callee has no open device.
+    call.ringTimer = timer(() => end(call, "no-answer"), ringTimeoutMs)
     log.info({ evt: "call_invite", callId, callerId: userId, calleeId, kind })
     transport.sendToUser(calleeId, { t: "call.ring", callId, kind, from: userId })
   }
@@ -147,6 +186,8 @@ export function createCallRegistry({ log, transport, otherUser, now = Date.now }
       return
     }
     call.status = "active"
+    if (call.ringTimer !== undefined) clearTimeout(call.ringTimer)
+    call.ringTimer = undefined
     call.calleeConn = connId
     call.calleeSession = transport.sessionOf(connId)
     call.activeAt = now()
@@ -212,9 +253,20 @@ export function createCallRegistry({ log, transport, otherUser, now = Date.now }
 
     onAttach() {},
 
-    onClose() {},
+    onClose(connId) {
+      const call = current
+      if (!call || call.absentTimer !== undefined) return
+      if (call.status === "ringing") {
+        if (connId === call.callerConn) call.absentTimer = timer(() => end(call, "cancelled"), callerAbsentMs)
+        return
+      }
+      if (connId === call.callerConn || connId === call.calleeConn) {
+        call.absentTimer = timer(() => end(call, "dropped"), absentGraceMs)
+      }
+    },
 
     close() {
+      if (current) clearTimers(current)
       current = null
     },
   }

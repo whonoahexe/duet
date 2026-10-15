@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { z } from "zod"
+import { CALL_RING_TIMEOUT_MS } from "@duet/shared"
 
 /** Repo root, resolved from this file (server/src/config.ts -> ../..). */
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -57,6 +58,8 @@ const EnvSchema = z
       .string()
       .refine((v) => v.startsWith("https:") || v.startsWith("mailto:"), "VAPID_SUBJECT must start with https: or mailto:")
       .optional(),
+    // D-07: how long an unanswered call rings (the server owns the timer). The E2E smoke shortens it.
+    CALL_RING_TIMEOUT_MS: z.coerce.number().int().min(3000).max(120000).default(CALL_RING_TIMEOUT_MS),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && !env.APP_ORIGIN) {
@@ -120,6 +123,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     "VAPID_PUBLIC_KEY",
     "VAPID_PRIVATE_KEY",
     "VAPID_SUBJECT",
+    "CALL_RING_TIMEOUT_MS",
   ] as const
   const picked: Record<string, string | undefined> = {}
   for (const k of keys) {

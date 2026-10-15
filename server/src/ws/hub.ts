@@ -290,6 +290,7 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
         for (const room of [...conn.rooms]) leave(connId, conn, room)
         conns.delete(connId)
         log.info({ evt: "ws_close", connId, code })
+        callHooks?.onClose(connId, conn.userId)
       })
 
       log.info({ evt: "ws_open", connId, userId: user.id })

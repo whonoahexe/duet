@@ -42,6 +42,7 @@ export function CallProvider({ me }: { me: MeResponse }) {
         data-call-id={call.callId ?? ""}
         data-local-type={call.localType ?? ""}
         data-inbound-bytes={call.inboundBytes}
+        data-tone={call.tone}
       />
       <CallScreen />
       <IncomingCall />

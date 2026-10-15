@@ -54,6 +54,8 @@ export interface AppDeps {
   heartbeatMs?: number
   /** web-push send used for every Web Push. Default: webpush.sendNotification (real push services). */
   webPushSend?: WebPushSend
+  /** Call registry timers (tests shorten them). Defaults: config.CALL_RING_TIMEOUT_MS, 10 s, 35 s. */
+  callTimers?: { ringTimeoutMs?: number; callerAbsentMs?: number; absentGraceMs?: number }
 }
 
 export async function buildApp(config: Config, deps: AppDeps = {}): Promise<FastifyInstance> {
@@ -108,6 +110,9 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     log: app.log,
     transport: hub,
     otherUser: (userId) => db.select({ id: users.id }).from(users).where(ne(users.id, userId)).get()?.id,
+    ringTimeoutMs: deps.callTimers?.ringTimeoutMs ?? config.CALL_RING_TIMEOUT_MS,
+    callerAbsentMs: deps.callTimers?.callerAbsentMs,
+    absentGraceMs: deps.callTimers?.absentGraceMs,
   })
   hub.setCallHooks(calls)
   app.decorate("calls", calls)

@@ -123,6 +123,26 @@ async function connectVoice(ada, bob) {
   if (!a.callId || a.callId !== b.callId) throw new Error("the two pages are live in different calls")
 }
 
+/** Sonner toasts currently on screen. */
+function toasts(page) {
+  return page.locator("[data-sonner-toast]")
+}
+
+/** Ada starts a voice call and Bob's incoming dialog shows; returns Bob's incoming dialog. */
+async function ringBob(ada, bob) {
+  await ada.getByRole("button", { name: "Voice call" }).click()
+  await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
+  const incoming = incomingDialog(bob, ADA)
+  await incoming.waitFor({ state: "visible", timeout: 10_000 })
+  return incoming
+}
+
+/** No incoming dialog appears on `page` within `ms`. */
+async function expectNoIncoming(page, peer, ms) {
+  await sleep(ms)
+  if (await incomingDialog(page, peer).isVisible()) throw new Error(`${page.__name} got an incoming call dialog`)
+}
+
 /** name -> async (ctx, opened) => void. Each prints "scenario <name> ok" on success. */
 const scenarios = {
   /** CALL-01: a voice call from the header connects both ways, shows the timer and ends cleanly. */
@@ -149,6 +169,75 @@ const scenarios = {
     await Promise.all([waitPhase(ada, "idle", 2_000), waitPhase(bob, "idle", 2_000)])
     await expectTracksEnded(ada)
     await expectTracksEnded(bob)
+  },
+
+  /** D-13: Bob declines; Ada sees "Declined" for about 2 s, then the chat; Bob's screen closes at once. */
+  async decline(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    const incoming = await ringBob(ada, bob)
+    await incoming.getByRole("button", { name: "Decline" }).click()
+    await incoming.waitFor({ state: "hidden", timeout: 1_000 })
+    await waitStatus(ada, BOB, /^Declined$/, 3_000)
+    await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 4_000 })
+    await Promise.all([waitPhase(ada, "idle", 1_000), waitPhase(bob, "idle", 1_000)])
+    await expectTracksEnded(ada)
+  },
+
+  /** CALL-04: Ada cancels while ringing; every incoming screen of Bob closes, with no toast. */
+  async cancel(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    const incoming = await ringBob(ada, bob)
+    await callDialog(ada, BOB).getByRole("button", { name: "Cancel call" }).click()
+    await incoming.waitFor({ state: "hidden", timeout: 3_000 })
+    await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 1_000 })
+    await sleep(500)
+    if ((await toasts(bob).count()) > 0) throw new Error("Bob got a toast for a cancelled call")
+    await Promise.all([waitPhase(ada, "idle", 1_000), waitPhase(bob, "idle", 1_000)])
+    await expectTracksEnded(ada)
+  },
+
+  /** D-07 (10 s in the smoke): nobody answers; Ada sees "No answer", Bob's screen closes, tones stop. */
+  async "no-answer"(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    const incoming = await ringBob(ada, bob)
+    const [a, b] = await Promise.all([diag(ada), diag(bob)])
+    if (a.tone !== "ringback") throw new Error(`Ada's tone while ringing is "${a.tone}", expected "ringback"`)
+    if (b.tone !== "ringtone") throw new Error(`Bob's tone while ringing is "${b.tone}", expected "ringtone"`)
+    await waitStatus(ada, BOB, /^No answer$/, 15_000)
+    await incoming.waitFor({ state: "hidden", timeout: 2_000 })
+    const [a2, b2] = await Promise.all([diag(ada), diag(bob)])
+    if (a2.tone !== "none" || b2.tone !== "none") throw new Error(`tones still on after no answer: ${a2.tone}/${b2.tone}`)
+    await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 4_000 })
+    await expectTracksEnded(ada)
+  },
+
+  /** D-19: no ICE servers -> "Couldn't connect" with Retry and Close, nothing rings; Retry calls again. */
+  async "couldnt-connect"(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    const route = "**/api/rtc/ice-servers"
+    await ada.route(route, (r) =>
+      r.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "turn_unconfigured" }) }),
+    )
+    await ada.getByRole("button", { name: "Voice call" }).click()
+    const screen = callDialog(ada, BOB)
+    // The title span (the sr-only aria-live region carries the same words).
+    await screen.locator("span", { hasText: /^Couldn't connect$/ }).waitFor({ state: "visible", timeout: 5_000 })
+    await screen.getByText("Check your connection and try again.", { exact: true }).waitFor({ state: "visible", timeout: 1_000 })
+    await screen.getByRole("button", { name: "Close" }).waitFor({ state: "visible", timeout: 1_000 })
+    await expectNoIncoming(bob, ADA, 2_000)
+    await expectTracksEnded(ada)
+    await ada.unroute(route)
+    await screen.getByRole("button", { name: "Retry" }).click()
+    await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
+    const incoming = incomingDialog(bob, ADA)
+    await incoming.waitFor({ state: "visible", timeout: 10_000 })
+    await incoming.getByRole("button", { name: "Decline" }).click()
+    await waitStatus(ada, BOB, /^Declined$/, 3_000)
+    await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 4_000 })
   },
 }
 

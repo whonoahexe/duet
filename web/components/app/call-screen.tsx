@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { PhoneDisconnectIcon } from "@phosphor-icons/react"
+import { PhoneDisconnectIcon, WarningCircleIcon } from "@phosphor-icons/react"
 import { formatCallDuration } from "@duet/shared"
 import { initials } from "@/components/app/login-tiles"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -24,7 +24,8 @@ export function CallIdentity({ name, status }: { name: string; status: ReactNode
         <AvatarFallback className="text-xl font-medium">{initials(name)}</AvatarFallback>
       </Avatar>
       <span className="mt-6 max-w-full truncate text-xl font-medium tracking-tight">{name}</span>
-      <span data-testid="call-status" className="mt-1 text-sm text-muted-foreground tabular-nums">
+      {/* The timer is not live (it would be read every second); the screen's own region announces changes. */}
+      <span data-testid="call-status" aria-live="off" className="mt-1 text-sm text-muted-foreground tabular-nums">
         {status}
       </span>
     </div>
@@ -50,6 +51,34 @@ function statusText(call: CallState, elapsed: string): string {
   return elapsed
 }
 
+/** What the visually hidden aria-live region says for each state (UI-SPEC Accessibility). */
+function announcement(call: CallState): string {
+  if (call.phase === "ended") return call.endState === "couldnt-connect" ? "Couldn't connect" : (call.endText ?? "")
+  if (call.phase === "ringing-out") return "Ringing…"
+  if (call.phase === "connecting") return "Connecting…"
+  if (call.phase === "live") return "Connected"
+  return ""
+}
+
+/** "Couldn't connect" (D-19, UI-SPEC section 5): icon, title, body, then Retry (accent) and Close. */
+function CouldntConnect() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+      <WarningCircleIcon weight="fill" className="size-12 text-muted-foreground" />
+      <span className="mt-4 text-xl font-medium tracking-tight">Couldn&apos;t connect</span>
+      <span className="mt-1 text-base text-muted-foreground">Check your connection and try again.</span>
+      <div className="mt-8 flex w-full max-w-xs flex-col gap-2">
+        <Button variant="default" size="lg" className="w-full" onClick={() => callStore.retry()}>
+          Retry
+        </Button>
+        <Button variant="ghost" size="lg" className="w-full" onClick={() => callStore.dismiss()}>
+          Close
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * The call screen (UI-SPEC section 2, Mode A): who you are talking to, the status line and the
  * control pill. Open while a call rings out, connects, runs, or shows its end text. Minimizing
@@ -62,15 +91,25 @@ export function CallScreen() {
     call.phase === "ringing-out" ||
     call.phase === "connecting" ||
     call.phase === "live" ||
-    (call.phase === "ended" && call.endText !== null)
+    (call.phase === "ended" && (call.endText !== null || call.endState !== null))
+  const failed = call.phase === "ended" && call.endState === "couldnt-connect"
   const showPill = call.phase !== "ended"
 
   return (
     <Dialog open={open} disablePointerDismissal>
       <DialogContent showCloseButton={false} className={FULL_SCREEN_DIALOG}>
         <DialogTitle className="sr-only">Call with {call.peerName}</DialogTitle>
-        <CallIdentity name={call.peerName} status={statusText(call, elapsed)} />
-        <div className="flex-1" />
+        <div aria-live="polite" className="sr-only">
+          {announcement(call)}
+        </div>
+        {failed ? (
+          <CouldntConnect />
+        ) : (
+          <>
+            <CallIdentity name={call.peerName} status={statusText(call, elapsed)} />
+            <div className="flex-1" />
+          </>
+        )}
         {showPill && (
           <div className="mx-auto mb-[max(24px,env(safe-area-inset-bottom))] flex items-center gap-4 rounded-4xl bg-background/60 px-4 py-4 backdrop-blur-md max-[379px]:gap-2">
             <Button

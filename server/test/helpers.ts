@@ -66,6 +66,7 @@ export interface MakeTestAppOptions {
   logStream?: NodeJS.WritableStream
   heartbeatMs?: number
   webPushSend?: WebPushSend
+  callTimers?: { ringTimeoutMs?: number; callerAbsentMs?: number; absentGraceMs?: number }
 }
 
 export async function makeTestApp({
@@ -77,9 +78,10 @@ export async function makeTestApp({
   logStream,
   heartbeatMs,
   webPushSend,
+  callTimers,
 }: MakeTestAppOptions = {}): Promise<TestApp> {
   const dir = dataDir ?? makeDataDir()
-  const app = await buildApp(testConfig(dir, env), { fetch, turnTimeoutMs, logStream, heartbeatMs, webPushSend })
+  const app = await buildApp(testConfig(dir, env), { fetch, turnTimeoutMs, logStream, heartbeatMs, webPushSend, callTimers })
   if (seed) {
     await seedUsers(app.db, [TEST_USERS.alice, TEST_USERS.bob])
   }
