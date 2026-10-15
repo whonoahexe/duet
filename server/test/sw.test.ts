@@ -73,6 +73,7 @@ describe("service worker push (NOTF-01, D-14, Pitfall 3)", () => {
       tag: "duet-chat",
       renotify: true,
       icon: "/icons/icon-192.png",
+      badge: "/icons/badge-96.png",
       data: { url: "/" },
     })
   })
@@ -80,7 +81,7 @@ describe("service worker push (NOTF-01, D-14, Pitfall 3)", () => {
   it("tags a test push duet-test", async () => {
     const { self, listeners } = loadSw()
     await dispatch(listeners, "push", { data: pushData({ t: "test", title: "duet", body: "Test" }) })
-    expect(self.registration.showNotification).toHaveBeenCalledWith("duet", expect.objectContaining({ tag: "duet-test" }))
+    expect(self.registration.showNotification).toHaveBeenCalledWith("duet", expect.objectContaining({ tag: "duet-test", badge: "/icons/badge-96.png" }))
   })
 
   it.each([
@@ -94,7 +95,7 @@ describe("service worker push (NOTF-01, D-14, Pitfall 3)", () => {
     expect(self.registration.showNotification).toHaveBeenCalledTimes(1)
     expect(self.registration.showNotification).toHaveBeenCalledWith(
       "duet",
-      expect.objectContaining({ body: "New message", tag: "duet-chat" }),
+      expect.objectContaining({ body: "New message", tag: "duet-chat", badge: "/icons/badge-96.png" }),
     )
   })
 

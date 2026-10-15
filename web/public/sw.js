@@ -35,6 +35,8 @@ self.addEventListener("push", (event) => {
         tag: d.t === "test" ? "duet-test" : "duet-chat",
         renotify: true,
         icon: "/icons/icon-192.png",
+        // Android status-bar glyph: white duet heart on transparent (iOS ignores it).
+        badge: "/icons/badge-96.png",
         data: { url: "/" },
       })
     })(),

@@ -62,7 +62,7 @@ describe("PWA manifest", () => {
 })
 
 describe("icons", () => {
-  for (const name of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]) {
+  for (const name of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "badge-96.png"]) {
     it(`serves /icons/${name} as image/png`, async () => {
       const res = await app.inject({ method: "GET", url: `/icons/${name}` })
       expect(res.statusCode).toBe(200)
