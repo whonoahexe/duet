@@ -16,6 +16,14 @@ interface RealtimeOptions {
   onLoggedOut: () => void
 }
 
+type FrameListener = (frame: ServerFrame) => void
+
+/**
+ * Other modules' view of the socket's frames (the call store, Phase 3). Module-level, so it survives
+ * stopRealtime/startRealtime: listeners registered before the first hello never miss a call.ring.
+ */
+const frameListeners = new Set<FrameListener>()
+
 function isVisible(): boolean {
   return document.visibilityState === "visible"
 }
@@ -73,7 +81,8 @@ class Realtime {
     this.send({ t: "typing" })
   }
 
-  private send(frame: ClientFrame): boolean {
+  /** One frame on the live socket. False (nothing sent) while the socket is not live. */
+  send(frame: ClientFrame): boolean {
     return this.live && this.client !== null && this.client.send(frame)
   }
 
@@ -158,6 +167,13 @@ class Realtime {
   }
 
   private onFrame(frame: ServerFrame): void {
+    for (const listener of frameListeners) {
+      try {
+        listener(frame)
+      } catch (err) {
+        console.error("realtime: frame listener failed", err)
+      }
+    }
     switch (frame.t) {
       case "msg":
         chatStore.applyMessage(frame.message)
@@ -259,6 +275,22 @@ export function startRealtime(opts: RealtimeOptions): void {
 /** Send one typing frame on the tab's connection (the composer throttles it to one per 3 s). */
 export function sendTyping(): void {
   current?.sendTyping()
+}
+
+/**
+ * Send one frame on the tab's single socket (calls ride it: no second socket). Returns false when
+ * there is no live connection, so the caller can tell the person they are offline.
+ */
+export function sendFrame(frame: ClientFrame): boolean {
+  return current?.send(frame) ?? false
+}
+
+/** Every server frame of the tab's socket, before the chat handles it. Returns an unsubscribe function. */
+export function onRealtimeFrame(listener: FrameListener): () => void {
+  frameListeners.add(listener)
+  return () => {
+    frameListeners.delete(listener)
+  }
 }
 
 /** Close the realtime connection and stop reconnecting. */

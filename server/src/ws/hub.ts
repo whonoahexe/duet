@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto"
 import type { FastifyBaseLogger } from "fastify"
 import type { WebSocket } from "ws"
 import {
+  CALL_ROOM_PREFIX,
   ClientFrame,
   WS_CLOSE_LOGGED_OUT,
   WS_MAX_FRAMES_PER_SECOND,
   WS_MAX_ROOMS_PER_CONN,
+  type CallClientFrame,
   type Peer,
   type ServerFrame,
 } from "@duet/shared"
@@ -36,8 +38,26 @@ export interface Hub {
    * counting within 45 s). Push is suppressed for them while this holds.
    */
   isViewing(userId: string, now?: number): boolean
+  /** Route call.* frames and connection lifecycle to the call registry (Phase 3). */
+  setCallHooks(hooks: CallHooks): void
+  /** One frame to one open connection (dropped when it is gone). */
+  sendToConn(connId: string, frame: ServerFrame): void
+  /** One frame to every open connection of a person, except `exceptConnId` when given. */
+  sendToUser(userId: string, frame: ServerFrame, exceptConnId?: string): void
+  /** Join a connection to a room on the server's behalf (no call- prefix check: call rooms are server-managed). */
+  serverJoin(connId: string, room: string): void
+  serverLeave(connId: string, room: string): void
+  /** The session id behind an open connection. */
+  sessionOf(connId: string): string | undefined
   /** Stop the heartbeat and terminate every socket (app shutdown). */
   close(): void
+}
+
+/** The call registry's view of the hub's connections (server/src/calls/registry.ts). */
+export interface CallHooks {
+  onFrame(connId: string, userId: string, frame: CallClientFrame): void
+  onAttach(connId: string, userId: string): void
+  onClose(connId: string, userId: string): void
 }
 
 interface Conn {
@@ -71,6 +91,7 @@ export interface HubOptions {
 export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub {
   const conns = new Map<string, Conn>()
   const rooms = new Map<string, Set<string>>()
+  let callHooks: CallHooks | null = null
 
   function send(conn: Conn, frame: ServerFrame): void {
     if (conn.closing || conn.socket.readyState !== conn.socket.OPEN) return
@@ -161,6 +182,11 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
     const frame = parsed.data
     switch (frame.t) {
       case "room.join":
+        // T-03-02: call rooms carry SDP and candidates; only the registry puts the two parties in one.
+        if (frame.room.startsWith(CALL_ROOM_PREFIX)) {
+          send(conn, { t: "error", code: "room_reserved" })
+          return
+        }
         join(connId, conn, frame.room)
         return
       case "room.leave":
@@ -186,6 +212,12 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
         for (const other of conns.values()) {
           if (other.userId !== conn.userId) send(other, { t: "typing", userId: conn.userId })
         }
+        return
+      case "call.invite":
+      case "call.accept":
+      case "call.decline":
+      case "call.end":
+        callHooks?.onFrame(connId, conn.userId, frame)
         return
     }
   }
@@ -262,6 +294,7 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
 
       log.info({ evt: "ws_open", connId, userId: user.id })
       send(conn, { t: "hello", connId, userId: user.id })
+      callHooks?.onAttach(connId, user.id)
     },
 
     closeSession(sessionId) {
@@ -286,6 +319,34 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
         }
       }
       return false
+    },
+
+    setCallHooks(hooks) {
+      callHooks = hooks
+    },
+
+    sendToConn(connId, frame) {
+      sendTo(connId, frame)
+    },
+
+    sendToUser(userId, frame, exceptConnId) {
+      for (const [id, conn] of conns) {
+        if (conn.userId === userId && id !== exceptConnId) send(conn, frame)
+      }
+    },
+
+    serverJoin(connId, room) {
+      const conn = conns.get(connId)
+      if (conn && !conn.closing) join(connId, conn, room)
+    },
+
+    serverLeave(connId, room) {
+      const conn = conns.get(connId)
+      if (conn) leave(connId, conn, room)
+    },
+
+    sessionOf(connId) {
+      return conns.get(connId)?.sessionId
     },
 
     close() {

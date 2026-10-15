@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { BellIcon, ChatCircleIcon, DotsThreeVerticalIcon, PhoneCallIcon, SignOutIcon } from "@phosphor-icons/react"
+import { BellIcon, ChatCircleIcon, DotsThreeVerticalIcon, PhoneCallIcon, PhoneIcon, SignOutIcon } from "@phosphor-icons/react"
 import { OkResponse, type MeResponse } from "@duet/shared"
+import { CallProvider } from "@/components/app/call-provider"
 import { ChatView } from "@/components/app/chat-view"
 import { NotificationsCard } from "@/components/app/notifications-card"
 import { NotificationsDrawer } from "@/components/app/notifications-drawer"
@@ -28,6 +29,7 @@ import {
   syncSubscription,
   type PushState,
 } from "@/lib/chat/push"
+import { callStore } from "@/lib/call/store"
 import { chatStore, useChat } from "@/lib/chat/store"
 import { isStandalone } from "@/lib/platform"
 
@@ -49,6 +51,15 @@ function ConnectionSubline() {
     <span className="truncate text-xs text-muted-foreground" data-testid="connection-subline">
       {text}
     </span>
+  )
+}
+
+/** D-01: the header's voice call button (its own component, so call-state ticks never re-render the chat). */
+function VoiceCallButton() {
+  return (
+    <Button variant="ghost" size="icon" aria-label="Voice call" onClick={() => void callStore.startCall("voice")}>
+      <PhoneIcon />
+    </Button>
   )
 }
 
@@ -125,6 +136,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
     const sessionGone = () => {
       stopRealtime()
       chatStore.reset()
+      callStore.reset()
       loggedOutRef.current()
     }
     chatStore.init(me, { onLoggedOut: sessionGone })
@@ -137,6 +149,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   function finishLogout() {
     stopRealtime()
     chatStore.reset()
+    callStore.reset()
     onLoggedOut()
   }
 
@@ -160,6 +173,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
           onLoggedOut: () => {
             stopRealtime()
             chatStore.reset()
+            callStore.reset()
             loggedOutRef.current()
           },
         })
@@ -181,6 +195,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
                 <span className="truncate font-heading font-medium">{peer.displayName}</span>
                 <ConnectionSubline />
               </div>
+              <VoiceCallButton />
             </>
           ) : (
             <span className="min-w-0 flex-1 truncate font-heading font-medium text-muted-foreground">
@@ -241,6 +256,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
           </div>
         )}
       </main>
+      <CallProvider me={me} />
       {/* Always dark (D-10): the preset Toaster otherwise follows useTheme(), which can report "system". */}
       <Toaster theme="dark" position="top-center" />
     </div>

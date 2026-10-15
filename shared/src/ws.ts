@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { CallEndReason, CallId, CallKind, StopRingingReason } from "./call"
 import { MessageDto } from "./chat"
 
 /**
@@ -52,8 +53,19 @@ export const ClientFrame = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("presence"), visible: z.boolean() }),
   /** The composer is non-empty (CHAT-06); sent at most every 3 s. Ephemeral: never stored. */
   z.strictObject({ t: z.literal("typing") }),
+  /** Start a call to the other person (CALL-01). The callee is derived by the server. */
+  z.strictObject({ t: z.literal("call.invite"), callId: CallId, kind: CallKind }),
+  /** Answer the ringing call on this device (the first device to accept wins, D-11). */
+  z.strictObject({ t: z.literal("call.accept"), callId: CallId }),
+  /** Refuse the ringing call (D-13). */
+  z.strictObject({ t: z.literal("call.decline"), callId: CallId }),
+  /** Hang up an active call, or cancel it while it rings (CALL-04). */
+  z.strictObject({ t: z.literal("call.end"), callId: CallId }),
 ])
 export type ClientFrame = z.infer<typeof ClientFrame>
+
+/** The call.* members of ClientFrame (handled by the server call registry). */
+export type CallClientFrame = Extract<ClientFrame, { t: `call.${string}` }>
 
 /** One open connection (a person may have several devices online at once). */
 export const Peer = z.object({
@@ -62,7 +74,11 @@ export const Peer = z.object({
 })
 export type Peer = z.infer<typeof Peer>
 
-export const WsErrorCode = z.enum(["bad_frame", "not_in_room", "too_many_rooms"])
+/**
+ * room_reserved: a client tried to join a server-managed call room. not_allowed: this connection may
+ * not send that call frame (e.g. the caller accepting, an unbound device ending a call).
+ */
+export const WsErrorCode = z.enum(["bad_frame", "not_in_room", "too_many_rooms", "room_reserved", "not_allowed"])
 export type WsErrorCode = z.infer<typeof WsErrorCode>
 
 export const ServerFrame = z.discriminatedUnion("t", [
@@ -80,5 +96,16 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("typing"), userId: z.uuid() }),
   /** A person's read cursor moved forward to seq at `at` (epoch ms) (CHAT-07). */
   z.object({ t: z.literal("read"), userId: z.uuid(), seq: z.number().int().nonnegative(), at: z.number().int() }),
+  /** A call to this person is ringing (sent to every open connection of the callee). */
+  z.object({ t: z.literal("call.ring"), callId: CallId, kind: CallKind, from: z.uuid() }),
+  /**
+   * The call is connected at the server: this connection is in room call-<callId>. `replaces` is the
+   * id of this side's own invite when two invites were merged (D-14 glare).
+   */
+  z.object({ t: z.literal("call.accepted"), callId: CallId, replaces: CallId.optional() }),
+  /** This device must stop ringing: another device of the same person answered (D-11). */
+  z.object({ t: z.literal("call.stop-ringing"), callId: CallId, reason: StopRingingReason }),
+  /** The call is over (or never started) for this reason. */
+  z.object({ t: z.literal("call.ended"), callId: CallId, reason: CallEndReason }),
 ])
 export type ServerFrame = z.infer<typeof ServerFrame>

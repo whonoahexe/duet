@@ -22,6 +22,9 @@ import { createMediaProcessor, type MediaProcessor } from "./media/process"
 import { mediaRoutes } from "./media/routes"
 import { uploadRoutes } from "./media/uploads"
 import { createHub, type Hub } from "./ws/hub"
+import { createCallRegistry, type CallRegistry } from "./calls/registry"
+import { users } from "./db/schema"
+import { ne } from "drizzle-orm"
 import { wsRoutes } from "./ws/routes"
 
 declare module "fastify" {
@@ -34,6 +37,8 @@ declare module "fastify" {
     chatEvents: ChatEvents
     /** Media processing lanes (plan 02-04): uploads enqueue, tests pause/resume/idle. */
     media: MediaProcessor
+    /** In-memory single-call registry (Phase 3): ringing, accept/decline/end, call rooms. */
+    calls: CallRegistry
   }
 }
 
@@ -96,7 +101,18 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     isSessionLive: (sessionId) => isSessionLive(db, sessionId),
   })
   app.decorate("hub", hub)
+
+  // Phase 3: call.* frames go to the registry, which answers through the hub. Two accounts only: the
+  // callee of any call is the one other user.
+  const calls = createCallRegistry({
+    log: app.log,
+    transport: hub,
+    otherUser: (userId) => db.select({ id: users.id }).from(users).where(ne(users.id, userId)).get()?.id,
+  })
+  hub.setCallHooks(calls)
+  app.decorate("calls", calls)
   app.addHook("onClose", async () => {
+    calls.close()
     hub.close()
   })
 

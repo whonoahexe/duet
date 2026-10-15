@@ -4,11 +4,26 @@ export interface PeerOptions {
   iceServers: RTCIceServer[]
   /** true -> iceTransportPolicy "relay": only Cloudflare TURN relay candidates are used. */
   forceRelay: boolean
-  /** Perfect-negotiation role. Callers pass ownConnId > peerConnId (string compare). */
-  polite: boolean
-  stream: MediaStream
+  /**
+   * Perfect-negotiation role for the /debug/call harness: ownConnId > peerConnId (string compare).
+   * Ignored when `role` is set.
+   */
+  polite?: boolean
+  /**
+   * Real calls (D-03): fixed for the whole call, never derived from connIds (they change on every
+   * reconnect). The caller is the impolite offerer, the callee the polite answerer.
+   */
+  role?: "caller" | "callee"
+  /** Tracks added with addTrack when no `setup` is given (/debug/call). */
+  stream?: MediaStream
+  /** Replaces the addTrack loop: the caller adds its transceivers here, before the first offer. */
+  setup?: (pc: RTCPeerConnection) => void
+  /** Awaited between setRemoteDescription and setLocalDescription for the first remote offer only. */
+  beforeAnswer?: (pc: RTCPeerConnection) => Promise<void> | void
   send: (data: SignalData) => void
-  onRemoteStream: (stream: MediaStream) => void
+  /** Each remote track as it arrives. */
+  onTrack?: (track: MediaStreamTrack) => void
+  onRemoteStream?: (stream: MediaStream) => void
 }
 
 export interface Peer {
@@ -31,6 +46,8 @@ export function createPeer(o: PeerOptions): Peer {
   let ignoreOffer = false
   let isSettingRemoteAnswerPending = false
   let closed = false
+  let answeredFirstOffer = false
+  const polite = o.role ? o.role === "callee" : Boolean(o.polite)
 
   function sendDescription() {
     const d = pc.localDescription
@@ -64,26 +81,36 @@ export function createPeer(o: PeerOptions): Peer {
   }
 
   pc.ontrack = ({ track, streams }) => {
-    o.onRemoteStream(streams[0] ?? new MediaStream([track]))
+    o.onTrack?.(track)
+    o.onRemoteStream?.(streams[0] ?? new MediaStream([track]))
   }
 
   pc.oniceconnectionstatechange = () => {
     if (pc.iceConnectionState === "failed") pc.restartIce()
   }
 
-  for (const track of o.stream.getTracks()) pc.addTrack(track, o.stream)
+  if (o.setup) {
+    o.setup(pc)
+  } else if (o.stream) {
+    for (const track of o.stream.getTracks()) pc.addTrack(track, o.stream)
+  }
 
   async function handleSignal({ description, candidate }: SignalData): Promise<void> {
     if (closed) return
     if (description) {
       const readyForOffer = !makingOffer && (pc.signalingState === "stable" || isSettingRemoteAnswerPending)
       const offerCollision = description.type === "offer" && !readyForOffer
-      ignoreOffer = !o.polite && offerCollision
+      ignoreOffer = !polite && offerCollision
       if (ignoreOffer) return
       isSettingRemoteAnswerPending = description.type === "answer"
       await pc.setRemoteDescription(description)
       isSettingRemoteAnswerPending = false
       if (description.type === "offer") {
+        if (!answeredFirstOffer) {
+          answeredFirstOffer = true
+          await o.beforeAnswer?.(pc)
+        }
+        if (closed) return
         await pc.setLocalDescription()
         sendDescription()
       }
