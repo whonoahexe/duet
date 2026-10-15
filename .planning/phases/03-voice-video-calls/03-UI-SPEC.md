@@ -1,7 +1,8 @@
 ---
 phase: "03"
 slug: "voice-video-calls"
-status: draft
+status: approved
+reviewed_at: "2026-10-16"
 shadcn_initialized: true
 preset: "b51GFhBEQ"
 created: "2026-10-16"
@@ -362,12 +363,12 @@ No third-party registries are declared. Vetting gate: not applicable.
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
-- [ ] Dimension 7 Inventory Provenance: PASS
+- [x] Dimension 1 Copywriting: FLAG (non-blocking: single-word CTAs Accept/Decline/Retry/Close)
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
+- [x] Dimension 7 Inventory Provenance: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-10-16
