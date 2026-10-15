@@ -3,7 +3,7 @@ import { Writable } from "node:stream"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { eq, sql } from "drizzle-orm"
 import { messages, pushSubscriptions, users } from "../src/db/schema"
-import type { WebPushSend } from "../src/push/sender"
+import { PUSH_REASON_MAX_CHARS, pushFailureReason, type WebPushSend } from "../src/push/sender"
 import { loginCookie, makeTestApp, openWs, TEST_ORIGIN, vapidTestEnv, type TestApp, type WsTestClient } from "./helpers"
 
 const logLines: string[] = []
@@ -35,6 +35,11 @@ function subscription(endpoint = `https://fcm.googleapis.com/fcm/send/${randomUU
     expirationTime: null,
     keys: { p256dh: ecdh.getPublicKey().toString("base64url"), auth: randomBytes(16).toString("base64url") },
   }
+}
+
+/** A Safari/iOS endpoint: web.push.apple.com plus a 128-char base64url token. */
+function appleEndpoint() {
+  return `https://web.push.apple.com/${randomBytes(96).toString("base64url")}`
 }
 
 type SendCall = Parameters<WebPushSend>
@@ -102,12 +107,24 @@ describe("push on a new message (NOTF-01, D-13)", () => {
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
     const [target, , options] = send.mock.calls[0]!
     expect(target).toEqual({ endpoint: sub.endpoint, keys: sub.keys })
-    expect(options).toMatchObject({ TTL: 86400, urgency: "high", topic: "duet-chat", timeout: 10000 })
+    expect(options).toMatchObject({ TTL: 86400, urgency: "high", timeout: 10000 })
+    // G-02-7: no Topic header to any push service (Apple answers any Topic with 400 BadWebPushTopic).
+    expect(options).not.toHaveProperty("topic")
     expect(payloadOf(0)).toEqual({ t: "chat", title: "Bob Test", body: "hello alice" })
     // The sender gets nothing back.
     await message(aliceCookie, "hi bob")
     await sleep(30)
     expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it("pushes to an Apple subscription with the same options and no topic (G-02-7)", async () => {
+    const sub = await subscribe(aliceCookie, subscription(appleEndpoint()))
+    await message(bobCookie, "hello iphone")
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    const [target, , options] = send.mock.calls[0]!
+    expect(target.endpoint).toBe(sub.endpoint)
+    expect(options).toMatchObject({ TTL: 86400, urgency: "high", timeout: 10000 })
+    expect(options).not.toHaveProperty("topic")
   })
 
   it("titles the push with the unread count from 2 and cuts a long body to 120 graphemes + …", async () => {
@@ -188,9 +205,91 @@ describe("failures and pruning", () => {
     expect(row).toBeDefined()
     const line = logged("push_failed").at(-1)!
     expect(line).toMatchObject({ code: 500, host: "fcm.googleapis.com" })
+    // No body on the error: no reason key.
+    expect(line).not.toHaveProperty("reason")
     const path = new URL(kept.endpoint).pathname
     expect(logLines.some((l) => l.includes(path))).toBe(false)
     expect(logLines.some((l) => l.includes(kept.keys.p256dh) || l.includes(kept.keys.auth))).toBe(false)
+  })
+})
+
+describe("push_failed reason (G-02-7, T-02-16, T-02-36, T-02-37)", () => {
+  it("logs Apple's BadWebPushTopic reason for a 400 and keeps the subscription", async () => {
+    const sub = await subscribe(aliceCookie, subscription(appleEndpoint()))
+    sendImpl = async () => {
+      throw Object.assign(new Error("Received unexpected response code"), {
+        statusCode: 400,
+        body: '{"reason":"BadWebPushTopic"}',
+      })
+    }
+    const before = logged("push_failed").length
+    await message(bobCookie, "to apple")
+    await vi.waitFor(() => expect(logged("push_failed").length).toBe(before + 1))
+    expect(logged("push_failed").at(-1)).toMatchObject({
+      code: 400,
+      host: "web.push.apple.com",
+      pruned: false,
+      reason: "BadWebPushTopic",
+    })
+    const row = t.app.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, sub.endpoint)).get()
+    expect(row).toBeDefined()
+  })
+
+  it("caps and sanitizes a long text body: no newline, no endpoint path or token, no keys", async () => {
+    const sub = await subscribe(aliceCookie, subscription(appleEndpoint()))
+    const path = new URL(sub.endpoint).pathname
+    const token = path.slice(1)
+    const body = `Rejected ${sub.endpoint}\nfor subscription ${path} (token ${token})\n${"detail ".repeat(100)}`.slice(0, 600)
+    expect(body.length).toBe(600)
+    sendImpl = async () => {
+      throw Object.assign(new Error("Received unexpected response code"), { statusCode: 500, body })
+    }
+    const before = logged("push_failed").length
+    await message(bobCookie, "to a chatty push service")
+    await vi.waitFor(() => expect(logged("push_failed").length).toBe(before + 1))
+    const line = logged("push_failed").at(-1)!
+    expect(line).toMatchObject({ code: 500, host: "web.push.apple.com", pruned: false })
+    const reason = line.reason as string
+    expect(typeof reason).toBe("string")
+    expect([...reason].length).toBeLessThanOrEqual(PUSH_REASON_MAX_CHARS)
+    expect(reason).not.toMatch(/[\n\r]/)
+    expect(reason).not.toContain(path)
+    expect(reason).not.toContain(token)
+    expect(logLines.some((l) => l.includes(path) || l.includes(token))).toBe(false)
+    expect(logLines.some((l) => l.includes(sub.keys.p256dh) || l.includes(sub.keys.auth))).toBe(false)
+  })
+})
+
+describe("pushFailureReason", () => {
+  const endpoint = `https://fcm.googleapis.com/fcm/send/${randomUUID()}`
+
+  it("gives undefined for missing, blank and non-string bodies", () => {
+    for (const body of [undefined, null, "", "   \n\t ", 42, {}, Buffer.from("x")]) {
+      expect(pushFailureReason(body, endpoint)).toBeUndefined()
+    }
+  })
+
+  it("passes an identifier-shaped JSON reason through as-is", () => {
+    expect(pushFailureReason('{"reason":"BadWebPushTopic"}', endpoint)).toBe("BadWebPushTopic")
+  })
+
+  it("trims an FCM-style text body", () => {
+    expect(pushFailureReason("push subscription has unsubscribed or expired.\n", endpoint)).toBe(
+      "push subscription has unsubscribed or expired.",
+    )
+  })
+
+  it("takes the message of a Mozilla-style JSON body", () => {
+    const body = JSON.stringify({ code: 410, errno: 106, message: "Request did not validate No such subscription" })
+    expect(pushFailureReason(body, endpoint)).toBe("Request did not validate No such subscription")
+  })
+
+  it("redacts endpoint path segments and URLs, flattens control characters and caps the length", () => {
+    const id = new URL(endpoint).pathname.split("/").at(-1)!
+    const out = pushFailureReason(`bad ${id}\r\n\u0000at ${endpoint} and https://example.com/x?y=1 ${"z".repeat(300)}`, endpoint)!
+    expect(out.startsWith("bad [redacted] at [url] and [url] z")).toBe(true)
+    expect(out).not.toContain(id)
+    expect([...out].length).toBe(PUSH_REASON_MAX_CHARS)
   })
 })
 
@@ -263,7 +362,8 @@ describe("POST /api/push/test (SHEL-03)", () => {
     expect(send).toHaveBeenCalledTimes(1)
     expect(send.mock.calls[0]![0].endpoint).toBe(mine.endpoint)
     expect(payloadOf(0)).toEqual({ t: "test", title: "duet", body: "Test notification. You're all set." })
-    expect(send.mock.calls[0]![2]).toMatchObject({ topic: "duet-test", TTL: 86400, urgency: "high" })
+    expect(send.mock.calls[0]![2]).toMatchObject({ TTL: 86400, urgency: "high" })
+    expect(send.mock.calls[0]![2]).not.toHaveProperty("topic")
   })
 
   it("answers {sent: 0} without subscriptions or when the push service fails", async () => {
