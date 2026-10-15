@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Voice & Video Calls
 status: executing
-stopped_at: Phase 3 UI-SPEC approved
-last_updated: "2026-10-15T21:35:35.286Z"
-last_activity: 2026-10-15
-last_activity_desc: Phase 01 complete, transitioned to Phase 3
-state_head: a453df21f25aee7ec047a04579781e4d1adfe0f9
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-10-15T22:53:09.295Z"
+last_activity: 2026-10-16
+last_activity_desc: Phase 03 execution started
+state_head: 6e1b1b059c563cdf8de17f550194badfdfe10b96
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 15
-  completed_plans: 11
+  completed_plans: 12
   percent: 67
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-15)
 
 **Core value:** The two of us can reliably message and call each other — on both phones, including over cellular — on infrastructure we fully control.
-**Current focus:** Phase 3 — Voice & Video Calls
+**Current focus:** Phase 03 — Voice & Video Calls
 
 ## Current Position
 
-Phase: 03 (Voice & Video Calls) — READY TO EXECUTE
-Plan: Not started
+Phase: 03 (Voice & Video Calls) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-10-15 - Completed quick task 261015-vkv: Push notification tweaks: hide message preview, duet logo badge, custom notification sound
+Last activity: 2026-10-16 — Phase 03 execution started
 
 Progress: [███████░░░] 67%
 
@@ -68,6 +68,7 @@ Progress: [███████░░░] 67%
 | Phase 02 P04 | 21min | 3 tasks | 32 files |
 | Phase 02 P05 | 30min | 3 tasks | 25 files |
 | Phase 02 P06 | 8min | 3 tasks | 9 files |
+| Phase 03 P01 | 23min | 3 tasks | 26 files |
 
 ## Accumulated Context
 
@@ -126,6 +127,11 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-06: Push requests carry no Topic header for any push service (Apple 400 BadWebPushTopic since mid-Sept 2026); collapse stays on-device via SW close-before-show (D-14)
 - [Phase 02]: 02-06: Own sends dispatch duet:scroll-to-latest; ScrollFollower calls scrollToEnd auto now + next frame (re-arms following-bottom)
 - [Phase 02]: 02-06: push_failed logs a sanitized reason (Apple identifier codes as-is; else endpoint segments/URLs redacted, control chars flattened, 120-char cap)
+- [Phase 03]: 03-01: CallId is lowercase-only z.uuid() so callRoom(id) is always a valid RoomId
+- [Phase 03]: 03-01: Only invites that would ring count toward the 10 per 60 s flood limit
+- [Phase 03]: 03-01: A ring arriving while this device's own Start tap waits for the mic is answered with that mic (client-side D-14 merge)
+- [Phase 03]: 03-01: Callee setup failures send call.decline before Couldn't connect, so the caller never rings on
+- [Phase 03]: 03-01: smoke-calls pools one login per session slot (login limit 5 per 5 min per account+IP)
 
 ### Pending Todos
 
@@ -155,6 +161,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-15T18:37:00.425Z
-Stopped at: Phase 3 UI-SPEC approved
-Resume file: .planning/phases/03-voice-video-calls/03-UI-SPEC.md
+Last session: 2026-10-15T22:53:09.192Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: None

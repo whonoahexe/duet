@@ -53,7 +53,7 @@
 
 ### Calls
 
-- [ ] **CALL-01**: User can start a 1:1 voice call
+- [x] **CALL-01**: User can start a 1:1 voice call
 - [ ] **CALL-02**: User can start a 1:1 video call
 - [ ] **CALL-03**: Recipient gets an "incoming call" push; tapping it (or opening the app) shows the incoming-call screen to accept or decline
 - [ ] **CALL-04**: Unanswered calls stop ringing after a timeout; caller can cancel while ringing
@@ -144,7 +144,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NOTF-01 | Phase 2 | Complete |
 | NOTF-02 | Phase 2 | Complete |
 | NOTF-03 | Phase 2 | Complete |
-| CALL-01 | Phase 3 | Pending |
+| CALL-01 | Phase 3 | Complete |
 | CALL-02 | Phase 3 | Pending |
 | CALL-03 | Phase 3 | Pending |
 | CALL-04 | Phase 3 | Pending |

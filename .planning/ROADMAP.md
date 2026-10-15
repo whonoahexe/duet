@@ -99,11 +99,11 @@ Plans:
   3. During a call, user can mute/unmute, turn the camera on/off, switch between front and back camera, and hang up, and the screen does not lock for the duration of the call
   4. A brief network drop mid-call shows "Reconnecting…" and the call resumes automatically without either person redialing
 
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 03-01-PLAN.md — Voice call end to end: shared call contract, server call registry (45 s ring, cancel, decline, absence grace, multi-device first wins, glare merge, busy, invite limit), fixed-role peer with pre-negotiated transceivers, call/incoming screens, tones, mic drawer, smoke-calls E2E (CALL-01, CALL-04)
+- [x] 03-01-PLAN.md — Voice call end to end: shared call contract, server call registry (45 s ring, cancel, decline, absence grace, multi-device first wins, glare merge, busy, invite limit), fixed-role peer with pre-negotiated transceivers, call/incoming screens, tones, mic drawer, smoke-calls E2E (CALL-01, CALL-04)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 03-02-PLAN.md — Push-to-answer: incoming-call push (TTL 45, viewing sessions skipped), ring-on-attach, missed-call push, SW call branch and tap routing, GET /api/calls/:id, stale-push toast; deployed (CALL-03, CALL-04)
@@ -125,4 +125,4 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 |-------|----------------|--------|-----------|
 | 1. Foundation, Auth & Media Plane | 5/5 | Complete    | 2026-10-15 |
 | 2. Chat, Media & Push | 6/6 | Complete    | 2026-10-15 |
-| 3. Voice & Video Calls | 0/4 | Planned | - |
+| 3. Voice & Video Calls | 1/4 | In Progress | - |
