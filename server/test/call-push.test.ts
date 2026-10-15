@@ -40,7 +40,7 @@ interface Env {
   open: Client[]
 }
 
-async function setup({ vapid = true } = {}): Promise<Env> {
+async function setup({ vapid = true, ringTimeoutMs = 500 } = {}): Promise<Env> {
   const logLines: string[] = []
   const logStream = new Writable({
     write(chunk, _enc, cb) {
@@ -54,7 +54,7 @@ async function setup({ vapid = true } = {}): Promise<Env> {
     logStream,
     env: vapid ? vapidTestEnv() : {},
     webPushSend: send,
-    callTimers: { ringTimeoutMs: 500, callerAbsentMs: 50, absentGraceMs: 50 },
+    callTimers: { ringTimeoutMs, callerAbsentMs: 50, absentGraceMs: 50 },
   })
   const idOf = (username: string) => t.app.db.select({ id: users.id }).from(users).where(eq(users.username, username)).get()!.id
   return {
@@ -239,5 +239,170 @@ describe("incoming-call push without VAPID", () => {
     expect(env.send).not.toHaveBeenCalled()
     alice.send({ t: "call.end", callId })
     await nextOf(bob, "call.ended")
+  })
+})
+
+/** Every push payload type sent so far, in order. */
+function sentTypes(env: Env): string[] {
+  return env.send.mock.calls.map((c) => (JSON.parse(c[1]) as { t: string }).t)
+}
+
+describe("missed-call push (D-12)", () => {
+  let env: Env
+  beforeAll(async () => {
+    env = await setup({ ringTimeoutMs: 300 })
+  })
+  afterAll(async () => {
+    await env.t.close()
+  })
+  beforeEach(() => {
+    env.t.app.db.delete(pushSubscriptions).run()
+    env.send.mockClear()
+  })
+  afterEach(async () => {
+    await closeAll(env)
+  })
+
+  it("replaces the ring with a missed-call push after no answer, TTL 86400, never to the visible session", async () => {
+    await subscribe(env, env.bobA)
+    const subB = await subscribe(env, env.bobB)
+    const bobA = await visible(env, env.bobA)
+    const alice = await connect(env, env.aliceCookie)
+    const callId = randomUUID()
+    alice.send({ t: "call.invite", callId, kind: "voice" })
+    expect(await nextOf(bobA, "call.ended", 2000)).toEqual({ t: "call.ended", callId, reason: "no-answer" })
+    await vi.waitFor(() => expect(env.send).toHaveBeenCalledTimes(2))
+    await sleep(30)
+    expect(env.send).toHaveBeenCalledTimes(2)
+    expect(env.send.mock.calls[1]![0].endpoint).toBe(subB.endpoint)
+    expect(payloadOf(env, 1)).toEqual({ t: "call-missed", title: "Alice Test", body: "📞 Missed voice call", callId, kind: "voice" })
+    expect(env.send.mock.calls[1]![2]).toMatchObject({ TTL: 86400, urgency: "high" })
+    expect(env.send.mock.calls[1]![2]).not.toHaveProperty("topic")
+    expect(logged(env, "push_call_missed").at(-1)).toMatchObject({ callId, subs: 1, skipped: 1, ok: 1 })
+  })
+})
+
+describe("missed-call push only for cancelled or unanswered rings (D-12)", () => {
+  let env: Env
+  beforeAll(async () => {
+    env = await setup({ ringTimeoutMs: 5000 })
+  })
+  afterAll(async () => {
+    await env.t.close()
+  })
+  beforeEach(async () => {
+    env.t.app.db.delete(pushSubscriptions).run()
+    await subscribe(env, env.bobB)
+    env.send.mockClear()
+  })
+  afterEach(async () => {
+    await closeAll(env)
+  })
+
+  it("sends one missed push when the caller cancels while ringing", async () => {
+    const alice = await connect(env, env.aliceCookie)
+    const callId = randomUUID()
+    alice.send({ t: "call.invite", callId, kind: "video" })
+    await settle(alice)
+    alice.send({ t: "call.end", callId })
+    await nextOf(alice, "call.ended")
+    await vi.waitFor(() => expect(env.send).toHaveBeenCalledTimes(2))
+    await sleep(30)
+    expect(sentTypes(env)).toEqual(["call", "call-missed"])
+    expect(payloadOf(env, 1)).toEqual({ t: "call-missed", title: "Alice Test", body: "🎥 Missed video call", callId, kind: "video" })
+  })
+
+  it("sends no missed push for a decline", async () => {
+    const alice = await connect(env, env.aliceCookie)
+    const bob = await connect(env, env.bobA)
+    const callId = randomUUID()
+    alice.send({ t: "call.invite", callId, kind: "voice" })
+    await nextOf(bob, "call.ring")
+    bob.send({ t: "call.decline", callId })
+    await nextOf(alice, "call.ended")
+    await sleep(60)
+    expect(sentTypes(env)).toEqual(["call"])
+  })
+
+  it("sends no missed push for an answered call that is hung up", async () => {
+    const alice = await connect(env, env.aliceCookie)
+    const bob = await connect(env, env.bobA)
+    const callId = randomUUID()
+    alice.send({ t: "call.invite", callId, kind: "voice" })
+    await nextOf(bob, "call.ring")
+    bob.send({ t: "call.accept", callId })
+    await nextOf(alice, "call.accepted")
+    alice.send({ t: "call.end", callId })
+    await nextOf(bob, "call.ended")
+    await sleep(60)
+    expect(sentTypes(env)).toEqual(["call"])
+  })
+
+  it("sends no missed push for a busy refusal or a glare merge", async () => {
+    const alice = await connect(env, env.aliceCookie)
+    const bob = await connect(env, env.bobA)
+    // Glare: Bob calls back while Alice's call rings; the two merge into one active call.
+    const callId = randomUUID()
+    alice.send({ t: "call.invite", callId, kind: "voice" })
+    await nextOf(bob, "call.ring")
+    bob.send({ t: "call.invite", callId: randomUUID(), kind: "voice" })
+    await nextOf(alice, "call.accepted")
+    // Busy: a second invite while the call is active is refused.
+    const busyId = randomUUID()
+    bob.send({ t: "call.invite", callId: busyId, kind: "voice" })
+    expect(await nextOf(bob, "call.ended")).toEqual({ t: "call.ended", callId: busyId, reason: "busy" })
+    alice.send({ t: "call.end", callId })
+    await nextOf(bob, "call.ended")
+    await sleep(60)
+    expect(sentTypes(env)).toEqual(["call"])
+  })
+})
+
+describe("GET /api/calls/:id", () => {
+  let env: Env
+  beforeAll(async () => {
+    env = await setup({ ringTimeoutMs: 5000 })
+  })
+  afterAll(async () => {
+    await env.t.close()
+  })
+  afterEach(async () => {
+    await closeAll(env)
+  })
+
+  function get(id: string, cookie: string | null) {
+    const headers: Record<string, string> = { origin: TEST_ORIGIN }
+    if (cookie) headers.cookie = cookie
+    return env.t.app.inject({ method: "GET", url: `/api/calls/${id}`, headers })
+  }
+
+  it("answers a party with the ringing status, then ended with the reason, never cached", async () => {
+    const alice = await connect(env, env.aliceCookie)
+    const callId = randomUUID()
+    alice.send({ t: "call.invite", callId, kind: "voice" })
+    await settle(alice)
+    const ringing = await get(callId, env.bobA)
+    expect(ringing.statusCode).toBe(200)
+    expect(ringing.headers["cache-control"]).toBe("no-store")
+    expect(ringing.json()).toEqual({ id: callId, status: "ringing", kind: "voice", callerId: env.aliceId })
+
+    alice.send({ t: "call.end", callId })
+    await nextOf(alice, "call.ended")
+    const ended = await get(callId, env.bobA)
+    expect(ended.statusCode).toBe(200)
+    expect(ended.headers["cache-control"]).toBe("no-store")
+    expect(ended.json()).toEqual({ id: callId, status: "ended", kind: "voice", callerId: env.aliceId, reason: "cancelled" })
+    // Party-only: anyone who is neither the caller nor the callee gets nothing.
+    expect(env.t.app.calls.statusFor(callId, randomUUID())).toBeNull()
+  })
+
+  it("answers 404 for an unknown call or a non-uuid id, and 401 without a session", async () => {
+    const unknown = await get(randomUUID(), env.bobA)
+    expect(unknown.statusCode).toBe(404)
+    expect(unknown.json()).toEqual({ error: "not_found" })
+    const bad = await get("not-a-uuid", env.bobA)
+    expect(bad.statusCode).toBe(404)
+    expect(bad.json()).toEqual({ error: "not_found" })
+    expect((await get(randomUUID(), null)).statusCode).toBe(401)
   })
 })

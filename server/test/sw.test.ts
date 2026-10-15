@@ -165,6 +165,37 @@ describe("service worker notificationclick (NOTF-02)", () => {
   })
 })
 
+describe("service worker notificationclick on a call notification (D-09, D-10)", () => {
+  const callId = "0b9d3c4e-6f1a-4c2b-9d8e-7a6b5c4d3e2f"
+
+  it("focuses an open window and posts open-call with the call id", async () => {
+    const win: FakeWindow = { focus: vi.fn(async () => undefined), postMessage: vi.fn() }
+    const { self, listeners } = loadSw({ windows: [win] })
+    const notification = { close: vi.fn(), data: { url: `/?call=${callId}`, callId } }
+    await dispatch(listeners, "notificationclick", { notification })
+    expect(notification.close).toHaveBeenCalledTimes(1)
+    expect(win.focus).toHaveBeenCalledTimes(1)
+    expect(win.postMessage).toHaveBeenCalledWith({ t: "open-call", callId })
+    expect(self.clients.openWindow).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["incoming", `/?call=${callId}`],
+    ["missed", `/?missed=${callId}`],
+  ])("opens the %s link when no window is open", async (_name, url) => {
+    const { self, listeners } = loadSw()
+    await dispatch(listeners, "notificationclick", { notification: { close: vi.fn(), data: { url, callId } } })
+    expect(self.clients.openWindow).toHaveBeenCalledWith(url)
+  })
+
+  it("still posts open-chat for a chat notification", async () => {
+    const win: FakeWindow = { focus: vi.fn(async () => undefined), postMessage: vi.fn() }
+    const { listeners } = loadSw({ windows: [win] })
+    await dispatch(listeners, "notificationclick", { notification: { close: vi.fn(), data: { url: "/" } } })
+    expect(win.postMessage).toHaveBeenCalledWith({ t: "open-chat" })
+  })
+})
+
 describe("service worker scope (T-02-20)", () => {
   it("registers no fetch listener, only install, activate, push and notificationclick", () => {
     const { listeners } = loadSw()
