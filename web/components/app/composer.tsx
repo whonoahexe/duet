@@ -9,6 +9,7 @@ import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
 import { MicButton, RecordingStatus, useVoiceRecorder } from "@/components/app/recorder"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
+import { requestScrollToLatest } from "@/lib/chat/events"
 import { sendTyping } from "@/lib/chat/realtime"
 import { chatStore, useChat } from "@/lib/chat/store"
 import { cn } from "@/lib/utils"
@@ -42,6 +43,7 @@ export function Composer({ peerName }: { peerName: string }) {
   const recorder = useVoiceRecorder({
     onSend: (blob, durationMs) => {
       chatStore.sendVoice(blob, durationMs, replySeq)
+      requestScrollToLatest()
       chatStore.setReplyTarget(null)
     },
   })
@@ -64,6 +66,7 @@ export function Composer({ peerName }: { peerName: string }) {
   function send() {
     if (!canSend) return
     chatStore.sendText(text, replyMessage ? replyMessage.seq : null)
+    requestScrollToLatest()
     chatStore.setReplyTarget(null)
     setText("")
     // The next message starts a fresh typing burst.
@@ -112,6 +115,7 @@ export function Composer({ peerName }: { peerName: string }) {
 
   function sendPicked(files: File[], caption: string) {
     chatStore.sendMedia(files, caption, replyMessage ? replyMessage.seq : null)
+    requestScrollToLatest()
     chatStore.setReplyTarget(null)
     setPicked([])
   }

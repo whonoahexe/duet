@@ -609,6 +609,80 @@ Object.assign(scenarios, {
     await until(async () => (await sliders.count()) === sent + 1, 30_000, "Bob never received the locked voice note")
     await until(micReleased, 5_000, "the microphone stayed open after a locked send")
   },
+
+  /**
+   * G-02-42 / CHAT-01: sending always jumps to the newest message. Bob scrolls up in 60 seeded
+   * messages: an incoming message only bumps the badge and leaves the list where it is, but his own
+   * text send lands on the new bubble at the bottom. The same holds after a wheel at the bottom that
+   * cannot scroll (it switches the scroller out of follow mode) and for a photo sent while scrolled up.
+   */
+  async "scroll-send"({ ada, bob, base }) {
+    const run = randomUUID().slice(0, 6)
+    const label = (i) => `scroll ${run} ${String(i).padStart(3, "0")}`
+    const post = async (body) => {
+      const res = await ada.context().request.post(`${base}/api/messages`, {
+        data: { id: randomUUID(), body },
+        headers: { Origin: base },
+      })
+      if (res.status() !== 200) throw new Error(`scroll-send seed "${body}" returned ${res.status()}`)
+    }
+    for (let i = 1; i <= 60; i++) await post(label(i))
+    await openChat(bob, ADA.displayName)
+    await expectExactlyOnce(bob, label(60), 10_000)
+    await new Promise((r) => setTimeout(r, 800))
+
+    const fromBottom = () => viewport(bob).evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)
+    const scrollTop = () => viewport(bob).evaluate((el) => el.scrollTop)
+    const badge = bob.getByTestId("new-count")
+    const overList = async () => {
+      const vp = await viewport(bob).boundingBox()
+      if (!vp) throw new Error("Bob's message list has no box")
+      await bob.mouse.move(vp.x + vp.width / 2, vp.y + vp.height / 2)
+    }
+    const scrollUp = async () => {
+      await overList()
+      await bob.mouse.wheel(0, -1200)
+      await new Promise((r) => setTimeout(r, 800))
+      if ((await fromBottom()) <= 600) throw new Error("Bob is not scrolled up")
+    }
+    const landsOnLatest = (locator, timeout) =>
+      until(
+        async () => (await inListView(bob, locator)) && (await fromBottom()) <= 8 && (await badge.count()) === 0,
+        timeout,
+        "a send while scrolled up did not jump to the latest message",
+      )
+
+    // Scrolled up, an incoming message only bumps the badge; the list stays put.
+    await scrollUp()
+    const before = await scrollTop()
+    await post(uniqueText("while away"))
+    await until(async () => (await badge.count()) === 1 && (await badge.textContent())?.trim() === "1", 5_000,
+      "the incoming message did not bump Bob's badge to 1")
+    if (Math.abs((await scrollTop()) - before) > 2) throw new Error("an incoming message moved Bob's scrolled-up list")
+
+    // Scrolled up, own text: jumps to the new bubble at the bottom and clears the badge.
+    const text = uniqueText("sent while scrolled up")
+    await sendFromComposer(bob, ADA.displayName, text)
+    await landsOnLatest(bubbleOf(bob, text), 3_000)
+
+    // At the bottom, a wheel that cannot scroll (follow mode off), then a send: still followed.
+    await overList()
+    await bob.mouse.wheel(0, 200)
+    await new Promise((r) => setTimeout(r, 600))
+    const again = uniqueText("sent after a wheel at the bottom")
+    await sendFromComposer(bob, ADA.displayName, again)
+    await landsOnLatest(bubbleOf(bob, again), 3_000)
+
+    // Scrolled up, a photo: lands on the album at the bottom.
+    await scrollUp()
+    const caption = uniqueText("photo while scrolled up")
+    await pickFiles(bob, [makeJpeg(`scroll-${randomUUID().slice(0, 8)}.jpg`, 800, 600)])
+    const drawer = previewDrawer(bob)
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send photo", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+    await landsOnLatest(albumWithCaption(bob, caption), 10_000)
+  },
 })
 
 const requested = process.argv.slice(3)

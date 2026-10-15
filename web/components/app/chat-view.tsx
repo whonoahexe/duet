@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/message-scroller"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { OPEN_CHAT_EVENT } from "@/lib/chat/events"
+import { OPEN_CHAT_EVENT, SCROLL_TO_LATEST_EVENT } from "@/lib/chat/events"
 import { chatStore, useChat, type ChatState } from "@/lib/chat/store"
 
 /** Consecutive messages from one sender closer than this share one bubble group. */
@@ -163,7 +163,9 @@ function SkeletonList() {
 
 /**
  * Lives inside the scroller provider: counts incoming messages that arrive while scrolled up (badge
- * on the scroll-to-latest button), announces them politely, and jumps to the end on OPEN_CHAT_EVENT.
+ * on the scroll-to-latest button), announces them politely, and jumps to the end on OPEN_CHAT_EVENT
+ * (notification tap) and on SCROLL_TO_LATEST_EVENT (the user just sent something, G-02-42). The
+ * composer sits outside the provider, so it asks through that window event.
  */
 function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) {
   const { scrollToEnd } = useMessageScroller()
@@ -203,6 +205,29 @@ function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) 
     }
     window.addEventListener(OPEN_CHAT_EVENT, onOpen)
     return () => window.removeEventListener(OPEN_CHAT_EVENT, onOpen)
+  }, [scrollToEnd])
+
+  // Own send (G-02-42): always jump to the newest message, even when scrolled up or when a touch/wheel
+  // at the bottom switched the primitive out of following-bottom. The immediate call re-arms
+  // following-bottom, so the bubble React commits next (and a growing thumbnail or status line) is
+  // followed; the second call, a frame later, lands on the committed bubble. "auto", not "smooth": a
+  // long smooth scroll can be cut short by the keyboard/visualViewport resize on phones.
+  useEffect(() => {
+    let frame = 0
+    const onSend = () => {
+      chatStore.clearNewWhileAway()
+      scrollToEnd({ behavior: "auto" })
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        scrollToEnd({ behavior: "auto" })
+      })
+    }
+    window.addEventListener(SCROLL_TO_LATEST_EVENT, onSend)
+    return () => {
+      window.removeEventListener(SCROLL_TO_LATEST_EVENT, onSend)
+      cancelAnimationFrame(frame)
+    }
   }, [scrollToEnd])
 
   return (
