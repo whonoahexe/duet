@@ -135,6 +135,11 @@ export interface PushSender {
    * CALL_PUSH_TTL_SECONDS. Returns successes.
    */
   notifyCall(recipientId: string, call: CallPushInfo, callerName: string, skipSession: (sessionId: string) => boolean): Promise<number>
+  /**
+   * D-12: "Missed voice call" (or video) after a ring that was cancelled or not answered, to the same
+   * subscriptions as notifyCall; it replaces the incoming notification on the phone. Default TTL.
+   */
+  notifyMissedCall(recipientId: string, call: CallPushInfo, callerName: string, skipSession: (sessionId: string) => boolean): Promise<number>
   /** SHEL-03: push the test notification to this session's subscriptions only. Returns successes. */
   sendTest(sessionId: string): Promise<number>
   /** Upsert a subscription by endpoint, re-binding it to this user and session. */
@@ -265,6 +270,11 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
     notifyCall(recipientId, call, callerName, skipSession) {
       const payload = buildPayload("call", callerName, callPushBody(call.kind, "incoming"), { callId: call.id, kind: call.kind })
       return sendCallPush("push_call", recipientId, call, payload, CALL_PUSH_TTL_SECONDS, skipSession)
+    },
+
+    notifyMissedCall(recipientId, call, callerName, skipSession) {
+      const payload = buildPayload("call-missed", callerName, callPushBody(call.kind, "missed"), { callId: call.id, kind: call.kind })
+      return sendCallPush("push_call_missed", recipientId, call, payload, PUSH_TTL_SECONDS, skipSession)
     },
 
     async sendTest(sessionId) {

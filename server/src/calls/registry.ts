@@ -1,4 +1,12 @@
-import { callRoom, CALL_RING_TIMEOUT_MS, type CallClientFrame, type CallEndReason, type CallKind, type ServerFrame } from "@duet/shared"
+import {
+  callRoom,
+  CALL_RING_TIMEOUT_MS,
+  type CallClientFrame,
+  type CallEndReason,
+  type CallKind,
+  type CallStatusResponse,
+  type ServerFrame,
+} from "@duet/shared"
 
 /** Ended calls kept for answering late frames (a stale accept, a repeated end) with their real reason. */
 export const RECENT_CALL_MAX = 50
@@ -35,6 +43,8 @@ export interface CallPushCall {
 export interface CallPush {
   /** An invite started ringing: push "Incoming call" to the callee's phones. */
   notifyCall(call: CallPushCall): void
+  /** A ring ended cancelled or unanswered: push "Missed call", which replaces the ring (D-12). */
+  notifyMissed(call: CallPushCall): void
 }
 
 export interface CallRegistry {
@@ -51,6 +61,11 @@ export interface CallRegistry {
    * ABSENT_GRACE_MS.
    */
   onClose(connId: string, userId: string): void
+  /**
+   * GET /api/calls/:id: the current or a recent call's status for one of its two parties; null for an
+   * unknown call or anyone else (T-03-09).
+   */
+  statusFor(callId: string, userId: string): CallStatusResponse | null
   /** Clear every timer (app shutdown). */
   close(): void
 }
@@ -175,6 +190,10 @@ export function createCallRegistry({
     transport.serverLeave(call.callerConn, room)
     if (call.calleeConn) transport.serverLeave(call.calleeConn, room)
     remember(call, reason)
+    // D-12: only a ring nobody answered leaves a missed call (never declined, busy, failed or answered).
+    if (call.status === "ringing" && (reason === "cancelled" || reason === "no-answer")) {
+      push?.notifyMissed({ id: call.id, kind: call.kind, callerId: call.callerId, calleeId: call.calleeId })
+    }
     log.info({
       evt: "call_end",
       callId: call.id,
@@ -335,6 +354,18 @@ export function createCallRegistry({
       if (connId === call.callerConn || connId === call.calleeConn) {
         call.absentTimer = timer(() => end(call, "dropped"), absentGraceMs)
       }
+    },
+
+    statusFor(callId, userId) {
+      const call = current
+      if (call && call.id === callId) {
+        if (userId !== call.callerId && userId !== call.calleeId) return null
+        return { id: call.id, status: call.status, kind: call.kind, callerId: call.callerId }
+      }
+      const r = recent.get(callId)
+      if (!r || now() - r.endedAt > RECENT_CALL_TTL_MS) return null
+      if (userId !== r.callerId && userId !== r.calleeId) return null
+      return { id: callId, status: "ended", kind: r.kind, callerId: r.callerId, reason: r.reason }
     },
 
     close() {

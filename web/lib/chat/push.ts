@@ -1,7 +1,7 @@
 import { toast } from "sonner"
 import { OkResponse, PushTestResponse, VapidKeyResponse } from "@duet/shared"
 import { apiGet, apiPost } from "@/lib/api"
-import { OPEN_CHAT_EVENT } from "@/lib/chat/events"
+import { OPEN_CALL_EVENT, OPEN_CHAT_EVENT } from "@/lib/chat/events"
 import { isIos } from "@/lib/platform"
 
 /**
@@ -174,13 +174,20 @@ export async function clearNotifications(): Promise<void> {
 
 let bridged = false
 
-/** A notification tap on an open window: the service worker posts {t: "open-chat"}. */
+/**
+ * A notification tap on an open window: the service worker posts {t: "open-chat"}, or
+ * {t: "open-call", callId} for a call notification (re-dispatched as OPEN_CALL_EVENT).
+ */
 export function bridgeServiceWorkerMessages(): void {
   if (bridged || typeof navigator === "undefined" || !("serviceWorker" in navigator)) return
   bridged = true
   navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
-    const data = event.data as { t?: unknown } | null
-    if (data && data.t === "open-chat") window.dispatchEvent(new Event(OPEN_CHAT_EVENT))
+    const data = event.data as { t?: unknown; callId?: unknown } | null
+    if (!data) return
+    if (data.t === "open-chat") window.dispatchEvent(new Event(OPEN_CHAT_EVENT))
+    else if (data.t === "open-call" && typeof data.callId === "string") {
+      window.dispatchEvent(new CustomEvent(OPEN_CALL_EVENT, { detail: { callId: data.callId } }))
+    }
   })
 }
 

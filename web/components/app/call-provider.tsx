@@ -1,12 +1,19 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import type { MeResponse } from "@duet/shared"
+import { CallId, type MeResponse } from "@duet/shared"
 import { CallScreen } from "@/components/app/call-screen"
 import { IncomingCall } from "@/components/app/incoming-call"
 import { PermissionDrawer } from "@/components/app/permission-drawer"
 import { callStore, useCall } from "@/lib/call/store"
+import { OPEN_CALL_EVENT } from "@/lib/chat/events"
 import { onRealtimeFrame } from "@/lib/chat/realtime"
+
+/** Look up a call named by a notification tap; anything that is not a call id is ignored (T-03-10). */
+function checkCallId(raw: unknown): void {
+  const id = CallId.safeParse(raw)
+  if (id.success) void callStore.checkCall(id.data)
+}
 
 /**
  * The app-level call layer, mounted in Shell above the chat (D-06): it binds the call store to the
@@ -24,6 +31,19 @@ export function CallProvider({ me }: { me: MeResponse }) {
     callStore.init(me)
     return onRealtimeFrame((frame) => callStore.handleFrame(frame))
   }, [me])
+
+  // D-09 / D-10: the app was opened from a call notification (/?call=<id> or /?missed=<id>), or a tap
+  // focused this window (open-call). The parameter is stripped with replaceState, never a navigation
+  // (a navigation would stop capture, Pitfall 8). A call that still rings shows through ring-on-attach.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const fromUrl = params.get("call") ?? params.get("missed")
+    if (params.has("call") || params.has("missed")) window.history.replaceState(null, "", window.location.pathname)
+    if (fromUrl !== null) checkCallId(fromUrl)
+    const onOpenCall = (event: Event) => checkCallId((event as CustomEvent<{ callId?: unknown }>).detail?.callId)
+    window.addEventListener(OPEN_CALL_EVENT, onOpenCall)
+    return () => window.removeEventListener(OPEN_CALL_EVENT, onOpenCall)
+  }, [])
 
   useEffect(() => {
     const el = audioRef.current

@@ -21,6 +21,19 @@ export type CallEndReason = z.infer<typeof CallEndReason>
 export const StopRingingReason = z.enum(["answered-elsewhere"])
 export type StopRingingReason = z.infer<typeof StopRingingReason>
 
+/**
+ * GET /api/calls/:id (D-10): what a party may know about one call, so a tapped call notification can
+ * tell a call that still rings from one that ended unanswered. Ended calls are kept in memory 24 h.
+ */
+export const CallStatusResponse = z.object({
+  id: CallId,
+  status: z.enum(["ringing", "active", "ended"]),
+  kind: CallKind,
+  callerId: z.uuid(),
+  reason: CallEndReason.optional(),
+})
+export type CallStatusResponse = z.infer<typeof CallStatusResponse>
+
 /** Rooms with this prefix are server-managed: a client room.join of one answers room_reserved. */
 export const CALL_ROOM_PREFIX = "call-"
 

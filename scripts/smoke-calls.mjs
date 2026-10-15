@@ -381,6 +381,44 @@ const scenarios = {
     }
   },
 
+  /**
+   * D-10: Bob opens duet from an incoming-call push whose call Ada already cancelled: he lands on the
+   * chat with "Missed call from Ada Smoke" and Call back; the ?call= parameter is gone from the URL.
+   */
+  async stale(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bobContext = await loggedInContext(ctx, BOB)
+    try {
+      await ada.getByRole("button", { name: "Voice call" }).click()
+      await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
+      const { callId } = await diag(ada)
+      if (!callId) throw new Error("Ada's ringing call has no call id")
+      // "Ringing…" shows before the invite leaves (the ICE servers come first): wait for the server.
+      await until(
+        async () => (await ada.evaluate(async (id) => (await fetch(`/api/calls/${id}`)).status, callId)) === 200,
+        10_000,
+        "the server never saw Ada's call ringing",
+      )
+      await callDialog(ada, BOB).getByRole("button", { name: "Cancel call" }).click()
+      await waitPhase(ada, "idle", 3_000)
+
+      const bob = await newAppPage(bobContext, BOB, opened)
+      await bob.goto(`${BASE}/?call=${callId}`)
+      await bob.getByPlaceholder(`Message ${ADA.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
+      const toast = toasts(bob).filter({ hasText: `Missed call from ${ADA.displayName}` })
+      await toast.waitFor({ state: "visible", timeout: 6_000 })
+      if (bob.url().includes("call=")) throw new Error(`Bob's URL still carries the call id: ${bob.url()}`)
+      if (await incomingDialog(bob, ADA).isVisible()) throw new Error("Bob got an incoming screen for an ended call")
+      await toast.getByRole("button", { name: "Call back" }).click()
+      await waitStatus(bob, ADA, /^Ringing…$/, 10_000)
+      await incomingDialog(ada, BOB).waitFor({ state: "visible", timeout: 10_000 })
+      await callDialog(bob, ADA).getByRole("button", { name: "Cancel call" }).click()
+      await Promise.all([waitPhase(bob, "idle", 3_000), waitPhase(ada, "idle", 5_000)])
+    } finally {
+      await bobContext.close().catch(() => {})
+    }
+  },
+
   /** D-19: a denied microphone starts no call and opens the "Allow the microphone" drawer. */
   async "mic-denied"(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened, { denyMic: true })

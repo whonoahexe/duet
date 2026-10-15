@@ -13,6 +13,7 @@ import { decorateAuth, isSessionLive } from "./auth/session"
 import { isApiPath, originGuard, securityHeaders } from "./http/guards"
 import { usersRoutes } from "./routes/users"
 import { rtcRoutes } from "./rtc/routes"
+import { callsRoutes } from "./calls/routes"
 import { chatRoutes } from "./chat/routes"
 import { pushRoutes } from "./push/routes"
 import { createPushSender, type PushSender, type WebPushSend } from "./push/sender"
@@ -127,6 +128,11 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
           .then(() => push.notifyCall(call.calleeId, call, displayNameOf(call.callerId), (sid) => hub.isSessionViewing(sid)))
           .catch(() => app.log.warn({ evt: "push_call_failed", callId: call.id }))
       },
+      notifyMissed(call) {
+        void Promise.resolve()
+          .then(() => push.notifyMissedCall(call.calleeId, call, displayNameOf(call.callerId), (sid) => hub.isSessionViewing(sid)))
+          .catch(() => app.log.warn({ evt: "push_call_missed_failed", callId: call.id }))
+      },
     },
     otherUser: (userId) => db.select({ id: users.id }).from(users).where(ne(users.id, userId)).get()?.id,
     ringTimeoutMs: deps.callTimers?.ringTimeoutMs ?? config.CALL_RING_TIMEOUT_MS,
@@ -169,6 +175,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   await app.register(usersRoutes)
   await app.register(authRoutes)
   await app.register(rtcRoutes, { fetch: deps.fetch ?? globalThis.fetch, timeoutMs: deps.turnTimeoutMs ?? 5000 })
+  await app.register(callsRoutes)
   await app.register(chatRoutes)
   await app.register(pushRoutes)
   await app.register(wsRoutes)

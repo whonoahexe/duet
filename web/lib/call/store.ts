@@ -2,7 +2,15 @@
 
 import { useSyncExternalStore } from "react"
 import { toast } from "sonner"
-import { formatCallDuration, type CallKind, type MeResponse, type ServerFrame, type UserSummary } from "@duet/shared"
+import {
+  CallStatusResponse,
+  formatCallDuration,
+  type CallKind,
+  type MeResponse,
+  type ServerFrame,
+  type UserSummary,
+} from "@duet/shared"
+import { apiGet } from "@/lib/api"
 import { clearNotifications } from "@/lib/chat/push"
 import { sendFrame } from "@/lib/chat/realtime"
 import { chatStore } from "@/lib/chat/store"
@@ -233,8 +241,10 @@ function startSession(callId: string, role: "caller" | "callee"): boolean {
   }
 }
 
-function missedCallToast(kind: CallKind): void {
+function missedCallToast(kind: CallKind, callId?: string): void {
   toast(`Missed call from ${state.peerName || peer?.displayName || "your person"}`, {
+    // One toast per call, however many routes (deep link, SW message, a lost Accept race) report it.
+    id: callId ? `missed-${callId}` : undefined,
     action: { label: "Call back", onClick: () => void callStore.startCall(kind) },
   })
 }
@@ -392,6 +402,23 @@ export const callStore = {
       closeNow()
       toast(OFFLINE_TEXT)
     }
+  },
+
+  /**
+   * D-10: a call notification was tapped (or the app opened from one). A call that still rings shows
+   * through ring-on-attach, so only a call from the peer that ended cancelled or unanswered needs
+   * anything: the "Missed call from {peer}" toast with Call back. Nothing is stored; any error is quiet.
+   */
+  async checkCall(callId: string): Promise<void> {
+    let status: CallStatusResponse
+    try {
+      status = await apiGet(`/api/calls/${callId}`, CallStatusResponse)
+    } catch {
+      return
+    }
+    if (status.status !== "ended" || (status.reason !== "no-answer" && status.reason !== "cancelled")) return
+    if (!peer || status.callerId !== peer.id) return
+    missedCallToast(status.kind, status.id)
   },
 
   /** The permission drawer was closed. */

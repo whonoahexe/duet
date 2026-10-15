@@ -56,8 +56,15 @@ self.addEventListener("push", (event) => {
 
 // NOTF-02: a tap opens the chat. Focus an open duet window and ask it to scroll to the newest
 // message, or open the app at "/", which lands on the chat.
+// D-09 / D-10: a call notification posts {t: "open-call", callId} instead, or opens /?call=<id>
+// (/?missed=<id>) when no window exists. On iOS both are hints only: the incoming screen comes from
+// the server's ring-on-attach (Pitfall 4).
 self.addEventListener("notificationclick", (event) => {
   event.notification.close()
+  const data = event.notification.data || {}
+  const callId = typeof data.callId === "string" && CALL_ID.test(data.callId) ? data.callId : null
+  // Only the two links the push handler builds itself (T-03-10).
+  const url = callId && (data.url === "/?call=" + callId || data.url === "/?missed=" + callId) ? data.url : "/"
   event.waitUntil(
     (async () => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
@@ -67,10 +74,10 @@ self.addEventListener("notificationclick", (event) => {
         } catch {
           // focus can be refused; still tell the page
         }
-        c.postMessage({ t: "open-chat" })
+        c.postMessage(callId ? { t: "open-call", callId } : { t: "open-chat" })
         return
       }
-      await self.clients.openWindow("/")
+      await self.clients.openWindow(url)
     })(),
   )
 })
