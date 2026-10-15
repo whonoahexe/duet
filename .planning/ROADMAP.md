@@ -13,7 +13,7 @@ duet goes from nothing to a private two-person messenger in three coarse phases.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Foundation, Auth & Media Plane** - Live HTTPS app on the new domain, two-account password login, installable PWA; media track proves P2P WebRTC + Cloudflare TURN carries media over cellular
-- [ ] **Phase 2: Chat, Media & Push** - Reliable real-time chat with history, receipts, typing, reactions and replies; photos, video clips and voice notes on both phones; message push notifications
+- [x] **Phase 2: Chat, Media & Push** - Reliable real-time chat with history, receipts, typing, reactions and replies; photos, video clips and voice notes on both phones; message push notifications (completed 2026-10-15)
 - [ ] **Phase 3: Voice & Video Calls** - 1:1 peer-to-peer voice/video calls (Cloudflare TURN relay) with push-to-answer, in-call controls and reconnect, on Wi-Fi and cellular
 
 ## Phase Details
@@ -66,7 +66,7 @@ Plans:
   4. User can send a photo from the camera or photo library (an iPhone HEIC photo displays correctly on the Pixel, and tapping any image opens it full screen) and a short video clip from either phone (including an iPhone HEVC `.MOV`) that plays on both phones
   5. User can record and send a voice note that the other person plays with a working scrubber on either phone; seeking within videos and voice notes works (Range requests), and media URLs return no content without a logged-in session
 
-**Plans:** 6/6 plans executed (02-06 = UAT gap closure)
+**Plans:** 6/6 plans complete (02-06 = UAT gap closure)
 
 Plans:
 **Wave 1**
@@ -110,5 +110,5 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation, Auth & Media Plane | 5/5 | In Progress | - |
-| 2. Chat, Media & Push | 6/6 | In Progress | - |
+| 2. Chat, Media & Push | 6/6 | Complete    | 2026-10-15 |
 | 3. Voice & Video Calls | 0/TBD | Not started | - |

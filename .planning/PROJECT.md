@@ -12,21 +12,21 @@ The two of us can reliably message and call each other — on both phones, inclu
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ Real-time 1:1 text chat with persistent history (kept forever) — Phase 2
+- ✓ Send images (kept forever, normal history) — Phase 2
+- ✓ Send short video clips — Phase 2
+- ✓ Record and send voice notes — Phase 2
+- ✓ Read receipts and typing indicator — Phase 2
+- ✓ Emoji reactions and reply-to-message — Phase 2
+- ✓ New-message web push on iPhone and Pixel; tapping opens the chat — Phase 2 (incoming-call push is Phase 3)
 
 ### Active
 
 - [ ] Exactly two fixed accounts; log in with a password (tap your name); no public sign-up
 - [ ] Installable PWA on iOS (Safari, 16.4+) and Android (Chrome)
-- [ ] Real-time 1:1 text chat with persistent history (kept forever)
-- [ ] Send images (kept forever, normal history)
-- [ ] Send short video clips
-- [ ] Record and send voice notes
-- [ ] Read receipts and typing indicator
-- [ ] Emoji reactions and reply-to-message
 - [ ] 1:1 voice calls (peer-to-peer WebRTC)
 - [ ] 1:1 video calls (peer-to-peer WebRTC)
-- [ ] Incoming call / new message delivered as a web push notification; tapping opens the app into the call/chat
+- [ ] Incoming call delivered as a web push notification; tapping opens the app into the call (new-message push validated in Phase 2)
 - [ ] Calls work over cellular (Cloudflare TURN relay)
 
 ### Out of Scope
@@ -68,6 +68,9 @@ The two of us can reliably message and call each other — on both phones, inclu
 | New domain (not sideby.me) for duet + SFU/TURN | sideby.me expired 2026-08-20 (redemption); user chose brkn.me (portfolio domain, on Cloudflare): duet.brkn.me (tunnel), sfu./turn.brkn.me (DNS-only) | — Pending |
 | Run SFU + coturn on this machine | User choice; GCP VM-B is down. Requires UDP port-forwards + a non-CGNAT public IP — verify first | ✗ Reversed 2026-10-09: home is CGNAT (outer router PPPoE WAN 172.18.28.128, egress 103.198.98.196, no public IPv6) |
 | P2P WebRTC + Cloudflare TURN instead of an SFU (2026-10-09) | Two people only, so an SFU adds nothing; no VPS/router/cert ops; media E2E-encrypted between phones; existing Cloudflare account/token can manage TURN keys (verified). Trade-off: drops the @sideby-me/rtc SDK, so signaling and ICE-restart are hand-written over duet's WS; TURN is a third party but only relays encrypted packets | — Pending |
+| Web Push sent without a Topic header (2026-10-15) | Apple's push service rejected every push that had a Topic header (HTTP 400). The service worker already collapses notifications on the device | ✓ Good — iPhone push confirmed in UAT |
+| Media normalized server-side: sharp WebP for photos, ffmpeg H.264/AAC MP4 for video, AAC m4a for voice (Phase 2) | iPhone HEIC/HEVC HDR and Pixel WebM must play on both phones | ✓ Good — device UAT passed |
+| Chunked uploads (8 MiB) to get past Cloudflare's 100 MB request cap (Phase 2) | Clips and albums go through the tunnel | ✓ Good |
 | Cloudflare Tunnel for duet app ingress (HTTPS/WSS) | Matches existing staging setup; no port-forward for the app. Accepted: Cloudflare sees app traffic in transit. Tunnel cannot carry SFU UDP media | — Pending |
 
 ## Evolution
@@ -88,4 +91,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-08 after initialization*
+*Last updated: 2026-10-15 after Phase 2*
