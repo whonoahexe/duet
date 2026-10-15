@@ -1,9 +1,9 @@
 ---
-status: diagnosed
+status: complete
 phase: 02-chat-media-push
 source: [02-01-SUMMARY.md, 02-02-SUMMARY.md, 02-03-SUMMARY.md, 02-04-SUMMARY.md, 02-05-SUMMARY.md]
 started: 2026-10-13T10:26:41Z
-updated: 2026-10-13T12:06:08.255Z
+updated: 2026-10-15T16:35:40.044Z
 ---
 
 ## Current Test
@@ -245,10 +245,22 @@ result: issue
 reported: "pass - also, it should auto scroll down when a msg is sent"
 severity: major
 
+### 43. iPhone push re-test (after G-02-7 fix)
+expected: Force-quit and reopen duet on the iPhone so it loads the new bundle. Header menu > Notifications > Send test notification: it arrives within a few seconds. Close duet on the iPhone and send 3 quick messages from the Pixel: one collapsed '{name} · 3 new messages' notification arrives, and tapping it opens the chat. While the chat is open on the iPhone, a new message from the Pixel raises no notification. The Pixel still gets its notifications.
+result: pass
+
+### 44. Scroll-on-send re-test (after G-02-42 fix)
+expected: On both phones, scroll far up in history and send a text: the list jumps to your new bubble at the bottom. Do the same with a photo and with a voice note. Touch-overscroll at the bottom, then send: it still lands on the newest message. While you're scrolled up, a message from the other phone only bumps the scroll-to-latest badge and doesn't move the list.
+result: pass
+
+### 45. Own album/voice note never shows twice
+expected: On cellular, send a photo album and then a voice note and watch your own chat right after you tap Send. Each one appears exactly once. You never see a brief second copy, and no 'Not sent. Tap to retry.' bubble sits next to a delivered copy.
+result: pass
+
 ## Summary
 
-total: 42
-passed: 40
+total: 45
+passed: 43
 issues: 2
 pending: 0
 skipped: 0
@@ -258,7 +270,9 @@ blocked: 0
 
 - gap_id: G-02-42
   truth: "Sending a message scrolls the chat down to show the new message at the bottom, even when you were scrolled up in history."
-  status: failed
+  status: resolved
+  resolved_by: 02-06-PLAN.md
+  resolved_at: 2026-10-15
   reason: "User reported: pass - also, it should auto scroll down when a msg is sent"
   severity: major
   test: 42
@@ -278,7 +292,9 @@ blocked: 0
 
 - gap_id: G-02-7
   truth: "The in-app guide steps match Safari's Add to Home Screen flow. Enable → Allow → a test push arrives. With duet closed, new messages raise a notification on both the iPhone and the Pixel. Several messages collapse into a single '{name} · n new messages' notification. Tapping it opens the chat. While you're actively viewing the chat, no notification appears."
-  status: failed
+  status: resolved
+  resolved_by: 02-06-PLAN.md
+  resolved_at: 2026-10-15
   reason: "User reported: notifications are not working on iphone but pass on android"
   severity: major
   test: 7
