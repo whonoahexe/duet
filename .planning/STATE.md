@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Voice & Video Calls
 status: executing
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-10-15T22:53:09.295Z"
+stopped_at: Completed 03-02-PLAN.md
+last_updated: "2026-10-15T23:08:14.784Z"
 last_activity: 2026-10-16
 last_activity_desc: Phase 03 execution started
-state_head: 6e1b1b059c563cdf8de17f550194badfdfe10b96
+state_head: 85c0111a5073e77088057d10fca1c3b9d42020a2
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 15
-  completed_plans: 12
+  completed_plans: 13
   percent: 67
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-15)
 ## Current Position
 
 Phase: 03 (Voice & Video Calls) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-10-16 — Phase 03 execution started
 
@@ -69,6 +69,7 @@ Progress: [███████░░░] 67%
 | Phase 02 P05 | 30min | 3 tasks | 25 files |
 | Phase 02 P06 | 8min | 3 tasks | 9 files |
 | Phase 03 P01 | 23min | 3 tasks | 26 files |
+| Phase 03 P02 | 12min | 2 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,9 @@ Recent decisions affecting current work:
 - [Phase 03]: 03-01: A ring arriving while this device's own Start tap waits for the mic is answered with that mic (client-side D-14 merge)
 - [Phase 03]: 03-01: Callee setup failures send call.decline before Couldn't connect, so the caller never rings on
 - [Phase 03]: 03-01: smoke-calls pools one login per session slot (login limit 5 per 5 min per account+IP)
+- [Phase 03]: 03-02: call pushes skip only sessions with a visible fresh /ws connection (hub.isSessionViewing, research A1 still flagged); the missed push uses the same rule and the normal 24 h TTL
+- [Phase 03]: 03-02: ring-on-attach is the authoritative route to the incoming screen; the SW deep link (/?call=, /?missed=) and open-call postMessage are hints that only drive the Missed call toast
+- [Phase 03]: 03-02: one PushSender per app (app.push) shared by pushRoutes and the call registry
 
 ### Pending Todos
 
@@ -161,6 +165,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-15T22:53:09.192Z
-Stopped at: Completed 03-01-PLAN.md
+Last session: 2026-10-15T23:08:14.679Z
+Stopped at: Completed 03-02-PLAN.md
 Resume file: None
