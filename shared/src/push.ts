@@ -1,10 +1,5 @@
 import { z } from "zod"
 
-/** Web Push topic for chat messages: Apple and FCM coalesce undelivered pushes with the same topic. */
-export const PUSH_TOPIC_CHAT = "duet-chat"
-/** Topic for "Send test notification", so a test never replaces a pending chat push. */
-export const PUSH_TOPIC_TEST = "duet-test"
-
 /** Longest push endpoint the server stores (real ones are ~200-500 characters). */
 export const PUSH_ENDPOINT_MAX = 2048
 

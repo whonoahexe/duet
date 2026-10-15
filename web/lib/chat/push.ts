@@ -122,18 +122,24 @@ export async function enablePush(): Promise<PushState> {
   return "on"
 }
 
-/** SHEL-03: push "Test notification" to this phone. Toasts the outcome (UI-SPEC copy). */
+/**
+ * SHEL-03 / D-16: push "Test notification" to this phone. Toasts the outcome (UI-SPEC copy): sent 0
+ * means the server was reached but this session has no subscription or the push service refused
+ * (reopening duet runs syncSubscription, which re-saves it); a failed request blames the connection.
+ */
 export async function sendTestPush(): Promise<boolean> {
+  let sent: number
   try {
-    const { sent } = await apiPost("/api/push/test", {}, PushTestResponse)
-    if (sent >= 1) {
-      toast.success("Test sent. It should arrive in a few seconds.")
-      return true
-    }
+    sent = (await apiPost("/api/push/test", {}, PushTestResponse)).sent
   } catch {
-    /* falls through to the failure toast */
+    toast.error("Couldn't send the test. Check your connection and try again.")
+    return false
   }
-  toast.error("Couldn't send the test. Check your connection and try again.")
+  if (sent >= 1) {
+    toast.success("Test sent. It should arrive in a few seconds.")
+    return true
+  }
+  toast.error("Couldn't deliver the test to this phone. Reopen duet and try again.")
   return false
 }
 

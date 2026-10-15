@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { and, count, eq, gt } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 import webpush from "web-push"
-import { messageLabel, PUSH_TOPIC_CHAT, PUSH_TOPIC_TEST, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
+import { messageLabel, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
 import type { Config } from "../config"
 import type { Db } from "../db/client"
 import { messages, pushSubscriptions, readState } from "../db/schema"
@@ -18,9 +18,72 @@ export type WebPushSend = (
 export const PUSH_BODY_MAX_GRAPHEMES = 120
 /** Apple rejects payloads over 4 KB; keep the JSON well under that after encryption overhead. */
 export const PUSH_PAYLOAD_MAX_BYTES = 3072
-/** Push services keep an undelivered message for a day; Apple coalesces by topic meanwhile. */
+/**
+ * Push services keep an undelivered message for a day. No Topic header is sent to any push service:
+ * since about mid-September 2026 web.push.apple.com answers any Topic with 400 BadWebPushTopic
+ * (G-02-7). Collapsing into one notification happens on the device instead: the service worker
+ * closes the previous duet notification before showing the next (D-14).
+ */
 const PUSH_TTL_SECONDS = 86_400
 const PUSH_TIMEOUT_MS = 10_000
+
+/** The push service's refusal reason is cut to this many code points before it is logged. */
+export const PUSH_REASON_MAX_CHARS = 120
+
+/** Apple-style reason codes ("BadWebPushTopic", "BadJwtToken") are logged as-is. */
+const REASON_CODE = /^[A-Za-z0-9_.-]{1,64}$/
+/** Endpoint path segments at least this long are capabilities (device tokens) and get redacted. */
+const SECRET_SEGMENT_MIN_CHARS = 8
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/**
+ * A short, log-safe reason from a push service's error body (T-02-36, T-02-37), or undefined.
+ * Identifier-shaped JSON `reason` codes pass through; any other text has the endpoint's path
+ * segments replaced with "[redacted]" and URLs with "[url]", control characters flattened to spaces,
+ * whitespace collapsed, and is capped at PUSH_REASON_MAX_CHARS code points.
+ */
+export function pushFailureReason(body: unknown, endpoint: string): string | undefined {
+  if (typeof body !== "string" || body.trim() === "") return undefined
+  let text = body
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>
+      if (typeof obj.reason === "string" && REASON_CODE.test(obj.reason)) return obj.reason
+      const field = [obj.reason, obj.message, obj.error].find((v): v is string => typeof v === "string")
+      if (field !== undefined) text = field
+    }
+  } catch {
+    /* plain text body */
+  }
+  let segments: string[] = []
+  try {
+    segments = new URL(endpoint).pathname.split("/").filter((seg) => seg.length >= SECRET_SEGMENT_MIN_CHARS)
+  } catch {
+    /* not a URL: nothing to redact by segment */
+  }
+  for (const seg of segments) {
+    text = text.replace(new RegExp(escapeRegExp(seg), "g"), "[redacted]")
+    // A URL-decoded copy of the segment is the same capability.
+    let decoded = seg
+    try {
+      decoded = decodeURIComponent(seg)
+    } catch {
+      /* keep the raw segment */
+    }
+    if (decoded !== seg) text = text.replace(new RegExp(escapeRegExp(decoded), "g"), "[redacted]")
+  }
+  text = text
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  const capped = [...text].slice(0, PUSH_REASON_MAX_CHARS).join("").trim()
+  return capped === "" ? undefined : capped
+}
 
 /**
  * SSRF guard (T-02-14): the server only ever POSTs to the real browser push services. https only,
@@ -84,13 +147,15 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
   }
   const doSend: WebPushSend = send ?? webpush.sendNotification
 
-  /** One send. 404/410 means the subscription is gone for good: delete it. Logs code + host only. */
-  async function sendOne(sub: SubscriptionRow, payload: string, topic: string): Promise<boolean> {
+  /**
+   * One send, without a Topic header (G-02-7). 404/410 means the subscription is gone for good:
+   * delete it. Logs code, host and a sanitized reason only.
+   */
+  async function sendOne(sub: SubscriptionRow, payload: string): Promise<boolean> {
     try {
       await doSend({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, {
         TTL: PUSH_TTL_SECONDS,
         urgency: "high",
-        topic,
         timeout: PUSH_TIMEOUT_MS,
       })
       db.update(pushSubscriptions).set({ lastOkAt: new Date() }).where(eq(pushSubscriptions.id, sub.id)).run()
@@ -107,14 +172,17 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
       } catch {
         /* keep "invalid" */
       }
-      // Never the endpoint path or keys (T-02-16): the path is a per-device capability.
-      log.warn({ evt: "push_failed", code, host, pruned: code === 404 || code === 410 })
+      // Never the error object, the endpoint path or the keys (T-02-16): the path is a per-device
+      // capability. The push service's body is reduced to a short sanitized reason (T-02-36).
+      const reason = pushFailureReason((err as { body?: unknown } | null)?.body, sub.endpoint)
+      const pruned = code === 404 || code === 410
+      log.warn(reason === undefined ? { evt: "push_failed", code, host, pruned } : { evt: "push_failed", code, host, pruned, reason })
       return false
     }
   }
 
-  async function sendAll(subs: SubscriptionRow[], payload: string, topic: string): Promise<number> {
-    const results = await Promise.all(subs.map((s) => sendOne(s, payload, topic)))
+  async function sendAll(subs: SubscriptionRow[], payload: string): Promise<number> {
+    const results = await Promise.all(subs.map((s) => sendOne(s, payload)))
     return results.filter(Boolean).length
   }
 
@@ -138,7 +206,7 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
           .get()?.n ?? 1
       const title = unread >= 2 ? `${senderName} · ${unread} new messages` : senderName
       const payload = buildPayload("chat", title, messageLabel(message))
-      const ok = await sendAll(subs, payload, PUSH_TOPIC_CHAT)
+      const ok = await sendAll(subs, payload)
       log.info({ evt: "push_sent", userId: recipientId, seq: message.seq, subs: subs.length, ok })
       return ok
     },
@@ -147,7 +215,7 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
       if (!configured) return 0
       const subs = db.select().from(pushSubscriptions).where(eq(pushSubscriptions.sessionId, sessionId)).all()
       if (subs.length === 0) return 0
-      return sendAll(subs, buildPayload("test", "duet", "Test notification. You're all set."), PUSH_TOPIC_TEST)
+      return sendAll(subs, buildPayload("test", "duet", "Test notification. You're all set."))
     },
 
     saveSubscription(userId, sessionId, sub) {

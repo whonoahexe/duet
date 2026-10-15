@@ -351,6 +351,7 @@ Structure, top to bottom: header (Phase 1) → optional notifications card → `
 | Test push button | Send test notification |
 | Test push sent toast | Test sent. It should arrive in a few seconds. |
 | Test push failed toast | Couldn't send the test. Check your connection and try again. |
+| Test push not delivered toast (server answered sent 0) | Couldn't deliver the test to this phone. Reopen duet and try again. |
 | Subscribe failed toast | Couldn't turn on notifications. Try again. |
 | Blocked title | Notifications are blocked |
 | Blocked body (iOS) | Open Settings › Notifications › duet and turn on Allow Notifications, then come back. |
