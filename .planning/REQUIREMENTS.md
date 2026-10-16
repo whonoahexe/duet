@@ -54,13 +54,13 @@
 ### Calls
 
 - [x] **CALL-01**: User can start a 1:1 voice call
-- [ ] **CALL-02**: User can start a 1:1 video call
+- [x] **CALL-02**: User can start a 1:1 video call
 - [x] **CALL-03**: Recipient gets an "incoming call" push; tapping it (or opening the app) shows the incoming-call screen to accept or decline
 - [x] **CALL-04**: Unanswered calls stop ringing after a timeout; caller can cancel while ringing
-- [ ] **CALL-05**: During a call, user can mute/unmute, turn camera on/off, and hang up
-- [ ] **CALL-06**: During a video call, user can switch between front and back camera
+- [x] **CALL-05**: During a call, user can mute/unmute, turn camera on/off, and hang up
+- [x] **CALL-06**: During a video call, user can switch between front and back camera
 - [ ] **CALL-07**: A call survives brief network blips, showing a "Reconnecting…" state, and rejoins automatically
-- [ ] **CALL-08**: Screen stays awake during a call
+- [x] **CALL-08**: Screen stays awake during a call
 - [ ] **CALL-09**: Calls connect over cellular (TURN relay) as well as Wi-Fi
 
 ## v2 Requirements
@@ -145,13 +145,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NOTF-02 | Phase 2 | Complete |
 | NOTF-03 | Phase 2 | Complete |
 | CALL-01 | Phase 3 | Complete |
-| CALL-02 | Phase 3 | Pending |
+| CALL-02 | Phase 3 | Complete |
 | CALL-03 | Phase 3 | Complete |
 | CALL-04 | Phase 3 | Complete |
-| CALL-05 | Phase 3 | Pending |
-| CALL-06 | Phase 3 | Pending |
+| CALL-05 | Phase 3 | Complete |
+| CALL-06 | Phase 3 | Complete |
 | CALL-07 | Phase 3 | Pending |
-| CALL-08 | Phase 3 | Pending |
+| CALL-08 | Phase 3 | Complete |
 | CALL-09 | Phase 3 | Pending |
 
 **Coverage:**

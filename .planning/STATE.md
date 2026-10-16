@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Voice & Video Calls
 status: executing
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-10-15T23:08:14.784Z"
+stopped_at: Completed 03-03-PLAN.md
+last_updated: "2026-10-16T06:56:42.159Z"
 last_activity: 2026-10-16
 last_activity_desc: Phase 03 execution started
-state_head: 85c0111a5073e77088057d10fca1c3b9d42020a2
+state_head: cc2d3d50f063f34b4c23dd72c628a7125a137ca3
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 15
-  completed_plans: 13
+  completed_plans: 14
   percent: 67
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-10-15)
 ## Current Position
 
 Phase: 03 (Voice & Video Calls) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-10-16 — Phase 03 execution started
 
@@ -70,6 +70,7 @@ Progress: [███████░░░] 67%
 | Phase 02 P06 | 8min | 3 tasks | 9 files |
 | Phase 03 P01 | 23min | 3 tasks | 26 files |
 | Phase 03 P02 | 12min | 2 tasks | 17 files |
+| Phase 03 P03 | 7h 46m | 3 tasks | 18 files |
 
 ## Accumulated Context
 
@@ -136,6 +137,9 @@ Recent decisions affecting current work:
 - [Phase 03]: 03-02: call pushes skip only sessions with a visible fresh /ws connection (hub.isSessionViewing, research A1 still flagged); the missed push uses the same rule and the normal 24 h TTL
 - [Phase 03]: 03-02: ring-on-attach is the authoritative route to the incoming screen; the SW deep link (/?call=, /?missed=) and open-call postMessage are hints that only drive the Missed call toast
 - [Phase 03]: 03-02: one PushSender per app (app.push) shared by pushRoutes and the call registry
+- [Phase 03]: 03-03: camera on/off and flip are replaceTrack on the video transceiver negotiated at call start; camera state travels in call.media, relayed only between the two bound connections
+- [Phase 03]: 03-03: Mode B needs the peer camera flag AND a decoded frame; camera off releases the track before call.media false is sent
+- [Phase 03]: 03-03: CALL_INVITE_LIMIT optional server env (unset = 10) so the 15-scenario smoke-calls run stays under the flood guard
 
 ### Pending Todos
 
@@ -165,6 +169,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-15T23:08:14.679Z
-Stopped at: Completed 03-02-PLAN.md
+Last session: 2026-10-16T06:56:42.050Z
+Stopped at: Completed 03-03-PLAN.md
 Resume file: None
