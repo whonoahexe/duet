@@ -6,6 +6,9 @@ import {
   callRoom,
   CallStatusResponse,
   formatCallDuration,
+  QUALITY_START,
+  qualityStep,
+  type QualityState,
   type CallKind,
   type MeResponse,
   type ServerFrame,
@@ -18,7 +21,7 @@ import { chatStore } from "@/lib/chat/store"
 import { isIos } from "@/lib/platform"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import type { CallSample } from "@/lib/rtc/stats"
-import { flipCamera, getCallMedia, getCamera, type CallMediaResult, type Facing } from "./media"
+import { flipCamera, getCallMedia, getCamera, getMic, type CallMediaResult, type Facing } from "./media"
 import { CallSession, forceRelayFlag } from "./session"
 import { startRingback, startRingtone, stopTones, unlockAudio, type Tone } from "./tones"
 import { holdWakeLock, releaseWakeLock } from "./wake-lock"
@@ -48,6 +51,8 @@ export interface CallState {
    * Video freezes on its last frame, the controls stay usable and the timer never resets.
    */
   reconnecting: boolean
+  /** D-20: the Poor connection badge (2 bad 2 s samples on, 3 good off); hidden while reconnecting. */
+  poor: boolean
   /** The remote audio, played by the always-mounted <audio> in CallProvider. */
   remoteAudio: MediaStream | null
   /** Diagnostics only (call-diag): selected local candidate type and inbound bytes. */
@@ -104,6 +109,7 @@ const EMPTY: CallState = {
   endText: null,
   endState: null,
   reconnecting: false,
+  poor: false,
   remoteAudio: null,
   localType: null,
   inboundBytes: 0,
@@ -145,6 +151,11 @@ let invitedCallId: string | null = null
 let giveUpTimer: ReturnType<typeof setTimeout> | null = null
 /** The socket dropped during this call and its call.state has not come back on a new socket yet. */
 let rejoinPending = false
+/** D-20: the badge state and the previous cumulative packet counters (loss is a per-sample delta). */
+let quality: QualityState = QUALITY_START
+let lastPackets: { lost: number; received: number } | null = null
+/** A resume is re-acquiring ended capture tracks (D-18): one at a time. */
+let resuming = false
 
 /** The current phase, read fresh (TypeScript would otherwise keep a narrowing across awaits). */
 function phaseNow(): CallPhase {
@@ -226,6 +237,8 @@ function armGuard(): void {
 function releaseMedia(): void {
   clearGiveUp()
   rejoinPending = false
+  quality = QUALITY_START
+  lastPackets = null
   releaseWakeLock()
   session?.close()
   session = null
@@ -239,6 +252,7 @@ function releaseMedia(): void {
 /** Media fields of a call that is over: no camera, no videos (every track was stopped by releaseMedia). */
 const NO_MEDIA: Partial<CallState> = {
   reconnecting: false,
+  poor: false,
   remoteAudio: null,
   remoteVideo: null,
   localVideo: null,
@@ -387,8 +401,27 @@ function callEndedText(): string {
   return `Call ended · ${formatCallDuration(state.mediaStartedAt === null ? 0 : Date.now() - state.mediaStartedAt)}`
 }
 
+/**
+ * D-20: feed one 2 s sample into qualityStep. Loss is lost / (lost + received) over the interval
+ * (undefined when no packet moved); RTT comes from the selected candidate pair.
+ */
+function sampleQuality(sample: CallSample): boolean {
+  const prev = lastPackets
+  lastPackets = { lost: sample.packetsLost, received: sample.packetsReceived }
+  if (state.phase !== "live") return state.poor
+  const lost = prev ? Math.max(0, sample.packetsLost - prev.lost) : 0
+  const received = prev ? Math.max(0, sample.packetsReceived - prev.received) : 0
+  const lossFraction = lost + received > 0 ? lost / (lost + received) : undefined
+  quality = qualityStep(quality, { lossFraction, rttMs: sample.rttMs })
+  return quality.poor
+}
+
 function onSample(sample: CallSample): void {
-  const patch: Partial<CallState> = { inboundBytes: sample.inboundBytes, localType: sample.localType ?? null }
+  const patch: Partial<CallState> = {
+    inboundBytes: sample.inboundBytes,
+    localType: sample.localType ?? null,
+    poor: sampleQuality(sample),
+  }
   const goesLive = state.phase === "connecting" && sample.state === "connected" && sample.inboundBytes > 0
   if (goesLive) {
     patch.phase = "live"
@@ -699,6 +732,44 @@ export const callStore = {
   onRealtimeLive(): void {
     if (!boundHere() || !state.callId) return
     sendFrame({ t: "call.rejoin", callId: state.callId })
+  },
+
+  /**
+   * D-18 resume: duet came back to the foreground. iOS may have ended the capture tracks while it was
+   * hidden (an interruption); an ended microphone, and an ended camera while the camera is on, are
+   * captured again and swapped in with replaceTrack, keeping the mute and camera state. Call tracks
+   * are never stopped on hide. A capture that fails leaves the call as it is (it can still drop).
+   */
+  async onVisible(): Promise<void> {
+    const callId = state.callId
+    if (!callId || !session || !reconnectable(state.phase) || resuming) return
+    const s = session
+    resuming = true
+    try {
+      if (s.micTrack.readyState === "ended") {
+        const mic = await getMic()
+        if (mic.ok) {
+          if (session !== s || state.callId !== callId) mic.track.stop()
+          else {
+            mic.track.enabled = !state.muted
+            await s.setMic(mic.track)
+          }
+        }
+      }
+      const cam = s.cameraTrack
+      if (state.camera && cam && cam.readyState === "ended" && session === s && state.callId === callId) {
+        const result = await getCamera(state.facing)
+        if (result.ok) {
+          if (session !== s || state.callId !== callId || !state.camera) result.track.stop()
+          else {
+            await s.setCamera(result.track)
+            set({ localVideo: new MediaStream([result.track]) })
+          }
+        }
+      }
+    } finally {
+      resuming = false
+    }
   },
 
   /** CALL-07: the tab's live socket was lost. A connected call shows "Reconnecting…" (D-17). */

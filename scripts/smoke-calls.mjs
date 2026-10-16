@@ -819,6 +819,72 @@ const scenarios = {
     await expectTracksEnded(bob)
   },
 
+  /**
+   * D-17 give-up: Bob's phone vanishes mid-call (page closed). Within 50 s Ada shows "Call dropped" with
+   * Call back and Close (her 30 s give-up or the server's 35 s absence end, whichever comes first), her
+   * microphone is released, and Close returns to the chat.
+   */
+  async dropped(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await connectVoice(ada, bob)
+    await bob.context().close()
+    const screen = callDialog(ada, BOB)
+    await screen.locator("span", { hasText: /^Call dropped$/ }).waitFor({ state: "visible", timeout: 50_000 })
+    await screen.getByRole("button", { name: "Call back" }).waitFor({ state: "visible", timeout: 1_000 })
+    await screen.getByRole("button", { name: "Close" }).waitFor({ state: "visible", timeout: 1_000 })
+    const a = await diag(ada)
+    if (a.phase !== "ended") throw new Error(`Ada's phase is "${a.phase}" while Call dropped shows`)
+    await expectTracksEnded(ada)
+    await screen.getByRole("button", { name: "Close" }).click()
+    await screen.waitFor({ state: "hidden", timeout: 3_000 })
+    await waitPhase(ada, "idle", 2_000)
+  },
+
+  /**
+   * CALL-09: relay forced on both sides (localStorage duet.forceRelay = 1): the call connects with relay
+   * local candidates through Cloudflare TURN on both pages and audio flows both ways. A healthy link
+   * shows no Poor connection badge (D-20: nothing shows otherwise).
+   */
+  async relay(ctx, opened) {
+    const forceRelay = () => {
+      try {
+        localStorage.setItem("duet.forceRelay", "1")
+      } catch {
+        // about:blank has no storage; the app's own document does.
+      }
+    }
+    const ada = await openApp(ctx, ADA, BOB, opened, { init: forceRelay })
+    const bob = await openApp(ctx, BOB, ADA, opened, { init: forceRelay })
+    await connectVoice(ada, bob)
+    let types = []
+    await until(
+      async () => {
+        types = [(await diag(ada)).localType, (await diag(bob)).localType]
+        return types.every((t) => t === "relay")
+      },
+      10_000,
+      () => `local candidate types are [${types.join(", ")}], expected relay on both`,
+    )
+    const before = await Promise.all([diag(ada), diag(bob)])
+    await sleep(3_000)
+    const after = await Promise.all([diag(ada), diag(bob)])
+    if (!(after[0].inboundBytes > before[0].inboundBytes) || !(after[1].inboundBytes > before[1].inboundBytes)) {
+      throw new Error("inbound bytes did not grow on both pages over the relay")
+    }
+    for (const [page, peer] of [
+      [ada, BOB],
+      [bob, ADA],
+    ]) {
+      if ((await callDialog(page, peer).getByTestId("poor-connection").count()) > 0) {
+        throw new Error(`${page.__name} shows Poor connection on a healthy relay`)
+      }
+    }
+    await hangUpBoth(ada, BOB, bob)
+    await expectTracksEnded(ada)
+    await expectTracksEnded(bob)
+  },
+
   /** D-19: a denied microphone starts no call and opens the "Allow the microphone" drawer. */
   async "mic-denied"(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened, { denyMic: true })

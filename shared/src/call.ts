@@ -81,7 +81,18 @@ export interface QualitySample {
 
 export const QUALITY_START: QualityState = { poor: false, bad: 0, good: 0 }
 
-/** The next badge state after one sample (D-20). */
-export function qualityStep(prev: QualityState, _sample: QualitySample): QualityState {
-  return { ...prev }
+/**
+ * The next badge state after one sample (D-20): a bad sample resets the good run and a good one the
+ * bad run, so only consecutive samples count. The badge turns on at POOR_ON_SAMPLES bad samples in a
+ * row and off at POOR_OFF_SAMPLES good ones in a row.
+ */
+export function qualityStep(prev: QualityState, sample: QualitySample): QualityState {
+  const lossBad = sample.lossFraction !== undefined && sample.lossFraction > POOR_LOSS_FRACTION
+  const rttBad = sample.rttMs !== undefined && sample.rttMs > POOR_RTT_MS
+  if (lossBad || rttBad) {
+    const bad = prev.bad + 1
+    return { poor: prev.poor || bad >= POOR_ON_SAMPLES, bad, good: 0 }
+  }
+  const good = prev.good + 1
+  return { poor: prev.poor && good < POOR_OFF_SAMPLES, bad: 0, good }
 }

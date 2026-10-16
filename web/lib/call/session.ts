@@ -53,6 +53,8 @@ export class CallSession {
   readonly role: "caller" | "callee"
   private readonly local: MediaStream
   private readonly peer: Peer
+  /** The microphone being sent (replaced when iOS ended it in the background, D-18). */
+  private mic: MediaStreamTrack
   private camera: MediaStreamTrack | null
   private sampleTimer: ReturnType<typeof setInterval> | null = null
   private restartTimer: ReturnType<typeof setTimeout> | null = null
@@ -64,6 +66,7 @@ export class CallSession {
     this.room = callRoom(o.callId)
     this.role = o.role
     this.local = new MediaStream([o.mic])
+    this.mic = o.mic
     this.camera = o.camera
     const local = this.local
     this.peer = createPeer({
@@ -111,14 +114,38 @@ export class CallSession {
 
   /** The video transceiver negotiated at call start (absent on the callee until the first offer). */
   private videoSender(): RTCRtpSender | null {
+    return this.sender("video")
+  }
+
+  private sender(kind: "audio" | "video"): RTCRtpSender | null {
     if (this.closed) return null
-    const t = this.peer.pc.getTransceivers().find((tr) => tr.receiver.track.kind === "video")
+    const t = this.peer.pc.getTransceivers().find((tr) => tr.receiver.track.kind === kind)
     return t?.sender ?? null
   }
 
   /** The microphone this call sends (mute sets its enabled flag; no renegotiation, CALL-05). */
   get micTrack(): MediaStreamTrack {
-    return this.o.mic
+    return this.mic
+  }
+
+  /**
+   * D-18 resume: swap in a freshly captured microphone (iOS ends capture tracks during an interruption)
+   * with replaceTrack on the audio transceiver; no renegotiation. The ended track is stopped.
+   */
+  async setMic(track: MediaStreamTrack): Promise<void> {
+    if (this.closed) {
+      track.stop()
+      return
+    }
+    const previous = this.mic
+    this.mic = track
+    const sender = this.sender("audio")
+    try {
+      if (sender) await sender.replaceTrack(track)
+    } finally {
+      if (previous !== track) previous.stop()
+      if (this.closed) track.stop()
+    }
   }
 
   /** The camera track being sent (null while the camera is off). */
@@ -233,6 +260,7 @@ export class CallSession {
     this.peer.close()
     for (const track of this.local.getTracks()) track.stop()
     this.o.mic.stop()
+    this.mic.stop()
     this.camera?.stop()
   }
 }

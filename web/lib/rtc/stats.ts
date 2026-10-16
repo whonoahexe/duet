@@ -3,6 +3,9 @@ export interface CallSample {
   state: RTCPeerConnectionState
   /** Sum of bytesReceived over every inbound-rtp stream (audio + video). */
   inboundBytes: number
+  /** Cumulative packetsLost / packetsReceived over every inbound-rtp stream (D-20 loss = their deltas). */
+  packetsLost: number
+  packetsReceived: number
   /** Selected pair's local candidate type: host | srflx | prflx | relay. */
   localType?: string
   remoteType?: string
@@ -21,10 +24,14 @@ function str(value: unknown): string | undefined {
 export async function sampleCall(pc: RTCPeerConnection): Promise<CallSample> {
   const report = await pc.getStats()
   let inboundBytes = 0
+  let packetsLost = 0
+  let packetsReceived = 0
   let pair: Stat | undefined
 
   report.forEach((s: Stat) => {
     if (s.type === "inbound-rtp" && typeof s.bytesReceived === "number") inboundBytes += s.bytesReceived
+    if (s.type === "inbound-rtp" && typeof s.packetsLost === "number") packetsLost += s.packetsLost
+    if (s.type === "inbound-rtp" && typeof s.packetsReceived === "number") packetsReceived += s.packetsReceived
     if (s.type === "transport" && typeof s.selectedCandidatePairId === "string") {
       pair ??= report.get(s.selectedCandidatePairId) as Stat | undefined
     }
@@ -47,6 +54,8 @@ export async function sampleCall(pc: RTCPeerConnection): Promise<CallSample> {
   return {
     state: pc.connectionState,
     inboundBytes,
+    packetsLost,
+    packetsReceived,
     localType: str(local?.candidateType),
     remoteType: str(remote?.candidateType),
     relayProtocol: str(local?.relayProtocol),

@@ -8,10 +8,12 @@ import {
   PhoneDisconnectIcon,
   VideoCameraIcon,
   WarningCircleIcon,
+  WifiLowIcon,
 } from "@phosphor-icons/react"
 import { formatCallDuration } from "@duet/shared"
 import { initials } from "@/components/app/login-tiles"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { callStore, useCall, type CallState, type PipCorner } from "@/lib/call/store"
@@ -168,6 +170,16 @@ function TerminalActions({ dropped }: { dropped: boolean }) {
         </Button>
       </div>
     </div>
+  )
+}
+
+/** D-20: the top bar's right slot while the connection is poor (never during Reconnecting…). */
+function PoorBadge() {
+  return (
+    <Badge variant="secondary" data-testid="poor-connection">
+      <WifiLowIcon />
+      Poor connection
+    </Badge>
   )
 }
 
@@ -360,11 +372,12 @@ export function CallScreen() {
   const failed = ended && call.endState !== null
   const showPill = !ended
   const [focusInside, focusHandlers] = useFocusInside()
-  // Never auto-hide while a status other than the timer shows (Reconnecting…, UI-SPEC section 2).
-  const { hidden, poke } = useAutoHide(modeB && call.phase === "live" && !call.reconnecting && !focusInside, open)
+  // Never auto-hide while a status other than the timer shows (Reconnecting…, Poor connection, UI-SPEC section 2).
+  const { hidden, poke } = useAutoHide(modeB && call.phase === "live" && !call.reconnecting && !call.poor && !focusInside, open)
   const pillShown = showPill && !hidden
   const fade = cn("transition-opacity duration-200 motion-reduce:transition-none", hidden && "opacity-0")
   const mirrored = call.facing === "user" && "-scale-x-100"
+  const showPoor = call.poor && !call.reconnecting && active
 
   const backToChat = active && (
     <Button variant="ghost" size="icon" aria-label="Back to chat" onClick={() => callStore.minimize()}>
@@ -395,6 +408,10 @@ export function CallScreen() {
         <div aria-live="polite" className="sr-only">
           {announcement(call)}
         </div>
+        {/* Its own region: the badge is announced once per appearance and its removal says nothing. */}
+        <div aria-live="polite" className="sr-only">
+          {showPoor ? "Poor connection" : ""}
+        </div>
         {/* The remote video stays mounted while a call runs, so its first frame is seen before Mode B. */}
         {swapped ? (
           <StreamVideo stream={call.localVideo} className={cn("absolute inset-0 size-full bg-background object-cover", mirrored)} />
@@ -418,6 +435,7 @@ export function CallScreen() {
                     {status}
                   </span>
                 </div>
+                {showPoor && <PoorBadge />}
               </div>
             </div>
             <div className="flex-1" />
@@ -426,7 +444,11 @@ export function CallScreen() {
           <>
             {active && (
               <div className="absolute inset-x-0 top-0 z-20 pt-[env(safe-area-inset-top)]">
-                <div className="flex h-14 items-center px-4">{backToChat}</div>
+                <div className="flex h-14 items-center px-4">
+                  {backToChat}
+                  <div className="flex-1" />
+                  {showPoor && <PoorBadge />}
+                </div>
               </div>
             )}
             <div data-testid="call-avatar" className="relative z-10">

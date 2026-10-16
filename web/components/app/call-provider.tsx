@@ -33,10 +33,16 @@ export function CallProvider({ me }: { me: MeResponse }) {
     // CALL-07: a reconnected socket rejoins the call; a lost one shows "Reconnecting…".
     const offLive = onRealtimeLive(() => callStore.onRealtimeLive())
     const offDown = onRealtimeDown(() => callStore.onRealtimeDown())
+    // D-18: back in the foreground, capture tracks iOS ended in the background come back.
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void callStore.onVisible()
+    }
+    document.addEventListener("visibilitychange", onVisibility)
     return () => {
       offFrame()
       offLive()
       offDown()
+      document.removeEventListener("visibilitychange", onVisibility)
     }
   }, [me])
 
@@ -83,6 +89,7 @@ export function CallProvider({ me }: { me: MeResponse }) {
         data-camera-device={callStore.cameraDeviceId()}
         data-swapped={call.swapped ? "true" : "false"}
         data-reconnecting={call.reconnecting ? "true" : "false"}
+        data-poor={call.poor ? "true" : "false"}
       />
       <CallScreen />
       <IncomingCall />
