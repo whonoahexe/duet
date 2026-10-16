@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import {
   CameraRotateIcon,
+  CaretDownIcon,
   MicrophoneSlashIcon,
   PhoneDisconnectIcon,
   VideoCameraIcon,
@@ -343,11 +344,9 @@ export function CallScreen() {
   /** A video fills the screen: the translucent top bar replaces the centered identity block. */
   const videoLayout = modeB || swapped
   const status = statusText(call, elapsed)
-  const open =
-    call.phase === "ringing-out" ||
-    call.phase === "connecting" ||
-    call.phase === "live" ||
-    (ended && (call.endText !== null || call.endState !== null))
+  const active = call.phase === "ringing-out" || call.phase === "connecting" || call.phase === "live"
+  // D-06: a minimized call keeps running with this Dialog closed (the on-call bar brings it back).
+  const open = call.screen === "open" && (active || (ended && (call.endText !== null || call.endState !== null)))
   const failed = ended && call.endState === "couldnt-connect"
   const showPill = !ended
   const [focusInside, focusHandlers] = useFocusInside()
@@ -355,6 +354,12 @@ export function CallScreen() {
   const pillShown = showPill && !hidden
   const fade = cn("transition-opacity duration-200 motion-reduce:transition-none", hidden && "opacity-0")
   const mirrored = call.facing === "user" && "-scale-x-100"
+
+  const backToChat = active && (
+    <Button variant="ghost" size="icon" aria-label="Back to chat" onClick={() => callStore.minimize()}>
+      <CaretDownIcon />
+    </Button>
+  )
 
   const remoteVideo = call.remoteVideo && !ended && (
     <StreamVideo
@@ -366,7 +371,14 @@ export function CallScreen() {
   )
 
   return (
-    <Dialog open={open} disablePointerDismissal>
+    <Dialog
+      open={open}
+      disablePointerDismissal
+      onOpenChange={(next) => {
+        // Escape (or any close request) minimizes; it never hangs up.
+        if (!next) callStore.minimize()
+      }}
+    >
       <DialogContent showCloseButton={false} className={FULL_SCREEN_DIALOG} onPointerDownCapture={poke}>
         <DialogTitle className="sr-only">Call with {call.peerName}</DialogTitle>
         <div aria-live="polite" className="sr-only">
@@ -388,6 +400,7 @@ export function CallScreen() {
               {...focusHandlers}
             >
               <div className="flex h-14 items-center gap-3 px-4">
+                {backToChat}
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-medium">{call.peerName}</span>
                   <span data-testid="call-status" aria-live="off" className="text-xs text-muted-foreground tabular-nums">
@@ -400,6 +413,11 @@ export function CallScreen() {
           </>
         ) : (
           <>
+            {active && (
+              <div className="absolute inset-x-0 top-0 z-20 pt-[env(safe-area-inset-top)]">
+                <div className="flex h-14 items-center px-4">{backToChat}</div>
+              </div>
+            )}
             <div data-testid="call-avatar" className="relative z-10">
               <CallIdentity name={call.peerName} status={status} />
             </div>

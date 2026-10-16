@@ -15,11 +15,13 @@ import { apiGet } from "@/lib/api"
 import { clearNotifications } from "@/lib/chat/push"
 import { sendFrame } from "@/lib/chat/realtime"
 import { chatStore } from "@/lib/chat/store"
+import { isIos } from "@/lib/platform"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import type { CallSample } from "@/lib/rtc/stats"
 import { flipCamera, getCallMedia, getCamera, type CallMediaResult, type Facing } from "./media"
 import { CallSession, forceRelayFlag } from "./session"
 import { startRingback, startRingtone, stopTones, unlockAudio, type Tone } from "./tones"
+import { holdWakeLock, releaseWakeLock } from "./wake-lock"
 
 export type CallPhase = "idle" | "ringing-out" | "ringing-in" | "connecting" | "live" | "ended"
 
@@ -67,6 +69,8 @@ export interface CallState {
   /** The self-view is large and the peer small (D-02 PiP tap); reset when either video stops. */
   swapped: boolean
   pipCorner: PipCorner
+  /** D-06: the call screen is showing, or minimized to the chat with the on-call bar. */
+  screen: "open" | "minimized"
 }
 
 /** How long each terminal text stays before the call screen closes (UI-SPEC section 5). */
@@ -106,6 +110,7 @@ const EMPTY: CallState = {
   muted: false,
   swapped: false,
   pipCorner: "br",
+  screen: "open",
 }
 
 let state: CallState = EMPTY
@@ -202,6 +207,7 @@ function armGuard(): void {
 
 /** Stop every local media resource of the current call (the mic never stays on after a call). */
 function releaseMedia(): void {
+  releaseWakeLock()
   session?.close()
   session = null
   pendingMic?.stop()
@@ -267,6 +273,12 @@ function closeNow(): void {
 function showEnded(text: string, ms: number): void {
   clearCloseTimer()
   releaseMedia()
+  if (state.screen === "minimized") {
+    // D-06 / UI-SPEC section 5: a minimized call that ends never reopens the screen; same copy as a toast.
+    closeNow()
+    toast(text)
+    return
+  }
   set({ ...NO_MEDIA, phase: "ended", endText: text, endState: null, accepting: false })
   const callId = state.callId
   closeTimer = setTimeout(() => {
@@ -279,6 +291,12 @@ function showEnded(text: string, ms: number): void {
 function showFailure(): void {
   clearCloseTimer()
   releaseMedia()
+  if (state.screen === "minimized") {
+    const kind = state.kind
+    closeNow()
+    toast("Couldn't connect", { action: { label: "Retry", onClick: () => void callStore.startCall(kind) } })
+    return
+  }
   set({ ...NO_MEDIA, phase: "ended", endText: null, endState: "couldnt-connect", accepting: false })
 }
 
@@ -288,11 +306,33 @@ function callEndedText(): string {
 
 function onSample(sample: CallSample): void {
   const patch: Partial<CallState> = { inboundBytes: sample.inboundBytes, localType: sample.localType ?? null }
-  if (state.phase === "connecting" && sample.state === "connected" && sample.inboundBytes > 0) {
+  const goesLive = state.phase === "connecting" && sample.state === "connected" && sample.inboundBytes > 0
+  if (goesLive) {
     patch.phase = "live"
     patch.mediaStartedAt = Date.now()
   }
   set(patch)
+  if (goesLive) {
+    holdWakeLock()
+    showIosTip()
+  }
+}
+
+const IOS_TIP_KEY = "duet.callTipShown"
+
+/** D-18: the first call that connects on an iOS device explains that video pauses in the background. */
+function showIosTip(): void {
+  if (!isIos()) return
+  try {
+    if (localStorage.getItem(IOS_TIP_KEY) === "1") return
+    localStorage.setItem(IOS_TIP_KEY, "1")
+  } catch {
+    return
+  }
+  toast("Keep duet open during calls", {
+    description: "On iPhone, video pauses when duet is in the background.",
+    duration: 6000,
+  })
 }
 
 /** The peer connection failed before any media flowed: give up (ICE failure, D-19). */
@@ -409,6 +449,7 @@ async function answer(callId: string, media: CallMediaResult): Promise<void> {
     return
   }
   holdMedia(media)
+  holdWakeLock()
   try {
     const { iceServers } = await fetchIceServers()
     if (state.callId !== callId || state.phase !== "ringing-in") {
@@ -490,6 +531,8 @@ export const callStore = {
     }
     commit({ ...base, phase: "ringing-out" })
     holdMedia(media)
+    // CALL-08: the screen stays on from the Start tap until the call ends.
+    holdWakeLock()
     try {
       const { iceServers } = await fetchIceServers()
       if (state.callId !== callId || phaseNow() !== "ringing-out") return
@@ -604,6 +647,23 @@ export const callStore = {
   swap(): void {
     if (!inCall(state.phase) || !state.camera) return
     set({ swapped: !state.swapped })
+  },
+
+  /**
+   * D-06: close the call screen without hanging up (Back to chat, Escape). The call, its audio, the
+   * camera and the timer continue; the on-call bar returns to it. A terminal state just closes.
+   */
+  minimize(): void {
+    if (inCall(state.phase)) {
+      if (state.screen !== "minimized") set({ screen: "minimized" })
+    } else if (state.phase === "ended") {
+      closeNow()
+    }
+  },
+
+  /** Reopen the minimized call screen, in the same mode and swap state. */
+  restore(): void {
+    if (state.screen !== "open") set({ screen: "open" })
   },
 
   /** The self-view was dragged to `corner`; it stays there for the rest of the call. */
@@ -764,6 +824,7 @@ export const callStore = {
   reset(): void {
     clearCloseTimer()
     releaseMedia()
+    releaseWakeLock()
     peer = null
     commit(EMPTY)
   },

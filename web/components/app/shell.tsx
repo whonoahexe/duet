@@ -16,6 +16,7 @@ import { CallProvider } from "@/components/app/call-provider"
 import { ChatView } from "@/components/app/chat-view"
 import { NotificationsCard } from "@/components/app/notifications-card"
 import { NotificationsDrawer } from "@/components/app/notifications-drawer"
+import { OnCallBar } from "@/components/app/on-call-bar"
 import { initials } from "@/components/app/login-tiles"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -255,6 +256,8 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
         </div>
       </header>
 
+      {/* D-06: the way back to a minimized call, directly under the header. */}
+      <OnCallBar />
       {peer && cardState && (
         <NotificationsCard
           peerName={peer.displayName}

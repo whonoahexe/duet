@@ -5,7 +5,8 @@
 #   SKIP_BUILD=1 reuses web/out; SMOKE_PORT changes the port (default 3196); CHROME names another
 #   Chrome/Chromium binary.
 # The TURN vars are read here and handed to the server process only; they are never printed.
-# The server rings for 10 s instead of 45 s (CALL_RING_TIMEOUT_MS) so the no-answer scenario is quick.
+# The server rings for 10 s instead of 45 s (CALL_RING_TIMEOUT_MS) so the no-answer scenario is quick, and
+# allows 100 invites a minute instead of 10 (CALL_INVITE_LIMIT): a full run starts more calls than that.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,7 +54,7 @@ printf '%s' '[{"username":"smoke-ada","displayName":"Ada Smoke","password":"smok
   export CF_TURN_KEY_ID="$turn_id" CF_TURN_KEY_API_TOKEN="$turn_tok"
   exec env -u TURN_CREDENTIAL_TTL_SECONDS \
     DATA_DIR="$tmp" PORT="$PORT" HOST=127.0.0.1 NODE_ENV=production \
-    APP_ORIGIN="$BASE" COOKIE_SECURE=false LOG_LEVEL=warn CALL_RING_TIMEOUT_MS=10000 \
+    APP_ORIGIN="$BASE" COOKIE_SECURE=false LOG_LEVEL=warn CALL_RING_TIMEOUT_MS=10000 CALL_INVITE_LIMIT=100 \
     node --import tsx src/index.ts
 ) >"$tmp/server.log" 2>&1 &
 server_pid=$!

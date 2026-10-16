@@ -376,3 +376,14 @@ describe("CALL_RING_TIMEOUT_MS config", () => {
     expect(() => loadConfig({ ...base, CALL_RING_TIMEOUT_MS: "2999" })).toThrow(ConfigError)
   })
 })
+
+describe("CALL_INVITE_LIMIT config (T-03-03)", () => {
+  const base = { NODE_ENV: "test", APP_ORIGIN: "http://localhost:3000" }
+  it("is unset by default, so the registry keeps INVITE_LIMIT", () => {
+    expect(loadConfig(base).CALL_INVITE_LIMIT).toBeUndefined()
+  })
+  it("accepts 1..1000 and rejects 0", () => {
+    expect(loadConfig({ ...base, CALL_INVITE_LIMIT: "100" }).CALL_INVITE_LIMIT).toBe(100)
+    expect(() => loadConfig({ ...base, CALL_INVITE_LIMIT: "0" })).toThrow(ConfigError)
+  })
+})

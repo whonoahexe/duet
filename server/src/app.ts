@@ -136,6 +136,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     },
     otherUser: (userId) => db.select({ id: users.id }).from(users).where(ne(users.id, userId)).get()?.id,
     ringTimeoutMs: deps.callTimers?.ringTimeoutMs ?? config.CALL_RING_TIMEOUT_MS,
+    inviteLimit: config.CALL_INVITE_LIMIT,
     callerAbsentMs: deps.callTimers?.callerAbsentMs,
     absentGraceMs: deps.callTimers?.absentGraceMs,
   })

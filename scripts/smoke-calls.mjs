@@ -49,6 +49,35 @@ function denyMedia() {
   }
 }
 
+/**
+ * navigator.wakeLock replaced by a stub that counts active sentinels on window.__duetWakeLocks: request
+ * adds one, release subtracts one and fires "release" (headless Chrome has no real screen to keep on).
+ */
+function stubWakeLock() {
+  window.__duetWakeLocks = 0
+  const wakeLock = {
+    async request(type) {
+      window.__duetWakeLocks += 1
+      const sentinel = new EventTarget()
+      let released = false
+      Object.defineProperties(sentinel, {
+        type: { value: type },
+        released: { get: () => released },
+        release: {
+          value: async () => {
+            if (released) return
+            released = true
+            window.__duetWakeLocks -= 1
+            sentinel.dispatchEvent(new Event("release"))
+          },
+        },
+      })
+      return sentinel
+    },
+  }
+  Object.defineProperty(navigator, "wakeLock", { value: wakeLock, configurable: true })
+}
+
 /** getUserMedia rejects every request that asks for a camera (NotAllowedError); audio still works. */
 function denyVideo() {
   const md = navigator.mediaDevices
@@ -85,9 +114,10 @@ async function sessionCookie(ctx, fixture, slot) {
  * Open the app at "/" as `fixture` (the chat composer must be visible), in a fresh browser context
  * (like a separate phone) on session `slot`. Registered for closing in `opened`.
  */
-async function openApp(ctx, fixture, peer, opened, { denyMic = false, denyCamera = false, slot = 0 } = {}) {
+async function openApp(ctx, fixture, peer, opened, { denyMic = false, denyCamera = false, wakeLock = false, slot = 0 } = {}) {
   const context = await loggedInContext(ctx, fixture, slot)
   const page = await newAppPage(context, fixture, opened, { denyMic, denyCamera, slot })
+  if (wakeLock) await page.addInitScript(stubWakeLock)
   await page.goto(`${BASE}/`)
   await page.getByPlaceholder(`Message ${peer.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
   return page
@@ -610,6 +640,65 @@ const scenarios = {
     if ((await diag(ada)).phase !== "live") throw new Error("the call did not survive the camera help drawer")
     await hangUpBoth(ada, BOB, bob)
     await expectTracksEnded(ada)
+  },
+
+  /**
+   * D-06 / CALL-08: both phones hold one screen wake lock during the call. Ada minimizes to the chat
+   * (the call keeps flowing), chats with Bob, returns through the on-call bar, minimizes again; Bob
+   * hangs up and Ada gets "Call ended · m:ss" as a toast, the bar goes and both wake locks are released.
+   */
+  async minimize(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened, { wakeLock: true })
+    const bob = await openApp(ctx, BOB, ADA, opened, { wakeLock: true })
+    const wakeLocks = (page) => page.evaluate(() => window.__duetWakeLocks)
+    const waitLocks = async (n, timeout) => {
+      let last = []
+      await until(
+        async () => {
+          last = await Promise.all([wakeLocks(ada), wakeLocks(bob)])
+          return last.every((v) => v === n)
+        },
+        timeout,
+        () => `wake locks are [${last.join(", ")}], expected ${n} on both pages`,
+      )
+    }
+    await connectVoice(ada, bob)
+    await waitLocks(1, 3_000)
+    await sleep(500)
+    await waitLocks(1, 100)
+
+    await callDialog(ada, BOB).getByRole("button", { name: "Back to chat" }).click()
+    await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 3_000 })
+    const bar = ada.getByRole("button", { name: "Return to call" })
+    await bar.waitFor({ state: "visible", timeout: 2_000 })
+    const barText = ((await bar.textContent()) ?? "").trim()
+    if (!/^On call · \d+:\d{2}$/.test(barText)) throw new Error(`the on-call bar reads "${barText}"`)
+    const before = (await diag(ada)).inboundBytes
+    await sleep(2_500)
+    const after = (await diag(ada)).inboundBytes
+    if (!(after > before)) throw new Error(`Ada's inbound bytes stopped while minimized (${before} -> ${after})`)
+    if ((await diag(ada)).phase !== "live") throw new Error("minimizing changed the call phase")
+
+    const text = `minimized ${Date.now()}`
+    await ada.getByPlaceholder(`Message ${BOB.displayName}`).fill(text)
+    await ada.getByRole("button", { name: "Send message" }).click()
+    await bob.getByText(text, { exact: true }).first().waitFor({ state: "attached", timeout: 10_000 })
+
+    await bar.click()
+    await callDialog(ada, BOB).waitFor({ state: "visible", timeout: 3_000 })
+    await bar.waitFor({ state: "hidden", timeout: 2_000 })
+    await callDialog(ada, BOB).getByRole("button", { name: "Back to chat" }).click()
+    await bar.waitFor({ state: "visible", timeout: 2_000 })
+    await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 3_000 })
+
+    await callDialog(bob, ADA).getByRole("button", { name: "Hang up" }).click()
+    await toasts(ada).filter({ hasText: /^Call ended · \d+:\d{2}$/ }).first().waitFor({ state: "visible", timeout: 5_000 })
+    await bar.waitFor({ state: "hidden", timeout: 2_000 })
+    if (await callDialog(ada, BOB).isVisible()) throw new Error("the call screen reopened for the ending of a minimized call")
+    await Promise.all([waitPhase(ada, "idle", 3_000), waitPhase(bob, "idle", 3_000)])
+    await waitLocks(0, 3_000)
+    await expectTracksEnded(ada)
+    await expectTracksEnded(bob)
   },
 
   /** D-19: a denied microphone starts no call and opens the "Allow the microphone" drawer. */

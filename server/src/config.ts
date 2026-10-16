@@ -60,6 +60,9 @@ const EnvSchema = z
       .optional(),
     // D-07: how long an unanswered call rings (the server owns the timer). The E2E smoke shortens it.
     CALL_RING_TIMEOUT_MS: z.coerce.number().int().min(3000).max(120000).default(CALL_RING_TIMEOUT_MS),
+    // T-03-03: ringing invites allowed per person per minute. Unset = the registry's INVITE_LIMIT (10).
+    // Only the E2E smoke raises it (it starts more calls per minute than two people ever would).
+    CALL_INVITE_LIMIT: z.coerce.number().int().min(1).max(1000).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && !env.APP_ORIGIN) {
@@ -124,6 +127,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     "VAPID_PRIVATE_KEY",
     "VAPID_SUBJECT",
     "CALL_RING_TIMEOUT_MS",
+    "CALL_INVITE_LIMIT",
   ] as const
   const picked: Record<string, string | undefined> = {}
   for (const k of keys) {

@@ -83,6 +83,8 @@ export interface CallRegistryOptions {
   ringTimeoutMs?: number
   callerAbsentMs?: number
   absentGraceMs?: number
+  /** T-03-03: ringing invites per person per INVITE_WINDOW_MS. Default INVITE_LIMIT. */
+  inviteLimit?: number
 }
 
 interface Call {
@@ -127,6 +129,7 @@ export function createCallRegistry({
   ringTimeoutMs = CALL_RING_TIMEOUT_MS,
   callerAbsentMs = CALLER_ABSENT_MS,
   absentGraceMs = ABSENT_GRACE_MS,
+  inviteLimit = INVITE_LIMIT,
 }: CallRegistryOptions): CallRegistry {
   let current: Call | null = null
   const recent = new Map<string, RecentCall>()
@@ -137,7 +140,7 @@ export function createCallRegistry({
   function underInviteLimit(userId: string): boolean {
     const at = now()
     const recentInvites = (invites.get(userId) ?? []).filter((t) => at - t < INVITE_WINDOW_MS)
-    if (recentInvites.length >= INVITE_LIMIT) {
+    if (recentInvites.length >= inviteLimit) {
       invites.set(userId, recentInvites)
       return false
     }
