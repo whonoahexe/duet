@@ -54,3 +54,34 @@ export function formatCallDuration(ms: number): string {
   const ss = String(s).padStart(2, "0")
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`
 }
+
+/** D-20 (UI-SPEC section 6): a 2 s sample is bad when inbound packet loss is above 5%... */
+export const POOR_LOSS_FRACTION = 0.05
+/** ...or the selected pair's round-trip time is above 400 ms. */
+export const POOR_RTT_MS = 400
+/** The Poor connection badge shows after this many consecutive bad samples... */
+export const POOR_ON_SAMPLES = 2
+/** ...and hides after this many consecutive good ones. */
+export const POOR_OFF_SAMPLES = 3
+
+/** The badge state carried from one sample to the next. */
+export interface QualityState {
+  poor: boolean
+  /** Consecutive bad samples so far. */
+  bad: number
+  /** Consecutive good samples so far. */
+  good: number
+}
+
+/** One 2 s sample: loss over the interval (0-1) and RTT; missing values count as good. */
+export interface QualitySample {
+  lossFraction?: number
+  rttMs?: number
+}
+
+export const QUALITY_START: QualityState = { poor: false, bad: 0, good: 0 }
+
+/** The next badge state after one sample (D-20). */
+export function qualityStep(prev: QualityState, _sample: QualitySample): QualityState {
+  return { ...prev }
+}
