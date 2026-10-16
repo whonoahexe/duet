@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Voice & Video Calls
-status: executing
-stopped_at: Completed 03-03-PLAN.md
-last_updated: "2026-10-16T06:56:42.159Z"
+status: verifying
+stopped_at: Completed 03-04-PLAN.md (device UAT pending)
+last_updated: "2026-10-16T07:17:30.803Z"
 last_activity: 2026-10-16
 last_activity_desc: Phase 03 execution started
-state_head: cc2d3d50f063f34b4c23dd72c628a7125a137ca3
+state_head: 5da4ef13b83ca0ab3a22139cdad0d7464f13a93f
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 15
-  completed_plans: 14
+  completed_plans: 15
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-10-15)
 
 Phase: 03 (Voice & Video Calls) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-10-16 — Phase 03 execution started
 
 Progress: [███████░░░] 67%
@@ -71,6 +71,7 @@ Progress: [███████░░░] 67%
 | Phase 03 P01 | 23min | 3 tasks | 26 files |
 | Phase 03 P02 | 12min | 2 tasks | 17 files |
 | Phase 03 P03 | 7h 46m | 3 tasks | 18 files |
+| Phase 03 P04 | 16min | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -140,6 +141,9 @@ Recent decisions affecting current work:
 - [Phase 03]: 03-03: camera on/off and flip are replaceTrack on the video transceiver negotiated at call start; camera state travels in call.media, relayed only between the two bound connections
 - [Phase 03]: 03-03: Mode B needs the peer camera flag AND a decoded frame; camera off releases the track before call.media false is sent
 - [Phase 03]: 03-03: CALL_INVITE_LIMIT optional server env (unset = 10) so the 15-scenario smoke-calls run stays under the flood guard
+- [Phase 03]: 03-04: Calls recover through call.rejoin (same session only, stale connection evicted from the call room) plus caller-only ICE restarts with rollback; one shared 30 s give-up ends as Call dropped
+- [Phase 03]: 03-04: The caller retries the ICE restart every 5 s while disconnected/failed, so a restart offer lost on a live socket never strands the call
+- [Phase 03]: 03-04: Poor connection = 2 consecutive 2 s samples with inbound loss > 5% or RTT > 400 ms, off after 3 good; hidden during Reconnecting…
 
 ### Pending Todos
 
@@ -169,6 +173,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-16T06:56:42.050Z
-Stopped at: Completed 03-03-PLAN.md
+Last session: 2026-10-16T07:17:30.694Z
+Stopped at: Completed 03-04-PLAN.md (device UAT pending)
 Resume file: None

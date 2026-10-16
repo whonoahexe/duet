@@ -59,9 +59,9 @@
 - [x] **CALL-04**: Unanswered calls stop ringing after a timeout; caller can cancel while ringing
 - [x] **CALL-05**: During a call, user can mute/unmute, turn camera on/off, and hang up
 - [x] **CALL-06**: During a video call, user can switch between front and back camera
-- [ ] **CALL-07**: A call survives brief network blips, showing a "Reconnecting…" state, and rejoins automatically
+- [x] **CALL-07**: A call survives brief network blips, showing a "Reconnecting…" state, and rejoins automatically
 - [x] **CALL-08**: Screen stays awake during a call
-- [ ] **CALL-09**: Calls connect over cellular (TURN relay) as well as Wi-Fi
+- [x] **CALL-09**: Calls connect over cellular (TURN relay) as well as Wi-Fi
 
 ## v2 Requirements
 
@@ -150,9 +150,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CALL-04 | Phase 3 | Complete |
 | CALL-05 | Phase 3 | Complete |
 | CALL-06 | Phase 3 | Complete |
-| CALL-07 | Phase 3 | Pending |
+| CALL-07 | Phase 3 | Complete |
 | CALL-08 | Phase 3 | Complete |
-| CALL-09 | Phase 3 | Pending |
+| CALL-09 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 37 total
