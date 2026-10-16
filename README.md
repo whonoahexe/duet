@@ -77,7 +77,29 @@ docker compose exec -T duet node --import tsx server/scripts/seed-users.ts --std
 shred -u ~/.config/duet/seed-users.json
 ```
 
-## Calls: TURN and the call test
+## Calls
+
+Voice and video calls start from the chat header ("Voice call" / "Video call"). They are 1:1 peer-to-peer WebRTC with Cloudflare TURN as the relay: credentials are minted per call by `POST /api/rtc/ice-servers`, and there is no SFU. Signaling (`call.*` frames plus offer/answer/ICE in `rtc.signal`) rides the tab's one `/ws` socket.
+
+- **Call registry (server, in memory).** It holds at most one current call. Call rooms (`call-<id>`) are joined only by the server, for the two bound connections; a client `room.join` of a `call-` room answers `room_reserved`. The server owns the 45 s ring timer. When both people call at once, the two calls merge into one. A person already in a call gets busy. The first device to answer wins, and the person's other devices stop ringing. Nothing is stored in the database. Ended calls are kept in memory for 24 h (at most 50), so a tapped notification can tell a missed call from a ringing one (`GET /api/calls/:id`, parties only).
+- **Ringing.** A closed app gets an "Incoming voice/video call" Web Push (TTL 45 s, high urgency). Opening duet by any route while the call rings shows the incoming screen (the server re-sends `call.ring` to every new connection of the callee). A ring that is cancelled or not answered becomes a "Missed call" push that replaces the incoming one.
+- **In a call:**
+  - Mute, Camera, Switch camera (while the camera is on) and Hang up. Camera changes use `replaceTrack` on the video transceiver negotiated at call start, with no renegotiation.
+  - There is no speaker toggle (D-05 dropped): the phone's OS routes the audio.
+  - "Back to chat" minimizes the call to an on-call bar.
+  - The screen stays awake (Wake Lock; iPhone needs iOS 18.4 or later).
+- **Network drops.** If the socket or the media path drops mid-call, the status line and on-call bar read "Reconnecting…". The socket reconnects and sends `call.rejoin`. The server moves that party to the new connection and evicts the stale one from the room. The caller restarts ICE. The timer carries on and nobody redials. After 30 s without recovery the call ends as "Call dropped" with Call back. The server also ends a call as dropped when a party has been away for 35 s. A "Poor connection" badge shows after two 2 s samples with inbound loss above 5% or RTT above 400 ms, and hides after three good ones.
+- **Settings.** `CALL_RING_TIMEOUT_MS` sets the ring timeout (default 45000). `CALL_INVITE_LIMIT` sets the invite flood guard (default 10 invites a minute per person). Production leaves both unset. In the browser, `localStorage` `duet.forceRelay = 1` makes calls relay-only (TURN), for testing cellular-like paths.
+- `/debug/call` (below) stays as the diagnostics harness on ordinary rooms. `call-` rooms are reserved for real calls.
+
+```bash
+bash scripts/smoke-calls.sh                    # every two-browser call scenario (real TURN, 10 s ring, invite limit 100)
+bash scripts/smoke-calls.sh voice reconnect    # just the named scenarios; SKIP_BUILD=1 reuses web/out
+```
+
+The scenarios are: voice, decline, cancel, no-answer, couldnt-connect, multi-device, glare, busy, mic-denied, ring-on-open, stale, video, controls, camera-denied, minimize, reconnect, dropped and relay.
+
+### TURN and the call test
 
 Calls are 1:1 peer-to-peer WebRTC. Signaling (offer/answer/ICE) rides duet's own `/ws` socket, and Cloudflare TURN relays the media when no direct path works (the home connection is CGNAT). The media is DTLS-SRTP encrypted end to end, and the duet server never carries it.
 
