@@ -49,6 +49,17 @@ function denyMedia() {
   }
 }
 
+/** getUserMedia rejects every request that asks for a camera (NotAllowedError); audio still works. */
+function denyVideo() {
+  const md = navigator.mediaDevices
+  if (!md || !md.getUserMedia) return
+  const original = md.getUserMedia.bind(md)
+  md.getUserMedia = async (constraints) => {
+    if (constraints && constraints.video) throw new DOMException("Permission denied", "NotAllowedError")
+    return original(constraints)
+  }
+}
+
 /**
  * The session cookie value of `fixture`'s login number `slot`. Logins are pooled across scenarios
  * (POST /api/login allows 5 per 5 minutes per account and IP): a scenario that needs two devices of the
@@ -74,9 +85,9 @@ async function sessionCookie(ctx, fixture, slot) {
  * Open the app at "/" as `fixture` (the chat composer must be visible), in a fresh browser context
  * (like a separate phone) on session `slot`. Registered for closing in `opened`.
  */
-async function openApp(ctx, fixture, peer, opened, { denyMic = false, slot = 0 } = {}) {
+async function openApp(ctx, fixture, peer, opened, { denyMic = false, denyCamera = false, slot = 0 } = {}) {
   const context = await loggedInContext(ctx, fixture, slot)
-  const page = await newAppPage(context, fixture, opened, { denyMic, slot })
+  const page = await newAppPage(context, fixture, opened, { denyMic, denyCamera, slot })
   await page.goto(`${BASE}/`)
   await page.getByPlaceholder(`Message ${peer.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
   return page
@@ -90,7 +101,7 @@ async function loggedInContext(ctx, fixture, slot = 0) {
 }
 
 /** A new page in `context` with error capture and getUserMedia recording; not navigated yet. */
-async function newAppPage(context, fixture, opened, { denyMic = false, slot = 0 } = {}) {
+async function newAppPage(context, fixture, opened, { denyMic = false, denyCamera = false, slot = 0 } = {}) {
   const page = await context.newPage()
   const errors = []
   page.__errors = errors
@@ -102,6 +113,7 @@ async function newAppPage(context, fixture, opened, { denyMic = false, slot = 0 
   opened.push(page)
   await page.addInitScript(recordTracks)
   if (denyMic) await page.addInitScript(denyMedia)
+  if (denyCamera) await page.addInitScript(denyVideo)
   return page
 }
 
@@ -142,6 +154,9 @@ async function diag(page) {
     tone: await el.getAttribute("data-tone"),
     camera: await el.getAttribute("data-camera"),
     peerCamera: await el.getAttribute("data-peer-camera"),
+    mic: await el.getAttribute("data-mic"),
+    cameraDevice: await el.getAttribute("data-camera-device"),
+    swapped: await el.getAttribute("data-swapped"),
   }
 }
 
@@ -495,6 +510,108 @@ const scenarios = {
     }
   },
 
+  /**
+   * CALL-05 / CALL-06 / D-02 / D-05 dropped: in a voice call Ada mutes and unmutes, turns her camera on
+   * (Bob sees it), switches camera (a different device, Bob still receives video), swaps the views and
+   * hangs up. The pill has exactly four controls and no speaker control exists on either page.
+   */
+  async controls(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await connectVoice(ada, bob)
+    const screen = callDialog(ada, BOB)
+    const button = (name) => screen.getByRole("button", { name, exact: true })
+    const waitDiag = async (page, key, value, timeout) => {
+      let last = null
+      await until(
+        async () => {
+          last = (await diag(page))[key]
+          return last === value
+        },
+        timeout,
+        () => `${page.__name}'s ${key} is "${last}", expected "${value}"`,
+      )
+    }
+
+    await button("Mute").click()
+    await waitPressed(ada, BOB, "Mute", "true", 2_000)
+    await waitDiag(ada, "mic", "off", 2_000)
+    await button("Mute").click()
+    await waitPressed(ada, BOB, "Mute", "false", 2_000)
+    await waitDiag(ada, "mic", "on", 2_000)
+
+    await button("Camera").click()
+    await waitPressed(ada, BOB, "Camera", "true", 10_000)
+    await until(
+      async () => (await remoteVideoWidth(bob)) > 0 && (await diag(bob)).peerCamera === "true",
+      10_000,
+      "Bob never saw Ada's camera",
+    )
+    await button("Switch camera").waitFor({ state: "visible", timeout: 2_000 })
+    const pillButtons = await screen.getByTestId("call-controls").getByRole("button").count()
+    if (pillButtons !== 4) throw new Error(`Ada's control pill has ${pillButtons} buttons, expected 4`)
+    for (const page of [ada, bob]) {
+      if ((await page.getByRole("button", { name: /speaker/i }).count()) > 0) throw new Error(`${page.__name} shows a speaker control`)
+    }
+
+    const before = (await diag(ada)).cameraDevice
+    if (!before) throw new Error("Ada's camera has no deviceId")
+    await button("Switch camera").click()
+    let after = ""
+    await until(
+      async () => {
+        after = (await diag(ada)).cameraDevice
+        return after !== "" && after !== before
+      },
+      5_000,
+      () => `Ada's camera device did not change (still "${after}")`,
+    )
+    const bytes0 = (await diag(bob)).inboundBytes
+    await until(
+      async () => (await remoteVideoWidth(bob)) > 0 && (await diag(bob)).inboundBytes > bytes0,
+      5_000,
+      "Bob stopped receiving after the camera switch",
+    )
+    const adaCams = await cameraTrackStates(ada)
+    if (adaCams.filter((s) => s === "live").length !== 1) throw new Error(`Ada's camera tracks after the switch: [${adaCams.join(", ")}]`)
+
+    await screen.getByRole("button", { name: "Swap videos" }).click()
+    await waitDiag(ada, "swapped", "true", 2_000)
+    await screen.getByRole("button", { name: "Swap videos" }).click()
+    await waitDiag(ada, "swapped", "false", 2_000)
+
+    await hangUpBoth(ada, BOB, bob)
+    await expectTracksEnded(ada)
+    await expectTracksEnded(bob)
+  },
+
+  /**
+   * D-19 (camera half): Ada's camera is refused when she starts a video call. The call still rings and
+   * goes live audio-only with Camera unpressed; the toast offers "How to allow", which opens the drawer.
+   */
+  async "camera-denied"(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened, { denyCamera: true })
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await ada.getByRole("button", { name: "Video call" }).click()
+    const toast = toasts(ada).filter({ hasText: "duet can't use the camera." })
+    await toast.waitFor({ state: "visible", timeout: 5_000 })
+    const incoming = incomingDialog(bob, ADA)
+    await incoming.waitFor({ state: "visible", timeout: 10_000 })
+    await incoming.getByRole("button", { name: "Accept" }).click()
+    await Promise.all([waitPhase(ada, "live", 30_000), waitPhase(bob, "live", 30_000)])
+    await waitPressed(ada, BOB, "Camera", "false", 1_000)
+    const a = await diag(ada)
+    if (a.camera !== "false") throw new Error(`Ada's data-camera is "${a.camera}" with the camera refused`)
+    await toast.getByRole("button", { name: "How to allow" }).click()
+    const drawer = ada.getByTestId("permission-drawer")
+    await drawer.getByText("Allow the camera", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
+    await drawer.getByRole("button", { name: "Close" }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 3_000 })
+    if ((await diag(ada)).phase !== "live") throw new Error("the call did not survive the camera help drawer")
+    await hangUpBoth(ada, BOB, bob)
+    await expectTracksEnded(ada)
+  },
+
   /** D-19: a denied microphone starts no call and opens the "Allow the microphone" drawer. */
   async "mic-denied"(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened, { denyMic: true })
@@ -519,7 +636,8 @@ for (const name of names) {
   }
 }
 
-const browser = await launchBrowser()
+// Two fake cameras, so Switch camera has another device to open (the deviceId fallback, Pattern 5).
+const browser = await launchBrowser({ videoDevices: 2 })
 let exitCode = 0
 try {
   const [adaId, bobId] = await fixtureIds(BASE, [ADA.username, BOB.username])

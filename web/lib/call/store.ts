@@ -17,11 +17,14 @@ import { sendFrame } from "@/lib/chat/realtime"
 import { chatStore } from "@/lib/chat/store"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import type { CallSample } from "@/lib/rtc/stats"
-import { getCallMedia, getCamera, type CallMediaResult, type Facing } from "./media"
+import { flipCamera, getCallMedia, getCamera, type CallMediaResult, type Facing } from "./media"
 import { CallSession, forceRelayFlag } from "./session"
 import { startRingback, startRingtone, stopTones, unlockAudio, type Tone } from "./tones"
 
 export type CallPhase = "idle" | "ringing-out" | "ringing-in" | "connecting" | "live" | "ended"
+
+/** The corner the self-view PiP snapped to (kept for the rest of the call, D-02). */
+export type PipCorner = "tl" | "tr" | "bl" | "br"
 
 export interface CallState {
   phase: CallPhase
@@ -59,6 +62,11 @@ export interface CallState {
   remoteVideo: MediaStream | null
   /** The camera was refused for this call (D-19): the call runs audio-only. */
   cameraDenied: boolean
+  /** The microphone sends silence (track.enabled = false, CALL-05). */
+  muted: boolean
+  /** The self-view is large and the peer small (D-02 PiP tap); reset when either video stops. */
+  swapped: boolean
+  pipCorner: PipCorner
 }
 
 /** How long each terminal text stays before the call screen closes (UI-SPEC section 5). */
@@ -95,6 +103,9 @@ const EMPTY: CallState = {
   localVideo: null,
   remoteVideo: null,
   cameraDenied: false,
+  muted: false,
+  swapped: false,
+  pipCorner: "br",
 }
 
 let state: CallState = EMPTY
@@ -127,6 +138,13 @@ function desiredTone(s: CallState): Tone {
 /** Every state change goes through here: tones follow the phase, and so does the phase's guard timer. */
 function commit(next: CallState): void {
   const prev = state
+  // D-02: the swap resets when either video stops (this camera off, the peer's camera off, the call over).
+  if (
+    next.swapped &&
+    (!next.camera || (prev.peerCamera && !next.peerCamera) || next.phase === "ended" || next.phase === "idle")
+  ) {
+    next = { ...next, swapped: false }
+  }
   const tone = desiredTone(next)
   if (tone !== prev.tone) {
     if (tone === "ringback") startRingback()
@@ -221,6 +239,7 @@ function sendMedia(): void {
 function cameraDeniedToast(): void {
   toast("duet can't use the camera.", {
     id: "camera-denied",
+    duration: 10_000,
     action: { label: "How to allow", onClick: () => set({ permission: "camera" }) },
   })
 }
@@ -518,6 +537,78 @@ export const callStore = {
   /** Close a terminal state that waits for a tap. */
   dismiss(): void {
     if (state.phase === "ended") closeNow()
+  },
+
+  /** Mute or unmute the microphone (CALL-05): track.enabled, no renegotiation. */
+  toggleMute(): void {
+    if (!inCall(state.phase)) return
+    const muted = !state.muted
+    const mic = session?.micTrack ?? pendingMic
+    if (mic) mic.enabled = !muted
+    set({ muted })
+  },
+
+  /** Whether the live microphone track sends sound (call-diag data-mic); null without a microphone. */
+  micEnabled(): boolean | null {
+    const mic = session?.micTrack ?? pendingMic
+    return mic && mic.readyState === "live" ? mic.enabled : null
+  },
+
+  /** The open camera's deviceId (call-diag data-camera-device, T-03-15); "" while the camera is off. */
+  cameraDeviceId(): string {
+    const track = session?.cameraTrack ?? pendingCamera
+    return track && track.readyState === "live" ? (track.getSettings().deviceId ?? "") : ""
+  },
+
+  /**
+   * Switch between the front and back camera (CALL-06): the new track replaces the old one with
+   * replaceTrack and the self-view follows it (mirrored only for the front camera). A failure leaves
+   * the camera off and tells the peer.
+   */
+  async flip(): Promise<void> {
+    const callId = state.callId
+    if (!callId || !inCall(state.phase) || !state.camera || cameraBusy) return
+    const current = session?.cameraTrack ?? pendingCamera
+    if (!current) return
+    cameraBusy = true
+    let result: Awaited<ReturnType<typeof flipCamera>>
+    try {
+      result = await flipCamera(current, state.facing)
+    } finally {
+      cameraBusy = false
+    }
+    if (state.callId !== callId || !inCall(phaseNow()) || !state.camera) {
+      if (result.ok) result.track.stop()
+      return
+    }
+    if (!result.ok) {
+      // The old camera is already stopped: the call continues without video.
+      set({ camera: false, localVideo: null })
+      if (session) await session.setCamera(null)
+      else pendingCamera = null
+      sendMedia()
+      if (result.reason === "denied") cameraDeniedToast()
+      else toast("duet can't use the camera.", { id: "camera-denied" })
+      return
+    }
+    if (session) await session.setCamera(result.track)
+    else {
+      pendingCamera?.stop()
+      pendingCamera = result.track
+    }
+    if (state.callId !== callId || !inCall(phaseNow())) return
+    set({ facing: result.facing, localVideo: new MediaStream([result.track]) })
+  },
+
+  /** Swap the large and small views (a tap on the self-view, D-02). */
+  swap(): void {
+    if (!inCall(state.phase) || !state.camera) return
+    set({ swapped: !state.swapped })
+  },
+
+  /** The self-view was dragged to `corner`; it stays there for the rest of the call. */
+  setPipCorner(corner: PipCorner): void {
+    if (corner !== state.pipCorner) set({ pipCorner: corner })
   },
 
   /** Answer the ringing call on this device. */

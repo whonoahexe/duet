@@ -110,6 +110,11 @@ export class CallSession {
     return t?.sender ?? null
   }
 
+  /** The microphone this call sends (mute sets its enabled flag; no renegotiation, CALL-05). */
+  get micTrack(): MediaStreamTrack {
+    return this.o.mic
+  }
+
   /** The camera track being sent (null while the camera is off). */
   get cameraTrack(): MediaStreamTrack | null {
     return this.camera

@@ -97,3 +97,51 @@ export async function getCamera(facing: Facing): Promise<CameraResult> {
     return { ok: false, reason: denied(err) ? "denied" : "unavailable" }
   }
 }
+
+export type FlipResult = { ok: true; track: MediaStreamTrack; facing: Facing } | { ok: false; reason: "denied" | "unavailable" }
+
+function settledFacing(track: MediaStreamTrack, fallback: Facing): Facing {
+  const f = track.getSettings().facingMode
+  return f === "user" || f === "environment" ? f : fallback
+}
+
+/**
+ * Switch between the front and back camera (CALL-06, research Pattern 5). The current track is stopped
+ * first (an Android phone cannot open two cameras at once), then the other facing is opened with
+ * facingMode {exact}. Where that cannot be satisfied (OverconstrainedError: fake devices, desktops) the
+ * videoinput devices are cycled by deviceId instead; with a single camera that camera is reopened, so
+ * the call continues with no error. The returned facing follows the new track's settings (mirroring
+ * follows it), or the requested facing when the setting is absent.
+ */
+export async function flipCamera(current: MediaStreamTrack, facing: Facing): Promise<FlipResult> {
+  const next: Facing = facing === "user" ? "environment" : "user"
+  const currentId = current.getSettings().deviceId
+  current.stop()
+  if (!canCapture()) return { ok: false, reason: "unavailable" }
+  const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: next }, ...size } })
+    const track = stream.getVideoTracks()[0]
+    if (track) return { ok: true, track, facing: settledFacing(track, next) }
+    for (const t of stream.getTracks()) t.stop()
+  } catch (err) {
+    if (errorName(err) !== "OverconstrainedError") return { ok: false, reason: denied(err) ? "denied" : "unavailable" }
+  }
+  try {
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput" && d.deviceId)
+    const at = cams.findIndex((d) => d.deviceId === currentId)
+    const target = cams.length > 0 ? cams[(at + 1) % cams.length] : undefined
+    const video: MediaTrackConstraints = target ? { deviceId: { exact: target.deviceId }, ...size } : { facingMode: facing, ...size }
+    const stream = await navigator.mediaDevices.getUserMedia({ video })
+    const track = stream.getVideoTracks()[0]
+    if (!track) {
+      for (const t of stream.getTracks()) t.stop()
+      return { ok: false, reason: "unavailable" }
+    }
+    // The same (only) camera reopened keeps its facing.
+    const same = target !== undefined && target.deviceId === currentId
+    return { ok: true, track, facing: settledFacing(track, same || !target ? facing : next) }
+  } catch (err) {
+    return { ok: false, reason: denied(err) ? "denied" : "unavailable" }
+  }
+}

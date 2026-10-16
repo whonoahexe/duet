@@ -52,10 +52,15 @@ export function CallProvider({ me }: { me: MeResponse }) {
     if (call.remoteAudio) el.play().catch(() => {})
   }, [call.remoteAudio])
 
+  const mic = callStore.micEnabled()
+
   return (
     <>
       <audio ref={audioRef} autoPlay playsInline className="hidden" />
-      {/* E2E diagnostics (T-03-07): phase, call id, candidate type and byte counts only. */}
+      {/*
+        E2E diagnostics (T-03-07, T-03-15): phase, call id, candidate type, byte counts, camera/mic flags,
+        swap state and the per-origin camera deviceId only.
+      */}
       <div
         hidden
         data-testid="call-diag"
@@ -66,6 +71,9 @@ export function CallProvider({ me }: { me: MeResponse }) {
         data-tone={call.tone}
         data-camera={call.camera ? "true" : "false"}
         data-peer-camera={call.peerCamera ? "true" : "false"}
+        data-mic={mic === null ? "" : mic ? "on" : "off"}
+        data-camera-device={callStore.cameraDeviceId()}
+        data-swapped={call.swapped ? "true" : "false"}
       />
       <CallScreen />
       <IncomingCall />

@@ -1,13 +1,19 @@
 "use client"
 
-import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { PhoneDisconnectIcon, VideoCameraIcon, WarningCircleIcon } from "@phosphor-icons/react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import {
+  CameraRotateIcon,
+  MicrophoneSlashIcon,
+  PhoneDisconnectIcon,
+  VideoCameraIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react"
 import { formatCallDuration } from "@duet/shared"
 import { initials } from "@/components/app/login-tiles"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { callStore, useCall, type CallState } from "@/lib/call/store"
+import { callStore, useCall, type CallState, type PipCorner } from "@/lib/call/store"
 import { cn } from "@/lib/utils"
 
 /** Full-screen dialog layout shared by the call and incoming screens (the Phase 2 viewer's classes). */
@@ -154,47 +160,233 @@ function CouldntConnect() {
   )
 }
 
+/** Movement under this many px is a tap on the self-view (swap); this much or more is a drag (UI-SPEC). */
+const DRAG_THRESHOLD_PX = 8
+const SNAP_MS = 200
+/** D-02: the video controls fade this long after the last tap or control press. */
+const AUTO_HIDE_MS = 4000
+
+function reducedMotion(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+}
+
+/**
+ * Corner placement of the self-view: 16px inside the safe area, top corners below the 56px top bar,
+ * bottom corners 16px above the control pill (88px tall) while the pill shows.
+ */
+function cornerClasses(corner: PipCorner, pillShown: boolean): string {
+  const vertical = corner.startsWith("t")
+    ? "top-[calc(env(safe-area-inset-top)+56px+16px)]"
+    : pillShown
+      ? "bottom-[calc(max(24px,env(safe-area-inset-bottom))+88px+16px)]"
+      : "bottom-[calc(env(safe-area-inset-bottom)+16px)]"
+  const horizontal = corner.endsWith("l")
+    ? "left-[calc(env(safe-area-inset-left)+16px)]"
+    : "right-[calc(env(safe-area-inset-right)+16px)]"
+  return `${vertical} ${horizontal}`
+}
+
+/**
+ * The self-view PiP (D-02): a 96x128 button. A drag of 8px or more follows the finger and snaps to the
+ * nearest corner in 200ms (instant under reduced motion); a tap under 8px swaps the large and small
+ * views. Pointer capture keeps the drag on the PiP when the finger leaves it.
+ */
+function SelfViewPip({
+  corner,
+  pillShown,
+  children,
+}: {
+  corner: PipCorner
+  pillShown: boolean
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLButtonElement>(null)
+  const drag = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null)
+  /** A drag just ended: the click that follows the pointerup is not a tap. */
+  const dragged = useRef(false)
+  /** Where the PiP was dropped, for the snap animation once the new corner is laid out. */
+  const dropped = useRef<DOMRect | null>(null)
+
+  /** Animate from the dropped position to the corner it is laid out at now (FLIP). */
+  const animateFrom = useCallback((from: DOMRect) => {
+    const el = ref.current
+    if (!el) return
+    el.style.transition = "none"
+    el.style.transform = ""
+    if (reducedMotion()) return
+    const to = el.getBoundingClientRect()
+    el.style.transform = `translate(${from.left - to.left}px, ${from.top - to.top}px)`
+    void el.offsetWidth
+    el.style.transition = `transform ${SNAP_MS}ms ease-out`
+    el.style.transform = ""
+  }, [])
+
+  useLayoutEffect(() => {
+    const from = dropped.current
+    dropped.current = null
+    if (from) animateFrom(from)
+  }, [corner, animateFrom])
+
+  function release(e: React.PointerEvent<HTMLButtonElement>) {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    drag.current = null
+    if (!d.moved) return
+    dragged.current = true
+    const el = e.currentTarget
+    const rect = el.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+    const next = `${cy < window.innerHeight / 2 ? "t" : "b"}${cx < window.innerWidth / 2 ? "l" : "r"}` as PipCorner
+    if (next === corner) animateFrom(rect)
+    else {
+      dropped.current = rect
+      callStore.setPipCorner(next)
+    }
+  }
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label="Swap videos"
+      data-testid="self-view"
+      className={cn(
+        "absolute z-20 h-32 w-24 touch-none overflow-hidden rounded-2xl bg-muted ring-1 ring-border outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+        cornerClasses(corner, pillShown),
+      )}
+      onPointerDown={(e) => {
+        dragged.current = false
+        drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false }
+        e.currentTarget.setPointerCapture?.(e.pointerId)
+        e.currentTarget.style.transition = "none"
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current
+        if (!d || d.id !== e.pointerId) return
+        const dx = e.clientX - d.x
+        const dy = e.clientY - d.y
+        if (!d.moved && Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) d.moved = true
+        if (d.moved) e.currentTarget.style.transform = `translate(${dx}px, ${dy}px)`
+      }}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onClick={() => {
+        if (dragged.current) {
+          dragged.current = false
+          return
+        }
+        callStore.swap()
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
+ * D-02 auto-hide: in Mode B the top bar and the pill fade 4 s after the last tap, control press or key
+ * press, and come back on the next one. They never hide while `canHide` is false (Mode A, a status
+ * other than the timer, keyboard focus inside them).
+ */
+function useAutoHide(canHide: boolean, open: boolean): { hidden: boolean; poke: () => void } {
+  const [hidden, setHidden] = useState(false)
+  const [activity, setActivity] = useState(0)
+  const poke = useCallback(() => {
+    setHidden(false)
+    setActivity((n) => n + 1)
+  }, [])
+  useEffect(() => {
+    if (!canHide || hidden) return
+    const timer = setTimeout(() => setHidden(true), AUTO_HIDE_MS)
+    return () => clearTimeout(timer)
+  }, [canHide, hidden, activity])
+  useEffect(() => {
+    if (!open) return
+    window.addEventListener("keydown", poke)
+    return () => window.removeEventListener("keydown", poke)
+  }, [open, poke])
+  return { hidden: hidden && canHide, poke }
+}
+
+/** Keyboard / screen-reader focus inside a group keeps it from hiding (mouse and touch focus do not). */
+function useFocusInside(): [boolean, { onFocus: (e: React.FocusEvent) => void; onBlur: (e: React.FocusEvent) => void }] {
+  const [inside, setInside] = useState(false)
+  return [
+    inside,
+    {
+      onFocus: (e) => {
+        if ((e.target as HTMLElement).matches?.(":focus-visible")) setInside(true)
+      },
+      onBlur: (e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setInside(false)
+      },
+    },
+  ]
+}
+
 /**
  * The call screen (UI-SPEC section 2). Mode A (no remote video): who you are talking to and the status
  * line. Mode B (the peer's camera is on and a frame decoded): the remote video fills the screen under a
- * translucent top bar. Either mode shows the self-view while this side's camera is on, and the control
- * pill. Open while a call rings out, connects, runs, or shows its end text.
+ * translucent top bar, and the bar and the pill auto-hide. Either mode shows the self-view while this
+ * side's camera is on; tapping it swaps the large and small views. Open while a call rings out,
+ * connects, runs, or shows its end text.
  */
 export function CallScreen() {
   const call = useCall()
   const elapsed = useElapsed(call.phase === "live" ? call.mediaStartedAt : null)
   const [remoteFrame, onRemoteFrame] = useRemoteFrame(call.peerCamera)
-  const modeB = remoteFrame && call.phase !== "ended"
+  const ended = call.phase === "ended"
+  const modeB = remoteFrame && !ended
+  const selfOn = call.camera && call.localVideo !== null && !ended
+  const swapped = call.swapped && selfOn
+  /** A video fills the screen: the translucent top bar replaces the centered identity block. */
+  const videoLayout = modeB || swapped
   const status = statusText(call, elapsed)
   const open =
     call.phase === "ringing-out" ||
     call.phase === "connecting" ||
     call.phase === "live" ||
-    (call.phase === "ended" && (call.endText !== null || call.endState !== null))
-  const failed = call.phase === "ended" && call.endState === "couldnt-connect"
-  const showPill = call.phase !== "ended"
+    (ended && (call.endText !== null || call.endState !== null))
+  const failed = ended && call.endState === "couldnt-connect"
+  const showPill = !ended
+  const [focusInside, focusHandlers] = useFocusInside()
+  const { hidden, poke } = useAutoHide(modeB && call.phase === "live" && !focusInside, open)
+  const pillShown = showPill && !hidden
+  const fade = cn("transition-opacity duration-200 motion-reduce:transition-none", hidden && "opacity-0")
+  const mirrored = call.facing === "user" && "-scale-x-100"
+
+  const remoteVideo = call.remoteVideo && !ended && (
+    <StreamVideo
+      stream={call.remoteVideo}
+      testId="remote-video"
+      onFrame={onRemoteFrame}
+      className={swapped ? "size-full object-cover" : cn("absolute inset-0 size-full bg-background object-cover", !modeB && "opacity-0")}
+    />
+  )
 
   return (
     <Dialog open={open} disablePointerDismissal>
-      <DialogContent showCloseButton={false} className={FULL_SCREEN_DIALOG}>
+      <DialogContent showCloseButton={false} className={FULL_SCREEN_DIALOG} onPointerDownCapture={poke}>
         <DialogTitle className="sr-only">Call with {call.peerName}</DialogTitle>
         <div aria-live="polite" className="sr-only">
           {announcement(call)}
         </div>
-        {/* Always mounted while a call runs, so its first frame can be seen before Mode B shows it. */}
-        {call.remoteVideo && call.phase !== "ended" && (
-          <StreamVideo
-            stream={call.remoteVideo}
-            testId="remote-video"
-            onFrame={onRemoteFrame}
-            className={cn("absolute inset-0 size-full bg-background object-cover", !modeB && "opacity-0")}
-          />
+        {/* The remote video stays mounted while a call runs, so its first frame is seen before Mode B. */}
+        {swapped ? (
+          <StreamVideo stream={call.localVideo} className={cn("absolute inset-0 size-full bg-background object-cover", mirrored)} />
+        ) : (
+          remoteVideo
         )}
         {failed ? (
           <CouldntConnect />
-        ) : modeB ? (
+        ) : videoLayout ? (
           <>
-            <div className="relative z-10 bg-background/60 pt-[env(safe-area-inset-top)] backdrop-blur-md">
+            <div
+              className={cn("relative z-10 bg-background/60 pt-[env(safe-area-inset-top)] backdrop-blur-md", fade)}
+              inert={hidden}
+              {...focusHandlers}
+            >
               <div className="flex h-14 items-center gap-3 px-4">
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-medium">{call.peerName}</span>
@@ -214,19 +406,38 @@ export function CallScreen() {
             <div className="flex-1" />
           </>
         )}
-        {call.camera && call.localVideo && call.phase !== "ended" && (
-          <div
-            data-testid="self-view"
-            className="absolute right-4 bottom-[calc(max(24px,env(safe-area-inset-bottom))+88px+16px)] z-20 h-32 w-24 overflow-hidden rounded-2xl bg-muted ring-1 ring-border"
-          >
-            <StreamVideo
-              stream={call.localVideo}
-              className={cn("size-full object-cover", call.facing === "user" && "-scale-x-100")}
-            />
-          </div>
+        {selfOn && (
+          <SelfViewPip corner={call.pipCorner} pillShown={pillShown}>
+            {!swapped ? (
+              <StreamVideo stream={call.localVideo} className={cn("size-full object-cover", mirrored)} />
+            ) : modeB ? (
+              remoteVideo
+            ) : (
+              <span className="flex size-full items-center justify-center text-xl font-medium">{initials(call.peerName)}</span>
+            )}
+          </SelfViewPip>
         )}
+        {swapped && !modeB && <div className="hidden">{remoteVideo}</div>}
         {showPill && (
-          <div className="relative z-10 mx-auto mb-[max(24px,env(safe-area-inset-bottom))] flex items-center gap-4 rounded-4xl bg-background/60 px-4 py-4 backdrop-blur-md max-[379px]:gap-2">
+          <div
+            data-testid="call-controls"
+            className={cn(
+              "relative z-10 mx-auto mb-[max(24px,env(safe-area-inset-bottom))] flex items-center gap-4 rounded-4xl bg-background/60 px-4 py-4 backdrop-blur-md max-[379px]:gap-2",
+              fade,
+            )}
+            inert={hidden}
+            {...focusHandlers}
+          >
+            <Button
+              size="icon"
+              variant="secondary"
+              className={cn(CONTROL, call.muted && PRESSED_TOGGLE)}
+              aria-label="Mute"
+              aria-pressed={call.muted}
+              onClick={() => callStore.toggleMute()}
+            >
+              <MicrophoneSlashIcon weight="fill" className="size-6" />
+            </Button>
             <Button
               size="icon"
               variant="secondary"
@@ -237,6 +448,17 @@ export function CallScreen() {
             >
               <VideoCameraIcon weight="fill" className="size-6" />
             </Button>
+            {call.camera && (
+              <Button
+                size="icon"
+                variant="secondary"
+                className={CONTROL}
+                aria-label="Switch camera"
+                onClick={() => void callStore.flip()}
+              >
+                <CameraRotateIcon weight="fill" className="size-6" />
+              </Button>
+            )}
             <Button
               size="icon"
               variant="destructive"

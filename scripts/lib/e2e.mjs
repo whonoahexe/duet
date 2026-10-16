@@ -2,14 +2,17 @@
 // Never prints cookies or passwords.
 import { chromium } from "playwright-core"
 
-/** System Chrome, headless, with fake camera/mic so media prompts never block (CHROME overrides the path). */
-export function launchBrowser() {
+/**
+ * System Chrome, headless, with fake camera/mic so media prompts never block (CHROME overrides the path).
+ * `videoDevices` exposes that many fake cameras (the flip-camera E2E needs 2); omitted, the default flag.
+ */
+export function launchBrowser({ videoDevices } = {}) {
   return chromium.launch({
     executablePath: process.env.CHROME ?? "/usr/bin/google-chrome",
     headless: true,
     args: [
       "--use-fake-ui-for-media-stream",
-      "--use-fake-device-for-media-stream",
+      videoDevices ? `--use-fake-device-for-media-stream=device-count=${videoDevices}` : "--use-fake-device-for-media-stream",
       "--autoplay-policy=no-user-gesture-required",
     ],
   })
