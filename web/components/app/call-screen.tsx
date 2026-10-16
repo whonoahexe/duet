@@ -126,8 +126,10 @@ export function useElapsed(since: number | null): string {
   return formatCallDuration(since === null ? 0 : now - since)
 }
 
+/** The status line, highest priority first (UI-SPEC section 2): terminal, Reconnecting…, Ringing…, Connecting…, timer. */
 function statusText(call: CallState, elapsed: string): string {
   if (call.phase === "ended") return call.endText ?? ""
+  if (call.reconnecting) return "Reconnecting…"
   if (call.phase === "ringing-out") return "Ringing…"
   if (call.phase === "connecting") return "Connecting…"
   return elapsed
@@ -135,23 +137,31 @@ function statusText(call: CallState, elapsed: string): string {
 
 /** What the visually hidden aria-live region says for each state (UI-SPEC Accessibility). */
 function announcement(call: CallState): string {
-  if (call.phase === "ended") return call.endState === "couldnt-connect" ? "Couldn't connect" : (call.endText ?? "")
+  if (call.phase === "ended") {
+    if (call.endState === "couldnt-connect") return "Couldn't connect"
+    if (call.endState === "call-dropped") return "Call dropped"
+    return call.endText ?? ""
+  }
+  if (call.reconnecting) return "Reconnecting…"
   if (call.phase === "ringing-out") return "Ringing…"
   if (call.phase === "connecting") return "Connecting…"
   if (call.phase === "live") return "Connected"
   return ""
 }
 
-/** "Couldn't connect" (D-19, UI-SPEC section 5): icon, title, body, then Retry (accent) and Close. */
-function CouldntConnect() {
+/**
+ * The terminal states with actions (UI-SPEC section 5): "Couldn't connect" (D-19) with its body and
+ * Retry, or "Call dropped" (D-17) with Call back; both then Close. Icon, title, 32px, the stacked buttons.
+ */
+function TerminalActions({ dropped }: { dropped: boolean }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
       <WarningCircleIcon weight="fill" className="size-12 text-muted-foreground" />
-      <span className="mt-4 text-xl font-medium tracking-tight">Couldn&apos;t connect</span>
-      <span className="mt-1 text-base text-muted-foreground">Check your connection and try again.</span>
+      <span className="mt-4 text-xl font-medium tracking-tight">{dropped ? "Call dropped" : "Couldn't connect"}</span>
+      {!dropped && <span className="mt-1 text-base text-muted-foreground">Check your connection and try again.</span>}
       <div className="mt-8 flex w-full max-w-xs flex-col gap-2">
-        <Button variant="default" size="lg" className="w-full" onClick={() => callStore.retry()}>
-          Retry
+        <Button variant="default" size="lg" className="w-full" onClick={() => (dropped ? callStore.callBack() : callStore.retry())}>
+          {dropped ? "Call back" : "Retry"}
         </Button>
         <Button variant="ghost" size="lg" className="w-full" onClick={() => callStore.dismiss()}>
           Close
@@ -347,10 +357,11 @@ export function CallScreen() {
   const active = call.phase === "ringing-out" || call.phase === "connecting" || call.phase === "live"
   // D-06: a minimized call keeps running with this Dialog closed (the on-call bar brings it back).
   const open = call.screen === "open" && (active || (ended && (call.endText !== null || call.endState !== null)))
-  const failed = ended && call.endState === "couldnt-connect"
+  const failed = ended && call.endState !== null
   const showPill = !ended
   const [focusInside, focusHandlers] = useFocusInside()
-  const { hidden, poke } = useAutoHide(modeB && call.phase === "live" && !focusInside, open)
+  // Never auto-hide while a status other than the timer shows (Reconnecting…, UI-SPEC section 2).
+  const { hidden, poke } = useAutoHide(modeB && call.phase === "live" && !call.reconnecting && !focusInside, open)
   const pillShown = showPill && !hidden
   const fade = cn("transition-opacity duration-200 motion-reduce:transition-none", hidden && "opacity-0")
   const mirrored = call.facing === "user" && "-scale-x-100"
@@ -391,7 +402,7 @@ export function CallScreen() {
           remoteVideo
         )}
         {failed ? (
-          <CouldntConnect />
+          <TerminalActions dropped={call.endState === "call-dropped"} />
         ) : videoLayout ? (
           <>
             <div

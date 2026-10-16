@@ -6,6 +6,10 @@ import { sampleCall, type CallSample } from "@/lib/rtc/stats"
 
 /** getStats cadence while a call runs (the INFR-04 sample shape, reused for the timer start). */
 const SAMPLE_INTERVAL_MS = 2000
+/** CALL-07: the caller restarts ICE once the connection has been disconnected this long (Pattern 7)... */
+export const ICE_RESTART_AFTER_MS = 2000
+/** ...and again this often while it stays disconnected or failed (an ICE-restart offer can be lost). */
+export const ICE_RESTART_RETRY_MS = 5000
 
 export interface CallSessionOptions {
   callId: string
@@ -51,6 +55,7 @@ export class CallSession {
   private readonly peer: Peer
   private camera: MediaStreamTrack | null
   private sampleTimer: ReturnType<typeof setInterval> | null = null
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
   private sampling = false
   private closed = false
 
@@ -97,6 +102,7 @@ export class CallSession {
     const pc = this.peer.pc
     pc.addEventListener("connectionstatechange", () => {
       if (this.closed) return
+      this.watchIce()
       o.onState?.(pc.connectionState)
       if (pc.connectionState === "connected") void this.sample()
     })
@@ -141,6 +147,63 @@ export class CallSession {
     }
   }
 
+  /** The peer connection's aggregate state ("closed" once the session is closed). */
+  get connectionState(): RTCPeerConnectionState {
+    return this.closed ? "closed" : this.peer.pc.connectionState
+  }
+
+  /**
+   * CALL-07 (Pattern 7 step 2): the caller (the fixed offerer) restarts ICE on "failed" at once, and on
+   * "disconnected" after ICE_RESTART_AFTER_MS, then every ICE_RESTART_RETRY_MS until it is connected
+   * again. The callee never offers; it answers the caller's ICE-restart offer. The RTCPeerConnection is
+   * never recreated (anti-pattern: a rejoin keeps the PC and restarts ICE).
+   */
+  private watchIce(): void {
+    const st = this.peer.pc.connectionState
+    if (st !== "disconnected" && st !== "failed") {
+      this.clearRestartTimer()
+      return
+    }
+    if (this.role !== "caller") return
+    if (st === "failed") {
+      this.clearRestartTimer()
+      this.restartIce()
+    }
+    if (this.restartTimer !== null) return
+    const tick = (ms: number) => {
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = null
+        const now = this.connectionState
+        if (now !== "disconnected" && now !== "failed") return
+        this.restartIce()
+        tick(ICE_RESTART_RETRY_MS)
+      }, ms)
+    }
+    tick(st === "failed" ? ICE_RESTART_RETRY_MS : ICE_RESTART_AFTER_MS)
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer !== null) clearTimeout(this.restartTimer)
+    this.restartTimer = null
+  }
+
+  /** ICE restart from the caller: a lost pending offer is rolled back first (Pitfall 2). */
+  restartIce(): void {
+    if (this.closed || this.role !== "caller") return
+    this.peer.restart().catch((err: unknown) => console.error("call: ICE restart failed", err))
+  }
+
+  /**
+   * The peer is (back) in room call-<id> (room.peer-joined, or room.joined with a peer). Anything it was
+   * sent while away is lost, so the caller restarts ICE unless media is already connected (Pitfall 2).
+   */
+  peerPresent(): void {
+    if (this.closed || this.role !== "caller" || this.peer.pc.connectionState === "connected") return
+    // Before the first offer went out there is nothing to recover: negotiationneeded sends it.
+    if (this.peer.pc.signalingState === "stable" && !this.peer.pc.remoteDescription) return
+    this.restartIce()
+  }
+
   /** rtc.signal frames of this call's room go to the peer connection; anything else is ignored. */
   handleRoomFrame(frame: ServerFrame): void {
     if (this.closed || frame.t !== "rtc.signal" || frame.room !== this.room) return
@@ -166,6 +229,7 @@ export class CallSession {
     this.closed = true
     if (this.sampleTimer !== null) clearInterval(this.sampleTimer)
     this.sampleTimer = null
+    this.clearRestartTimer()
     this.peer.close()
     for (const track of this.local.getTracks()) track.stop()
     this.o.mic.stop()

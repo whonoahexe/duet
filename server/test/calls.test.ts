@@ -264,3 +264,107 @@ describe("call.media (D-03, T-03-14)", () => {
     await nextOf(bob, "call.ended")
   })
 })
+
+describe("call.rejoin (CALL-07, D-17, T-03-17, T-03-18)", () => {
+  // Its own app with short absence timers (and its own flood-guard budget).
+  let r: TestApp
+  let aCookie: string
+  let a2Cookie: string
+  let bCookie: string
+  beforeAll(async () => {
+    r = await makeTestApp({ seed: true, callTimers: { absentGraceMs: 300, callerAbsentMs: 300 } })
+    aCookie = await loginCookie(r.app, "alice")
+    a2Cookie = await loginCookie(r.app, "alice")
+    bCookie = await loginCookie(r.app, "bob")
+  })
+  afterAll(async () => {
+    await r.close()
+  })
+  const connectAlice = () => connect(aCookie, r)
+  const connectAlice2 = () => connect(a2Cookie, r)
+  const connectBob = () => connect(bCookie, r)
+
+  it("rebinds a same-session socket: evicts the stale connection from the room, joins the new one and answers call.state", async () => {
+    const alice = await connectAlice()
+    const bob = await connectBob()
+    const callId = await activeCall(alice, bob)
+    const room = `call-${callId}`
+    const fresh = await connectAlice()
+    fresh.send({ t: "call.rejoin", callId })
+
+    expect(await nextOf(bob, "room.peer-left")).toEqual({ t: "room.peer-left", room, connId: alice.connId })
+    expect(await nextOf(bob, "room.peer-joined")).toEqual({
+      t: "room.peer-joined",
+      room,
+      peer: { connId: fresh.connId, userId: fresh.userId },
+    })
+    expect(await nextOf(fresh, "room.joined")).toEqual({ t: "room.joined", room, peers: [{ connId: bob.connId, userId: bob.userId }] })
+    expect(await nextOf(fresh, "call.state")).toEqual({ t: "call.state", callId, status: "active", peerCamera: false })
+
+    const data = { candidate: null }
+    bob.send({ t: "rtc.signal", room, data })
+    expect(await nextOf(fresh, "rtc.signal")).toEqual({ t: "rtc.signal", room, from: bob.connId, data })
+    expect((await alice.collect(150)).filter((f) => f.t === "rtc.signal")).toEqual([])
+    fresh.send({ t: "call.end", callId })
+    expect(await nextOf(bob, "call.ended")).toEqual({ t: "call.ended", callId, reason: "hangup" })
+  })
+
+  it("refuses a rejoin from another session of the same person and keeps the original binding", async () => {
+    const alice = await connectAlice()
+    const alice2 = await connectAlice2()
+    const bob = await connectBob()
+    const callId = await activeCall(alice, bob)
+    const room = `call-${callId}`
+    alice2.send({ t: "call.rejoin", callId })
+    expect(await nextOf(alice2, "error")).toEqual({ t: "error", code: "not_allowed" })
+    expect((await bob.collect(150)).filter((f) => f.t === "room.peer-left" || f.t === "room.peer-joined")).toEqual([])
+    bob.send({ t: "rtc.signal", room, data: { candidate: null } })
+    expect((await nextOf(alice, "rtc.signal")).from).toBe(bob.connId)
+    alice.send({ t: "call.end", callId })
+    await nextOf(bob, "call.ended")
+  })
+
+  it("keeps an active call whose party closed its socket and rejoined within the absence grace", async () => {
+    const alice = await connectAlice()
+    const bob = await connectBob()
+    const callId = await activeCall(alice, bob)
+    alice.ws.terminate()
+    await alice.closed
+    const fresh = await connectAlice()
+    fresh.send({ t: "call.rejoin", callId })
+    expect(await nextOf(fresh, "call.state")).toEqual({ t: "call.state", callId, status: "active", peerCamera: false })
+    const later = [...(await bob.collect(600)), ...(await fresh.collect(0))]
+    expect(later.filter((f) => f.t === "call.ended")).toEqual([])
+    fresh.send({ t: "call.end", callId })
+    expect(await nextOf(bob, "call.ended")).toEqual({ t: "call.ended", callId, reason: "hangup" })
+  })
+
+  it("rebinds the caller while the call rings, and the call is not cancelled after callerAbsentMs", async () => {
+    const alice = await connectAlice()
+    const bob = await connectBob()
+    const callId = await ring(alice, bob)
+    alice.ws.terminate()
+    await alice.closed
+    const fresh = await connectAlice()
+    fresh.send({ t: "call.rejoin", callId })
+    expect(await nextOf(fresh, "call.state")).toEqual({ t: "call.state", callId, status: "ringing", peerCamera: false })
+    expect((await bob.collect(600)).filter((f) => f.t === "call.ended")).toEqual([])
+    // The new connection is the caller now: it can cancel.
+    fresh.send({ t: "call.end", callId })
+    expect(await nextOf(bob, "call.ended")).toEqual({ t: "call.ended", callId, reason: "cancelled" })
+  })
+
+  it("answers call.ended dropped for an unknown call and the stored reason for an ended one", async () => {
+    const alice = await connectAlice()
+    const bob = await connectBob()
+    const unknown = randomUUID()
+    alice.send({ t: "call.rejoin", callId: unknown })
+    expect(await nextOf(alice, "call.ended")).toEqual({ t: "call.ended", callId: unknown, reason: "dropped" })
+    const callId = await activeCall(alice, bob)
+    alice.send({ t: "call.end", callId })
+    await nextOf(alice, "call.ended")
+    await nextOf(bob, "call.ended")
+    bob.send({ t: "call.rejoin", callId })
+    expect(await nextOf(bob, "call.ended")).toEqual({ t: "call.ended", callId, reason: "hangup" })
+  })
+})

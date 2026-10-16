@@ -223,6 +223,7 @@ export function createHub({ log, heartbeatMs, isSessionLive }: HubOptions): Hub 
       case "call.decline":
       case "call.end":
       case "call.media":
+      case "call.rejoin":
         callHooks?.onFrame(connId, conn.userId, frame)
         return
     }

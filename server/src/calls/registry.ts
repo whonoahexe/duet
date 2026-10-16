@@ -97,7 +97,7 @@ interface Call {
   callerSession: string | undefined
   calleeConn?: string
   calleeSession?: string
-  /** D-03: each party's last call.media camera flag (kept for the 03-04 call.state resend). */
+  /** D-03: each party's last call.media camera flag (resent in call.state on a rejoin). */
   callerCamera: boolean
   calleeCamera: boolean
   startedAt: number
@@ -333,10 +333,64 @@ export function createCallRegistry({
     if (other) transport.sendToConn(other, { t: "call.media", callId: call.id, camera })
   }
 
+  /**
+   * call.rejoin (CALL-07, D-17, T-03-17/18): a new connection of the session that was bound at invite
+   * (caller) or accept (callee) takes that party's place again. The stale connection leaves call-<id>
+   * before the new one joins (Pitfall 1: a half-open socket would otherwise fill the room), the absence
+   * timer stops, and the new connection hears call.state. Any other session, even the same person's
+   * other phone, gets not_allowed; a call that is over answers call.ended.
+   */
+  function rejoin(connId: string, userId: string, callId: string): void {
+    const call = current
+    if (!call || call.id !== callId) {
+      const r = recent.get(callId)
+      const party = r !== undefined && (userId === r.callerId || userId === r.calleeId)
+      transport.sendToConn(connId, { t: "call.ended", callId, reason: party ? r.reason : "dropped" })
+      return
+    }
+    const session = transport.sessionOf(connId)
+    const asCaller = userId === call.callerId && session !== undefined && session === call.callerSession
+    const asCallee =
+      !asCaller && call.status === "active" && userId === call.calleeId && session !== undefined && session === call.calleeSession
+    if (!asCaller && !asCallee) {
+      notAllowed(connId)
+      return
+    }
+    log.info({ evt: "call_rejoin", callId: call.id, userId })
+    if (call.absentTimer !== undefined) clearTimeout(call.absentTimer)
+    call.absentTimer = undefined
+    if (call.status === "ringing") {
+      call.callerConn = connId
+      transport.sendToConn(connId, { t: "call.state", callId: call.id, status: "ringing", peerCamera: false })
+      return
+    }
+    const room = callRoom(call.id)
+    const previous = asCaller ? call.callerConn : call.calleeConn
+    if (previous !== undefined && previous !== connId) transport.serverLeave(previous, room)
+    if (asCaller) call.callerConn = connId
+    else call.calleeConn = connId
+    transport.serverJoin(connId, room)
+    // The absence timer is shared: the other party may still be away, so its grace starts again.
+    const other = asCaller ? call.calleeConn : call.callerConn
+    if (other === undefined || transport.sessionOf(other) === undefined) {
+      call.absentTimer = timer(() => end(call, "dropped"), absentGraceMs)
+    }
+    transport.sendToConn(connId, {
+      t: "call.state",
+      callId: call.id,
+      status: "active",
+      peerCamera: asCaller ? call.calleeCamera : call.callerCamera,
+    })
+  }
+
   return {
     onFrame(connId, userId, frame) {
       if (frame.t === "call.invite") {
         invite(connId, userId, frame.callId, frame.kind)
+        return
+      }
+      if (frame.t === "call.rejoin") {
+        rejoin(connId, userId, frame.callId)
         return
       }
       const call = current

@@ -29,6 +29,12 @@ export interface PeerOptions {
 export interface Peer {
   pc: RTCPeerConnection
   handleSignal: (data: SignalData) => Promise<void>
+  /**
+   * ICE restart that survives a lost offer (CALL-07, Pitfall 2): a pending local offer whose answer
+   * can no longer come (the peer was away when it was relayed) is rolled back first, then restartIce()
+   * makes negotiationneeded send a fresh ICE-restart offer through perfect negotiation.
+   */
+  restart: () => Promise<void>
   close: () => void
 }
 
@@ -123,9 +129,23 @@ export function createPeer(o: PeerOptions): Peer {
     }
   }
 
+  async function restart(): Promise<void> {
+    if (closed) return
+    if (pc.signalingState === "have-local-offer") {
+      try {
+        await pc.setLocalDescription({ type: "rollback" })
+      } catch (err) {
+        console.error("rollback failed", err)
+      }
+    }
+    if (closed) return
+    pc.restartIce()
+  }
+
   return {
     pc,
     handleSignal,
+    restart,
     close: () => {
       if (closed) return
       closed = true

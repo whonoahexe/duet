@@ -7,7 +7,7 @@ import { IncomingCall } from "@/components/app/incoming-call"
 import { PermissionDrawer } from "@/components/app/permission-drawer"
 import { callStore, useCall } from "@/lib/call/store"
 import { OPEN_CALL_EVENT } from "@/lib/chat/events"
-import { onRealtimeFrame } from "@/lib/chat/realtime"
+import { onRealtimeDown, onRealtimeFrame, onRealtimeLive } from "@/lib/chat/realtime"
 
 /** Look up a call named by a notification tap; anything that is not a call id is ignored (T-03-10). */
 function checkCallId(raw: unknown): void {
@@ -29,7 +29,15 @@ export function CallProvider({ me }: { me: MeResponse }) {
 
   useEffect(() => {
     callStore.init(me)
-    return onRealtimeFrame((frame) => callStore.handleFrame(frame))
+    const offFrame = onRealtimeFrame((frame) => callStore.handleFrame(frame))
+    // CALL-07: a reconnected socket rejoins the call; a lost one shows "Reconnecting…".
+    const offLive = onRealtimeLive(() => callStore.onRealtimeLive())
+    const offDown = onRealtimeDown(() => callStore.onRealtimeDown())
+    return () => {
+      offFrame()
+      offLive()
+      offDown()
+    }
   }, [me])
 
   // D-09 / D-10: the app was opened from a call notification (/?call=<id> or /?missed=<id>), or a tap
@@ -74,6 +82,7 @@ export function CallProvider({ me }: { me: MeResponse }) {
         data-mic={mic === null ? "" : mic ? "on" : "off"}
         data-camera-device={callStore.cameraDeviceId()}
         data-swapped={call.swapped ? "true" : "false"}
+        data-reconnecting={call.reconnecting ? "true" : "false"}
       />
       <CallScreen />
       <IncomingCall />

@@ -17,12 +17,26 @@ interface RealtimeOptions {
 }
 
 type FrameListener = (frame: ServerFrame) => void
+type StateListener = () => void
 
 /**
  * Other modules' view of the socket's frames (the call store, Phase 3). Module-level, so it survives
  * stopRealtime/startRealtime: listeners registered before the first hello never miss a call.ring.
  */
 const frameListeners = new Set<FrameListener>()
+/** Fired on every hello (a socket became live) and whenever a live socket is lost (CALL-07 rejoin). */
+const liveListeners = new Set<StateListener>()
+const downListeners = new Set<StateListener>()
+
+function emit(listeners: Set<StateListener>, what: string): void {
+  for (const listener of listeners) {
+    try {
+      listener()
+    } catch (err) {
+      console.error(`realtime: ${what} listener failed`, err)
+    }
+  }
+}
 
 function isVisible(): boolean {
   return document.visibilityState === "visible"
@@ -81,6 +95,10 @@ class Realtime {
     this.send({ t: "typing" })
   }
 
+  isLive(): boolean {
+    return this.live && this.client !== null
+  }
+
   /** One frame on the live socket. False (nothing sent) while the socket is not live. */
   send(frame: ClientFrame): boolean {
     return this.live && this.client !== null && this.client.send(frame)
@@ -118,11 +136,18 @@ class Realtime {
     }
   }
 
+  /** The live socket is gone (closed, frozen, or replaced): tell the down listeners once. */
+  private markDown(): void {
+    const was = this.live
+    this.live = false
+    if (was && !this.stopped) emit(downListeners, "down")
+  }
+
   /** Close and forget the current socket before anything replaces it (its close is then ignored). */
   private dropClient(): void {
     const old = this.client
     this.client = null
-    this.live = false
+    this.markDown()
     this.clearPong()
     old?.close()
   }
@@ -141,7 +166,7 @@ class Realtime {
     client.onClose((code) => {
       if (this.client !== client) return
       this.client = null
-      this.live = false
+      this.markDown()
       this.clearPong()
       this.onClosed(code)
     })
@@ -164,6 +189,7 @@ class Realtime {
     this.startPresenceTimer()
     void chatStore.syncNow()
     chatStore.flushOutbox()
+    emit(liveListeners, "live")
   }
 
   private onFrame(frame: ServerFrame): void {
@@ -291,6 +317,33 @@ export function onRealtimeFrame(listener: FrameListener): () => void {
   return () => {
     frameListeners.delete(listener)
   }
+}
+
+/**
+ * Called on every hello: a socket of this tab became live (the first one, or a reconnect). A call in
+ * progress sends call.rejoin from here (CALL-07). Returns an unsubscribe function.
+ */
+export function onRealtimeLive(listener: StateListener): () => void {
+  liveListeners.add(listener)
+  return () => {
+    liveListeners.delete(listener)
+  }
+}
+
+/**
+ * Called whenever a live socket is lost: it closed, a resumed socket stayed frozen and is replaced, or
+ * it was dropped before a reopen. Not called by stopRealtime (logout). Returns an unsubscribe function.
+ */
+export function onRealtimeDown(listener: StateListener): () => void {
+  downListeners.add(listener)
+  return () => {
+    downListeners.delete(listener)
+  }
+}
+
+/** Whether the tab's socket is live right now (hello received and not lost since). */
+export function realtimeLive(): boolean {
+  return current?.isLive() ?? false
 }
 
 /** Close the realtime connection and stop reconnecting. */

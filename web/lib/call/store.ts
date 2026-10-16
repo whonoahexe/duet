@@ -13,7 +13,7 @@ import {
 } from "@duet/shared"
 import { apiGet } from "@/lib/api"
 import { clearNotifications } from "@/lib/chat/push"
-import { sendFrame } from "@/lib/chat/realtime"
+import { realtimeLive, sendFrame } from "@/lib/chat/realtime"
 import { chatStore } from "@/lib/chat/store"
 import { isIos } from "@/lib/platform"
 import { fetchIceServers } from "@/lib/rtc/ice"
@@ -41,8 +41,13 @@ export interface CallState {
   mediaStartedAt: number | null
   /** Terminal status line text while phase is "ended" ("Declined", "No answer", "Call ended · 2:14"). */
   endText: string | null
-  /** A terminal state with actions (D-19): stays until Retry or Close. */
-  endState: "couldnt-connect" | null
+  /** A terminal state with actions (D-17, D-19): stays until Retry / Call back or Close. */
+  endState: "couldnt-connect" | "call-dropped" | null
+  /**
+   * D-17: the socket or the media path dropped mid-call and recovery is running ("Reconnecting…").
+   * Video freezes on its last frame, the controls stay usable and the timer never resets.
+   */
+  reconnecting: boolean
   /** The remote audio, played by the always-mounted <audio> in CallProvider. */
   remoteAudio: MediaStream | null
   /** Diagnostics only (call-diag): selected local candidate type and inbound bytes. */
@@ -84,6 +89,8 @@ const DECLINED_SHOW_MS = 2000
 export const CALLER_RING_GUARD_MS = 55_000
 export const INCOMING_GUARD_MS = 50_000
 export const CONNECT_TIMEOUT_MS = 20_000
+/** D-17: a reconnect that has not recovered after this long gives up with "Call dropped". */
+export const CALL_GIVE_UP_MS = 30_000
 
 const EMPTY: CallState = {
   phase: "idle",
@@ -96,6 +103,7 @@ const EMPTY: CallState = {
   mediaStartedAt: null,
   endText: null,
   endState: null,
+  reconnecting: false,
   remoteAudio: null,
   localType: null,
   inboundBytes: 0,
@@ -128,6 +136,15 @@ let closeTimer: ReturnType<typeof setTimeout> | null = null
 let guardTimer: ReturnType<typeof setTimeout> | null = null
 /** A Start tap is waiting for the microphone (a second tap must not start a second call). */
 let starting = false
+/** The call whose invite reached the socket (a rejoin before that would name a call the server never saw). */
+let invitedCallId: string | null = null
+/**
+ * D-17: the one give-up timer shared by every drop trigger (ICE disconnected/failed, a WS loss, repeated
+ * drops). Only a full recovery clears it; the call ending clears it.
+ */
+let giveUpTimer: ReturnType<typeof setTimeout> | null = null
+/** The socket dropped during this call and its call.state has not come back on a new socket yet. */
+let rejoinPending = false
 
 /** The current phase, read fresh (TypeScript would otherwise keep a narrowing across awaits). */
 function phaseNow(): CallPhase {
@@ -207,6 +224,8 @@ function armGuard(): void {
 
 /** Stop every local media resource of the current call (the mic never stays on after a call). */
 function releaseMedia(): void {
+  clearGiveUp()
+  rejoinPending = false
   releaseWakeLock()
   session?.close()
   session = null
@@ -219,6 +238,7 @@ function releaseMedia(): void {
 
 /** Media fields of a call that is over: no camera, no videos (every track was stopped by releaseMedia). */
 const NO_MEDIA: Partial<CallState> = {
+  reconnecting: false,
   remoteAudio: null,
   remoteVideo: null,
   localVideo: null,
@@ -300,6 +320,69 @@ function showFailure(): void {
   set({ ...NO_MEDIA, phase: "ended", endText: null, endState: "couldnt-connect", accepting: false })
 }
 
+/**
+ * "Call dropped" with Call back and Close (D-17, UI-SPEC section 5): stays until a button is tapped.
+ * While minimized it is a toast with a Call back action instead (the call screen never reopens).
+ */
+function showDropped(): void {
+  clearCloseTimer()
+  releaseMedia()
+  const kind = state.kind
+  if (state.screen === "minimized") {
+    closeNow()
+    toast("Call dropped", { action: { label: "Call back", onClick: () => void callStore.startCall(kind) } })
+    return
+  }
+  set({ ...NO_MEDIA, phase: "ended", endText: null, endState: "call-dropped", accepting: false })
+}
+
+function clearGiveUp(): void {
+  if (giveUpTimer !== null) clearTimeout(giveUpTimer)
+  giveUpTimer = null
+}
+
+/** A connected call (bound at the server) that a drop can interrupt. */
+function reconnectable(phase: CallPhase): boolean {
+  return phase === "connecting" || phase === "live"
+}
+
+/**
+ * A drop trigger (D-17): "Reconnecting…" shows and the single 30 s give-up timer starts unless one is
+ * already running (overlapping or repeated drops never restart it).
+ */
+function startReconnecting(): void {
+  const callId = state.callId
+  if (!callId || !reconnectable(state.phase)) return
+  if (!state.reconnecting) set({ reconnecting: true })
+  if (giveUpTimer !== null) return
+  giveUpTimer = setTimeout(() => {
+    giveUpTimer = null
+    if (state.callId !== callId || !reconnectable(state.phase) || !state.reconnecting) return
+    // The server ends it too (35 s absence) when this side could not tell it.
+    sendFrame({ t: "call.end", callId })
+    showDropped()
+  }, CALL_GIVE_UP_MS)
+}
+
+/**
+ * Full recovery ends "Reconnecting…": the media path is connected, the socket is live and, after a
+ * socket drop, the server answered call.rejoin with call.state. The timer resumes from mediaStartedAt.
+ */
+function checkRecovered(): void {
+  if (!state.reconnecting || rejoinPending) return
+  if (!session || session.connectionState !== "connected" || !realtimeLive()) return
+  clearGiveUp()
+  set({ reconnecting: false })
+}
+
+/** Whether the server knows this device's side of the current call (so call.rejoin can name it). */
+function boundHere(): boolean {
+  const { callId, phase, role } = state
+  if (!callId) return false
+  if (phase === "ringing-out") return invitedCallId === callId
+  return reconnectable(phase) && (role === "callee" || invitedCallId === callId)
+}
+
 function callEndedText(): string {
   return `Call ended · ${formatCallDuration(state.mediaStartedAt === null ? 0 : Date.now() - state.mediaStartedAt)}`
 }
@@ -335,11 +418,19 @@ function showIosTip(): void {
   })
 }
 
-/** The peer connection failed before any media flowed: give up (ICE failure, D-19). */
+/**
+ * Peer connection state changes. Failed before any media flowed gives up (ICE failure, D-19);
+ * disconnected or failed once media flowed is a drop trigger (D-17); connected may complete a recovery.
+ */
 function onPeerState(callId: string, pcState: RTCPeerConnectionState): void {
-  if (pcState !== "failed" || state.callId !== callId || state.phase !== "connecting") return
-  sendFrame({ t: "call.end", callId })
-  showFailure()
+  if (state.callId !== callId) return
+  if (pcState === "failed" && state.phase === "connecting" && state.mediaStartedAt === null && !state.reconnecting) {
+    sendFrame({ t: "call.end", callId })
+    showFailure()
+    return
+  }
+  if (pcState === "disconnected" || pcState === "failed") startReconnecting()
+  else if (pcState === "connected") checkRecovered()
 }
 
 /** Build the call's session from the captured mic and ICE servers. False when setup threw. */
@@ -374,6 +465,17 @@ function startSession(callId: string, role: "caller" | "callee"): boolean {
   }
 }
 
+/** The callee accepted (call.accepted, or call.state active after a rejoin): the caller's session starts. */
+function startCallerSession(callId: string): boolean {
+  if (!startSession(callId, "caller")) {
+    sendFrame({ t: "call.end", callId })
+    showFailure()
+    return false
+  }
+  set({ phase: "connecting" })
+  return true
+}
+
 function missedCallToast(kind: CallKind, callId?: string): void {
   toast(`Missed call from ${state.peerName || peer?.displayName || "your person"}`, {
     // One toast per call, however many routes (deep link, SW message, a lost Accept race) report it.
@@ -391,8 +493,14 @@ function handleEnded(frame: Extract<ServerFrame, { t: "call.ended" }>): void {
       closeNow()
       toast("You're already in a call on another device.")
       return
-    case "hangup":
     case "dropped":
+      // The server gave up on a party that stayed away (35 s): the same state as this side giving up.
+      if (state.phase === "ringing-in") closeNow()
+      else if (!noMedia) showDropped()
+      else if (state.phase === "ringing-out") closeNow()
+      else showFailure()
+      return
+    case "hangup":
     case "failed":
       if (state.phase === "ringing-in") closeNow()
       else if (!noMedia) showEnded(callEndedText(), ENDED_SHOW_MS)
@@ -541,7 +649,9 @@ export const callStore = {
       if (state.callId === callId && phaseNow() === "ringing-out") showFailure()
       return
     }
-    if (!sendFrame({ t: "call.invite", callId, kind })) {
+    if (sendFrame({ t: "call.invite", callId, kind })) {
+      invitedCallId = callId
+    } else {
       // The socket dropped between the tap and the invite: nothing rang.
       closeNow()
       toast(OFFLINE_TEXT)
@@ -575,6 +685,27 @@ export const callStore = {
     if (state.phase !== "ended" || state.endState === null) return
     const kind = state.kind
     void callStore.startCall(kind)
+  },
+
+  /** Call back from "Call dropped": a new call of the same kind (D-17). */
+  callBack(): void {
+    callStore.retry()
+  },
+
+  /**
+   * CALL-07: a socket of this tab became live (hello). A call this device is bound to asks the server
+   * for its place back (call.rejoin); call.state or call.ended answers.
+   */
+  onRealtimeLive(): void {
+    if (!boundHere() || !state.callId) return
+    sendFrame({ t: "call.rejoin", callId: state.callId })
+  },
+
+  /** CALL-07: the tab's live socket was lost. A connected call shows "Reconnecting…" (D-17). */
+  onRealtimeDown(): void {
+    if (!boundHere()) return
+    rejoinPending = true
+    startReconnecting()
   },
 
   /** Close a terminal state that waits for a tap. */
@@ -784,16 +915,28 @@ export const callStore = {
           return
         }
         if (frame.callId !== state.callId) return
-        if (state.phase === "ringing-out") {
-          if (!startSession(frame.callId, "caller")) {
-            sendFrame({ t: "call.end", callId: frame.callId })
-            showFailure()
-            return
-          }
-          set({ phase: "connecting" })
-        }
+        if (state.phase === "ringing-out" && !startCallerSession(frame.callId)) return
         // Both roles: the peer learns this side's camera state once the server bound the call (D-03).
         sendMedia()
+        return
+      case "call.state":
+        // The answer to call.rejoin (CALL-07): this connection is bound to the call again.
+        if (frame.callId !== state.callId) return
+        if (state.phase === "ringing-out") {
+          rejoinPending = false
+          // Accepted while this socket was away: the call.accepted was lost, so this is it.
+          if (frame.status === "active" && !startCallerSession(frame.callId)) return
+          if (frame.status === "ringing") return
+        }
+        if (!reconnectable(state.phase)) return
+        rejoinPending = false
+        set({ peerCamera: frame.peerCamera })
+        sendMedia()
+        checkRecovered()
+        return
+      case "room.joined":
+        // A rejoin put this connection back in the room with the peer: anything sent while away is lost.
+        if (state.callId && frame.room === callRoom(state.callId) && frame.peers.length > 0) session?.peerPresent()
         return
       case "call.media":
         if (frame.callId === state.callId && (state.phase === "connecting" || state.phase === "live")) {
@@ -801,7 +944,10 @@ export const callStore = {
         }
         return
       case "room.peer-joined":
-        if (state.callId && frame.room === callRoom(state.callId)) sendMedia()
+        if (state.callId && frame.room === callRoom(state.callId)) {
+          sendMedia()
+          session?.peerPresent()
+        }
         return
       case "call.ended":
         handleEnded(frame)
@@ -826,6 +972,7 @@ export const callStore = {
     releaseMedia()
     releaseWakeLock()
     peer = null
+    invitedCallId = null
     commit(EMPTY)
   },
 }

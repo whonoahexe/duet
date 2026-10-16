@@ -66,6 +66,11 @@ export const ClientFrame = z.discriminatedUnion("t", [
    * it, and the server relays it to the other bound connection (the video track itself never renegotiates).
    */
   z.strictObject({ t: z.literal("call.media"), callId: CallId, camera: z.boolean() }),
+  /**
+   * CALL-07 / D-17: a new connection of the same session (after a WS drop or a network switch) takes
+   * this party's place in the call again. The server answers call.state, or call.ended when it is over.
+   */
+  z.strictObject({ t: z.literal("call.rejoin"), callId: CallId }),
 ])
 export type ClientFrame = z.infer<typeof ClientFrame>
 
@@ -114,5 +119,7 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("call.ended"), callId: CallId, reason: CallEndReason }),
   /** The other party's camera is on or off (D-03, Pitfall 7: the remote track alone never says so). */
   z.object({ t: z.literal("call.media"), callId: CallId, camera: z.boolean() }),
+  /** Answer to call.rejoin: the call this connection is bound to again, and the other party's camera flag. */
+  z.object({ t: z.literal("call.state"), callId: CallId, status: z.enum(["ringing", "active"]), peerCamera: z.boolean() }),
 ])
 export type ServerFrame = z.infer<typeof ServerFrame>

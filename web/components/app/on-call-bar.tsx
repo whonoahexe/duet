@@ -14,7 +14,13 @@ export function OnCallBar() {
   const elapsed = useElapsed(call.phase === "live" ? call.mediaStartedAt : null)
   const active = call.phase === "ringing-out" || call.phase === "connecting" || call.phase === "live"
   if (!active || call.screen !== "minimized") return null
-  const text = call.phase === "ringing-out" ? "Ringing…" : call.phase === "connecting" ? "Connecting…" : `On call · ${elapsed}`
+  const text = call.reconnecting
+    ? "Reconnecting…"
+    : call.phase === "ringing-out"
+      ? "Ringing…"
+      : call.phase === "connecting"
+        ? "Connecting…"
+        : `On call · ${elapsed}`
   return (
     <button
       type="button"

@@ -114,10 +114,18 @@ async function sessionCookie(ctx, fixture, slot) {
  * Open the app at "/" as `fixture` (the chat composer must be visible), in a fresh browser context
  * (like a separate phone) on session `slot`. Registered for closing in `opened`.
  */
-async function openApp(ctx, fixture, peer, opened, { denyMic = false, denyCamera = false, wakeLock = false, slot = 0 } = {}) {
+async function openApp(
+  ctx,
+  fixture,
+  peer,
+  opened,
+  { denyMic = false, denyCamera = false, wakeLock = false, slot = 0, routeWs = false, init = null } = {},
+) {
   const context = await loggedInContext(ctx, fixture, slot)
   const page = await newAppPage(context, fixture, opened, { denyMic, denyCamera, slot })
   if (wakeLock) await page.addInitScript(stubWakeLock)
+  if (init) await page.addInitScript(init)
+  if (routeWs) await routeSockets(page)
   await page.goto(`${BASE}/`)
   await page.getByPlaceholder(`Message ${peer.displayName}`).waitFor({ state: "visible", timeout: 15_000 })
   return page
@@ -145,6 +153,54 @@ async function newAppPage(context, fixture, opened, { denyMic = false, denyCamer
   if (denyMic) await page.addInitScript(denyMedia)
   if (denyCamera) await page.addInitScript(denyVideo)
   return page
+}
+
+/**
+ * Every /ws socket of `page` goes through Playwright and on to the real server; page.__ws keeps the latest
+ * pair, so dropSocket() can cut it from both ends like a network loss (CALL-07).
+ */
+async function routeSockets(page) {
+  await page.routeWebSocket(/\/ws$/, (ws) => {
+    const server = ws.connectToServer()
+    page.__ws = { ws, server }
+  })
+}
+
+/** Close the page's current /ws socket on both sides (never with the logged-out code 4401). */
+async function dropSocket(page) {
+  const current = page.__ws
+  if (!current) throw new Error(`${page.__name} has no routed socket`)
+  page.__ws = null
+  await Promise.all([
+    current.server.close({ code: 1001, reason: "smoke drop" }).catch(() => {}),
+    current.ws.close({ code: 4000, reason: "smoke drop" }).catch(() => {}),
+  ])
+}
+
+/**
+ * Record, inside the page, every value the call status line and call-diag data-reconnecting take from
+ * now on (a reconnect can recover faster than a poll would see it). Read back with seenStates().
+ */
+async function watchStates(page) {
+  await page.evaluate(() => {
+    const seen = { status: new Set(), reconnecting: new Set() }
+    window.__duetSeen = seen
+    const record = () => {
+      const status = document.querySelector('[data-testid="call-status"]')?.textContent?.trim()
+      if (status) seen.status.add(status.replace(/^\d+:\d{2}$/, "<timer>"))
+      const r = document.querySelector('[data-testid="call-diag"]')?.getAttribute("data-reconnecting")
+      if (r) seen.reconnecting.add(r)
+    }
+    record()
+    new MutationObserver(record).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true })
+  })
+}
+
+async function seenStates(page) {
+  return page.evaluate(() => ({
+    status: [...(window.__duetSeen?.status ?? [])],
+    reconnecting: [...(window.__duetSeen?.reconnecting ?? [])],
+  }))
 }
 
 function callDialog(page, peer) {
@@ -187,6 +243,7 @@ async function diag(page) {
     mic: await el.getAttribute("data-mic"),
     cameraDevice: await el.getAttribute("data-camera-device"),
     swapped: await el.getAttribute("data-swapped"),
+    reconnecting: await el.getAttribute("data-reconnecting"),
   }
 }
 
@@ -697,6 +754,67 @@ const scenarios = {
     if (await callDialog(ada, BOB).isVisible()) throw new Error("the call screen reopened for the ending of a minimized call")
     await Promise.all([waitPhase(ada, "idle", 3_000), waitPhase(bob, "idle", 3_000)])
     await waitLocks(0, 3_000)
+    await expectTracksEnded(ada)
+    await expectTracksEnded(bob)
+  },
+
+  /**
+   * CALL-07 / D-17: Ada's WebSocket drops mid-call. Her screen says "Reconnecting…", the socket comes
+   * back, rejoins the call room (call.rejoin), and the timer returns without resetting; nobody redials.
+   */
+  async reconnect(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened, { routeWs: true })
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await connectVoice(ada, bob)
+    await waitStatus(ada, BOB, /^\d+:\d{2}$/, 5_000)
+    const { callId } = await diag(ada)
+    await sleep(2_000)
+    const secs = (text) => text.split(":").reduce((acc, part) => acc * 60 + Number(part), 0)
+    const before = secs(await statusOf(ada, BOB))
+    await watchStates(ada)
+    await watchStates(bob)
+    await dropSocket(ada)
+    let seen = { status: [], reconnecting: [] }
+    await until(
+      async () => {
+        seen = await seenStates(ada)
+        return seen.status.includes("Reconnecting…") && seen.reconnecting.includes("true")
+      },
+      5_000,
+      () => `Ada never showed "Reconnecting…" (status seen: [${seen.status.join(", ")}], reconnecting: [${seen.reconnecting.join(", ")}])`,
+    )
+    await waitStatus(ada, BOB, /^\d+:\d{2}$/, 20_000)
+    let a = await diag(ada)
+    await until(
+      async () => {
+        a = await diag(ada)
+        return a.reconnecting === "false"
+      },
+      20_000,
+      () => `Ada's data-reconnecting stayed "${a.reconnecting}"`,
+    )
+    if (a.callId !== callId) throw new Error(`Ada's call id changed across the reconnect (${callId} -> ${a.callId})`)
+    if (a.phase !== "live") throw new Error(`Ada's call is "${a.phase}" after the reconnect`)
+    // The timer resumed where it was: it never reset to 0:00.
+    const resumed = secs(await statusOf(ada, BOB))
+    if (!(resumed >= before)) throw new Error(`Ada's timer went back from ${before} s to ${resumed} s`)
+    const bytes0 = (await diag(ada)).inboundBytes
+    await until(async () => (await diag(ada)).inboundBytes > bytes0, 6_000, "Ada's inbound bytes stopped growing after the reconnect")
+    const bobSeen = await seenStates(bob)
+    if (bobSeen.status.includes("Call dropped") || (await statusOf(bob, ADA)) === "Call dropped") {
+      throw new Error("Bob showed Call dropped")
+    }
+    if ((await diag(bob)).phase !== "live") throw new Error(`Bob's call is "${(await diag(bob)).phase}"`)
+    // The relay reaches Ada's new socket (the stale one left the room): Bob's camera flag comes through.
+    await callDialog(bob, ADA).getByRole("button", { name: "Camera", exact: true }).click()
+    await waitPressed(bob, ADA, "Camera", "true", 10_000)
+    await until(async () => (await diag(ada)).peerCamera === "true", 10_000, "Ada never heard Bob's camera after the rejoin")
+    await callDialog(ada, BOB).getByRole("button", { name: "Hang up" }).click()
+    await Promise.all([
+      waitStatus(ada, BOB, /^Call ended · \d+:\d{2}$/, 3_000),
+      waitStatus(bob, ADA, /^Call ended · \d+:\d{2}$/, 3_000),
+    ])
+    await Promise.all([waitPhase(ada, "idle", 4_000), waitPhase(bob, "idle", 4_000)])
     await expectTracksEnded(ada)
     await expectTracksEnded(bob)
   },
