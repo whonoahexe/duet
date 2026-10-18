@@ -380,6 +380,71 @@ describe("busy", () => {
   })
 })
 
+describe("a reloaded device's stale call (WR-09)", () => {
+  it("ends the active call a reloaded caller left behind and rings the new one", () => {
+    const h = harness()
+    const a = h.attach(ALICE, "session-alice")
+    const b = h.attach(BOB)
+    const x = h.invite(a)
+    h.frame(b, { t: "call.accept", callId: x })
+    h.close(a)
+    const a2 = h.attach(ALICE, "session-alice")
+    h.sent.length = 0
+    const y = h.invite(a2)
+    expect(h.to(b, "call.ended")).toEqual([{ t: "call.ended", callId: x, reason: "dropped" }])
+    expect(h.to(b, "call.ring")).toEqual([{ t: "call.ring", callId: y, kind: "voice", from: ALICE }])
+    expect(h.to(a2).some((f) => f.t === "call.ended" && f.callId === y)).toBe(false)
+    h.frame(b, { t: "call.accept", callId: y })
+    expect(h.to(a2, "call.accepted")).toEqual([{ t: "call.accepted", callId: y }])
+    h.registry.close()
+  })
+
+  it("ends the ringing call a reloaded caller left behind without a missed-call push", () => {
+    const missed: string[] = []
+    const h = harness({ push: { notifyCall() {}, notifyMissed: (c) => missed.push(c.id) } })
+    const a = h.attach(ALICE, "session-alice")
+    const b = h.attach(BOB)
+    const x = h.invite(a)
+    h.close(a)
+    const a2 = h.attach(ALICE, "session-alice")
+    const y = h.invite(a2)
+    expect(h.to(b, "call.ended")).toEqual([{ t: "call.ended", callId: x, reason: "dropped" }])
+    expect(h.to(b, "call.ring").at(-1)).toEqual({ t: "call.ring", callId: y, kind: "voice", from: ALICE })
+    expect(missed).toEqual([])
+    vi.advanceTimersByTime(10_000)
+    expect(h.to(b, "call.ended")).toHaveLength(1)
+    h.registry.close()
+  })
+
+  it("ends the active call a reloaded callee left behind", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB, "session-bob")
+    const x = h.invite(a)
+    h.frame(b, { t: "call.accept", callId: x })
+    h.close(b)
+    const b2 = h.attach(BOB, "session-bob")
+    const y = h.invite(b2)
+    expect(h.to(a, "call.ended")).toEqual([{ t: "call.ended", callId: x, reason: "dropped" }])
+    expect(h.to(a, "call.ring")).toEqual([{ t: "call.ring", callId: y, kind: "voice", from: BOB }])
+    h.registry.close()
+  })
+
+  it("stays busy for the same session while its call connection is still open (a second tab)", () => {
+    const h = harness()
+    const a = h.attach(ALICE, "session-alice")
+    const tab2 = h.attach(ALICE, "session-alice")
+    const b = h.attach(BOB)
+    const x = h.invite(a)
+    h.frame(b, { t: "call.accept", callId: x })
+    h.sent.length = 0
+    const y = h.invite(tab2)
+    expect(h.to(tab2)).toEqual([{ t: "call.ended", callId: y, reason: "busy" }])
+    expect(h.to(b)).toEqual([])
+    h.registry.close()
+  })
+})
+
 describe("invite flood guard (T-03-03)", () => {
   it("refuses the 11th invite within 60 s without ringing, and rings again after 60 s", () => {
     const h = harness()

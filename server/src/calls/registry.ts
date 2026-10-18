@@ -210,6 +210,24 @@ export function createCallRegistry({
     })
   }
 
+  /**
+   * WR-09: whether `connId` is a new connection of the very session bound to one side of `call`, and
+   * that side's bound connection has closed (a reload: the old page is gone, the call is a zombie).
+   * Another device of the same person, or the same session with its call still open (a second tab),
+   * stays busy.
+   */
+  function abandonedBy(call: Call, userId: string, connId: string): boolean {
+    const session = transport.sessionOf(connId)
+    if (session === undefined) return false
+    if (userId === call.callerId && session === call.callerSession) {
+      return transport.sessionOf(call.callerConn) === undefined
+    }
+    if (call.status === "active" && userId === call.calleeId && session === call.calleeSession && call.calleeConn) {
+      return transport.sessionOf(call.calleeConn) === undefined
+    }
+    return false
+  }
+
   function invite(connId: string, userId: string, callId: string, kind: CallKind): void {
     if (current) {
       const call = current
@@ -222,10 +240,17 @@ export function createCallRegistry({
         bind(connId, call, callId)
         return
       }
-      // Busy: one call at a time; a person already in a call gets no second ring.
-      log.info({ evt: "call_busy", callId, userId, currentCallId: call.id })
-      transport.sendToConn(connId, { t: "call.ended", callId, reason: "busy" })
-      return
+      if (abandonedBy(call, userId, connId)) {
+        // WR-09: this device reloaded (or crashed) mid-call. The page lost its call state, so it never
+        // rejoins, and its party's connection is gone: the stale call ends and this invite goes ahead.
+        log.info({ evt: "call_abandoned", callId: call.id, userId, replacedBy: callId })
+        end(call, "dropped")
+      } else {
+        // Busy: one call at a time; a person already in a call gets no second ring.
+        log.info({ evt: "call_busy", callId, userId, currentCallId: call.id })
+        transport.sendToConn(connId, { t: "call.ended", callId, reason: "busy" })
+        return
+      }
     }
     const calleeId = otherUser(userId)
     if (!calleeId || recent.has(callId)) {
