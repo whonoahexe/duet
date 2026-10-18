@@ -1024,8 +1024,11 @@ export const callStore = {
         handleEnded(frame)
         return
       case "call.stop-ringing":
-        // D-11: another of this person's devices answered first.
-        if (frame.callId !== state.callId || state.phase !== "ringing-in") return
+        // D-11: another of this person's devices answered first. WR-01: also after this device's own
+        // Accept went out (it crossed the winning one), as long as no media flowed here: the server only
+        // sends stop-ringing to a callee connection it did not bind.
+        if (frame.callId !== state.callId || state.role !== "callee") return
+        if (state.phase !== "ringing-in" && !(state.phase === "connecting" && state.mediaStartedAt === null)) return
         closeNow()
         toast("Answered on another device")
         return
