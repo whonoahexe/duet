@@ -109,8 +109,8 @@ describe("service worker push (NOTF-01, D-14, Pitfall 3)", () => {
 describe("service worker call pushes (D-09, D-12)", () => {
   const callId = "0b9d3c4e-6f1a-4c2b-9d8e-7a6b5c4d3e2f"
 
-  it("closes open notifications, then shows the incoming call tagged duet-call with a /?call= link", async () => {
-    const open = [{ close: vi.fn() }]
+  it("closes an open call notification, then shows the incoming call tagged duet-call with a /?call= link", async () => {
+    const open = [{ tag: "duet-call", close: vi.fn() }]
     const { self, listeners } = loadSw({ open })
     await dispatch(listeners, "push", {
       data: pushData({ t: "call", title: "Ada", body: "📞 Incoming voice call", callId, kind: "voice" }),
@@ -125,6 +125,33 @@ describe("service worker call pushes (D-09, D-12)", () => {
       badge: "/icons/badge-96.png",
       data: { url: `/?call=${callId}`, callId },
     })
+  })
+
+  it("WR-07: a chat push leaves Incoming call and Missed call open, and closes the chat ones", async () => {
+    const call = { tag: "duet-call", close: vi.fn() }
+    const chat = { tag: "duet-chat", close: vi.fn() }
+    const test = { tag: "duet-test", close: vi.fn() }
+    const { self, listeners } = loadSw({ open: [call, chat, test] })
+    await dispatch(listeners, "push", { data: pushData({ t: "chat", title: "Ada", body: "pick up!" }) })
+    expect(call.close).not.toHaveBeenCalled()
+    expect(chat.close).toHaveBeenCalledTimes(1)
+    expect(test.close).toHaveBeenCalledTimes(1)
+    expect(self.registration.showNotification).toHaveBeenCalledWith("Ada", expect.objectContaining({ tag: "duet-chat" }))
+  })
+
+  it("WR-07: a missed-call push replaces the ring and leaves the chat notification open", async () => {
+    const ring = { tag: "duet-call", close: vi.fn() }
+    const chat = { tag: "duet-chat", close: vi.fn() }
+    const { self, listeners } = loadSw({ open: [ring, chat] })
+    await dispatch(listeners, "push", {
+      data: pushData({ t: "call-missed", title: "Ada", body: "Missed voice call", callId, kind: "voice" }),
+    })
+    expect(ring.close).toHaveBeenCalledTimes(1)
+    expect(chat.close).not.toHaveBeenCalled()
+    expect(self.registration.showNotification).toHaveBeenCalledWith(
+      "Ada",
+      expect.objectContaining({ tag: "duet-call", data: { url: `/?missed=${callId}`, callId } }),
+    )
   })
 
   it("links a call push whose call id is not a uuid to / only", async () => {

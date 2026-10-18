@@ -34,10 +34,12 @@ self.addEventListener("push", (event) => {
   }
   event.waitUntil(
     (async () => {
-      // D-14: one notification. iOS ignores tag/renotify, so close what is showing first.
+      // D-14: one notification per kind. iOS ignores tag/renotify, so close what is showing first, but
+      // only the same kind (WR-07): a chat push never removes "Incoming call" or "Missed call", and a
+      // call push never removes the chat notification.
       try {
         const open = await self.registration.getNotifications()
-        for (const n of open) n.close()
+        for (const n of open) if (isCall ? n.tag === "duet-call" : n.tag !== "duet-call") n.close()
       } catch {
         // keep going: the notification below must still show
       }
