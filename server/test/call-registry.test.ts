@@ -12,6 +12,8 @@ type Sent = { conn: string; frame: ServerFrame }
 /** The registry against a fake hub: connections are connId -> userId, every frame sent is recorded. */
 function harness(opts: Partial<CallRegistryOptions> = {}) {
   const conns = new Map<string, string>()
+  /** A connection's session when given at attach (a reconnect of the same device); else its own. */
+  const sessions = new Map<string, string>()
   const sent: Sent[] = []
   const rooms = new Map<string, Set<string>>()
   const transport: CallTransport = {
@@ -31,7 +33,7 @@ function harness(opts: Partial<CallRegistryOptions> = {}) {
       rooms.get(room)?.delete(conn)
     },
     sessionOf(conn) {
-      return conns.has(conn) ? `session-${conn}` : undefined
+      return conns.has(conn) ? (sessions.get(conn) ?? `session-${conn}`) : undefined
     },
   }
   const registry = createCallRegistry({
@@ -44,9 +46,10 @@ function harness(opts: Partial<CallRegistryOptions> = {}) {
     registry,
     sent,
     rooms,
-    attach(userId: string): string {
+    attach(userId: string, session?: string): string {
       const conn = randomUUID()
       conns.set(conn, userId)
+      if (session !== undefined) sessions.set(conn, session)
       registry.onAttach(conn, userId)
       return conn
     },
@@ -161,6 +164,42 @@ describe("absence grace (Pitfall 3)", () => {
     expect(h.ofType("call.ended")).toEqual([])
     vi.advanceTimersByTime(1)
     expect(h.to(a, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "dropped" }])
+    h.registry.close()
+  })
+
+  it("CR-01: an accept while the caller is away replaces the 10 s cancel with the 35 s active grace", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.close(a)
+    vi.advanceTimersByTime(5_000)
+    h.frame(b, { t: "call.accept", callId })
+    expect(h.to(b, "call.accepted")).toEqual([{ t: "call.accepted", callId }])
+    // The ringing-phase timer would have cancelled the call 5 s from here.
+    vi.advanceTimersByTime(34_999)
+    expect(h.ofType("call.ended")).toEqual([])
+    vi.advanceTimersByTime(1)
+    expect(h.to(b, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "dropped" }])
+    h.registry.close()
+  })
+
+  it("CR-01: a caller that rejoins after an accept made while it was away keeps the call active", () => {
+    const h = harness()
+    const a = h.attach(ALICE, "session-alice")
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.close(a)
+    h.frame(b, { t: "call.accept", callId })
+    vi.advanceTimersByTime(8_000)
+    const a2 = h.attach(ALICE, "session-alice")
+    h.frame(a2, { t: "call.rejoin", callId })
+    expect(h.to(a2, "call.state")).toEqual([{ t: "call.state", callId, status: "active", peerCamera: false }])
+    expect([...(h.rooms.get(`call-${callId}`) ?? [])].sort()).toEqual([a2, b].sort())
+    vi.advanceTimersByTime(60_000)
+    expect(h.ofType("call.ended")).toEqual([])
+    h.frame(b, { t: "call.end", callId })
+    expect(h.to(a2, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "hangup" }])
     h.registry.close()
   })
 

@@ -281,6 +281,13 @@ export function createCallRegistry({
     call.status = "active"
     if (call.ringTimer !== undefined) clearTimeout(call.ringTimer)
     call.ringTimer = undefined
+    // CR-01: a caller whose socket closed while ringing armed the 10 s "cancelled" timer. Once the call is
+    // answered that timer must not end it: the caller gets the active-call grace and the reason is dropped.
+    if (call.absentTimer !== undefined) clearTimeout(call.absentTimer)
+    call.absentTimer = undefined
+    if (transport.sessionOf(call.callerConn) === undefined) {
+      call.absentTimer = timer(() => end(call, "dropped"), absentGraceMs)
+    }
     call.calleeConn = connId
     call.calleeSession = transport.sessionOf(connId)
     call.activeAt = now()
