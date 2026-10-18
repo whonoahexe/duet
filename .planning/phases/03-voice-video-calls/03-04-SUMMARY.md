@@ -124,9 +124,12 @@ coverage:
   - id: D6
     description: "A real call with one phone on cellular and the other on Wi-Fi through the relay; airplane-mode and Wi-Fi/cellular switch recovery; Call dropped after 30 s offline; iOS lock/background resume and capture re-acquire (A4); plus every device item deferred by 03-01..03-03"
     requirement: CALL-09
-    verification: []
+    verification:
+      - kind: manual
+        ref: "End-of-phase device UAT on the installed iPhone and Pixel (8 steps, Task 3 human-check); user approved 2026-10-19"
+        status: pass
     human_judgment: true
-    rationale: "Headless E2E proves relay-only through Cloudflare from one host (hairpin) and drops only the WebSocket; real cellular paths, radio switches, iOS capture interruptions, push delivery and audio routing need the end-of-phase device UAT"
+    rationale: "Headless E2E proves relay-only through Cloudflare from one host (hairpin) and drops only the WebSocket; real cellular paths, radio switches, iOS capture interruptions, push delivery and audio routing were covered by the device UAT, which the user approved"
 
 duration: 16min
 completed: 2026-10-16
@@ -343,6 +346,10 @@ Phase 3 is functionally complete and deployed. Its last gate is the end-of-phase
 - 03-04: iOS capture re-acquire on resume (A4)
 
 The flagged CALL-09 assumption (headless relay is a single-host hairpin) closes only with a real cellular-to-Wi-Fi call.
+
+## Device UAT
+
+**Status: PASSED.** The user approved the end-of-phase device UAT on 2026-10-19 ("approved"). It covered all eight human-check steps on the installed iPhone and Pixel, plus the device items deferred by 03-01 to 03-03. This closes the flagged CALL-09 assumption (a real cellular call through the relay) and the CALL-07 iOS resume assumption (A4). No failures were reported.
 
 ## Self-Check: PASSED
 
