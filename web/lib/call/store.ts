@@ -550,15 +550,17 @@ function handleEnded(frame: Extract<ServerFrame, { t: "call.ended" }>): void {
       return
     case "no-answer":
     case "cancelled": {
-      // An Accept that reached the server after the ring ended (race kept by design): missed call.
-      const tapped = state.role === "callee" && (state.accepting || state.phase === "connecting")
       if (state.role === "caller" && frame.reason === "no-answer") {
         showEnded("No answer", DECLINED_SHOW_MS)
         return
       }
+      // WR-04 (D-12): every ring that ends unanswered on this device leaves the missed-call toast. The
+      // server skips the "Missed call" push for a session viewing duet, because this toast covers it.
+      // That includes an Accept that reached the server after the ring ended (race kept by design).
       const kind = state.kind
+      const callee = state.role === "callee"
       closeNow()
-      if (tapped) missedCallToast(kind)
+      if (callee) missedCallToast(kind, frame.callId)
       return
     }
     default:
