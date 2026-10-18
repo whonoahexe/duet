@@ -534,10 +534,14 @@ function handleEnded(frame: Extract<ServerFrame, { t: "call.ended" }>): void {
       else showFailure()
       return
     case "hangup":
+      // WR-03: the other side hung up on purpose, even before media flowed: "Call ended · 0:00", never
+      // the network-failure screen.
+      if (state.phase === "ringing-in") closeNow()
+      else showEnded(callEndedText(), ENDED_SHOW_MS)
+      return
     case "failed":
       if (state.phase === "ringing-in") closeNow()
       else if (!noMedia) showEnded(callEndedText(), ENDED_SHOW_MS)
-      else if (state.phase === "ringing-out" && frame.reason !== "failed") closeNow()
       else showFailure()
       return
     case "declined":
