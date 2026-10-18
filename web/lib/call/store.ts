@@ -156,6 +156,12 @@ let quality: QualityState = QUALITY_START
 let lastPackets: { lost: number; received: number } | null = null
 /** A resume is re-acquiring ended capture tracks (D-18): one at a time. */
 let resuming = false
+/**
+ * WR-05: the other person's ring that arrived while this device was still setting up its own call
+ * (ringing-out, invite not sent yet). The server only merges the two (D-14) once the invite arrives;
+ * if this attempt ends first, the ring is shown then. Cleared when that call ends or is answered.
+ */
+let deferredRing: Extract<ServerFrame, { t: "call.ring" }> | null = null
 
 /** The current phase, read fresh (TypeScript would otherwise keep a narrowing across awaits). */
 function phaseNow(): CallPhase {
@@ -301,6 +307,14 @@ function closeNow(): void {
   clearCloseTimer()
   releaseMedia()
   commit(idleState())
+  flushDeferredRing()
+}
+
+/** WR-05: this device's own attempt ended before its invite was sent; show the ring it held back. */
+function flushDeferredRing(): void {
+  const ring = deferredRing
+  deferredRing = null
+  if (ring && (state.phase === "idle" || state.phase === "ended")) callStore.handleFrame(ring)
 }
 
 /** Show a terminal text on the call screen for `ms`, then return to the chat. */
@@ -332,6 +346,7 @@ function showFailure(): void {
     return
   }
   set({ ...NO_MEDIA, phase: "ended", endText: null, endState: "couldnt-connect", accepting: false })
+  flushDeferredRing()
 }
 
 /**
@@ -678,6 +693,7 @@ export const callStore = {
       else commit({ ...base, phase: "ended", endState: "couldnt-connect" })
       return
     }
+    deferredRing = null
     commit({ ...base, phase: "ringing-out" })
     holdMedia(media)
     // CALL-08: the screen stays on from the Start tap until the call ends.
@@ -692,6 +708,8 @@ export const callStore = {
     }
     if (sendFrame({ t: "call.invite", callId, kind })) {
       invitedCallId = callId
+      // A held-back ring is merged with this invite by the server now (D-14), or already over.
+      deferredRing = null
     } else {
       // The socket dropped between the tap and the invite: nothing rang.
       closeNow()
@@ -980,6 +998,12 @@ export const callStore = {
           sendFrame({ t: "call.accept", callId: frame.callId })
           return
         }
+        // WR-05: this device is setting up its own call and the server has not seen it yet: hold the
+        // ring back until that attempt either reaches the server (merge) or ends here.
+        if (state.phase === "ringing-out" && state.role === "caller" && invitedCallId !== state.callId) {
+          deferredRing = frame
+          return
+        }
         if (state.phase !== "idle" && state.phase !== "ended") return
         clearCloseTimer()
         releaseMedia()
@@ -1046,9 +1070,11 @@ export const callStore = {
         }
         return
       case "call.ended":
+        if (deferredRing?.callId === frame.callId) deferredRing = null
         handleEnded(frame)
         return
       case "call.stop-ringing":
+        if (deferredRing?.callId === frame.callId) deferredRing = null
         // D-11: another of this person's devices answered first. WR-01: also after this device's own
         // Accept went out (it crossed the winning one), as long as no media flowed here: the server only
         // sends stop-ringing to a callee connection it did not bind.
@@ -1072,6 +1098,7 @@ export const callStore = {
     releaseWakeLock()
     peer = null
     invitedCallId = null
+    deferredRing = null
     commit(EMPTY)
   },
 }
