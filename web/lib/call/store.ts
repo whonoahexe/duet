@@ -610,6 +610,8 @@ async function answer(callId: string, media: CallMediaResult): Promise<void> {
     showFailure()
     return
   }
+  // WR-02: an Accept that never reached the server (the socket was down) is sent again when the server
+  // re-rings this call on the next socket (ring-on-attach, see handleFrame "call.ring").
   sendFrame({ t: "call.accept", callId })
   set({ phase: "connecting", accepting: false })
 }
@@ -960,6 +962,18 @@ export const callStore = {
         // Ring-on-attach re-sends the ring after a reconnect: the call already ringing here stays as is.
         // A ring replaces a terminal text that is still showing.
         if (frame.callId === state.callId && state.phase === "ringing-in") return
+        // WR-02: the server re-rings only a call that still rings, so this device's Accept never reached
+        // it (sent while the socket was down, or lost with it). Send the Accept again on this socket.
+        if (
+          frame.callId === state.callId &&
+          state.role === "callee" &&
+          state.phase === "connecting" &&
+          state.mediaStartedAt === null &&
+          session !== null
+        ) {
+          sendFrame({ t: "call.accept", callId: frame.callId })
+          return
+        }
         if (state.phase !== "idle" && state.phase !== "ended") return
         clearCloseTimer()
         releaseMedia()
@@ -989,6 +1003,11 @@ export const callStore = {
         if (state.phase === "ringing-out" && !startCallerSession(frame.callId)) return
         // Both roles: the peer learns this side's camera state once the server bound the call (D-03).
         sendMedia()
+        // WR-02: a resent Accept bound this connection, which is what the lost call.rejoin would have done.
+        if (rejoinPending && reconnectable(state.phase)) {
+          rejoinPending = false
+          checkRecovered()
+        }
         return
       case "call.state":
         // The answer to call.rejoin (CALL-07): this connection is bound to the call again.
