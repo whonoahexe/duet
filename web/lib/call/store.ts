@@ -412,6 +412,18 @@ function boundHere(): boolean {
   return reconnectable(phase) && (role === "callee" || invitedCallId === callId)
 }
 
+/**
+ * WR-06: tell the server this device leaves its call (logout), before the socket closes: otherwise an
+ * active call waits out the 35 s absence grace and the peer sees "Call dropped", and a ring this device
+ * started keeps ringing. A ring this device only receives binds nothing here, so the person's other
+ * devices keep ringing.
+ */
+function sendLeave(): void {
+  const { callId, phase } = state
+  if (!callId) return
+  if (phase === "ringing-out" ? invitedCallId === callId : reconnectable(phase)) sendFrame({ t: "call.end", callId })
+}
+
 function callEndedText(): string {
   return `Call ended · ${formatCallDuration(state.mediaStartedAt === null ? 0 : Date.now() - state.mediaStartedAt)}`
 }
@@ -1091,8 +1103,17 @@ export const callStore = {
     }
   },
 
+  /** WR-06: logout was tapped: end this device's call on the server and close it here (the peer is kept). */
+  leave(): void {
+    sendLeave()
+    deferredRing = null
+    if (state.phase !== "idle") closeNow()
+  },
+
   /** Forget the call and release every media resource (logout, session gone). */
   reset(): void {
+    // WR-06: end the call on the server first while the socket may still be open.
+    sendLeave()
     clearCloseTimer()
     releaseMedia()
     releaseWakeLock()

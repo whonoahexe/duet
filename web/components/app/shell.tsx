@@ -165,9 +165,10 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   useEffect(() => {
     // A 401 from any chat request or a 4401 close: this device is logged out.
     const sessionGone = () => {
+      // WR-06: the call ends on the server before the socket goes (when it is still open).
+      callStore.reset()
       stopRealtime()
       chatStore.reset()
-      callStore.reset()
       loggedOutRef.current()
     }
     chatStore.init(me, { onLoggedOut: sessionGone })
@@ -178,15 +179,18 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   }, [me])
 
   function finishLogout() {
+    callStore.reset()
     stopRealtime()
     chatStore.reset()
-    callStore.reset()
     onLoggedOut()
   }
 
   async function handleLogout() {
     if (loggingOut) return
     setLoggingOut(true)
+    // WR-06: end a call on the server while this socket is still open, so the peer sees "Call ended"
+    // at once instead of "Reconnecting…" and then "Call dropped".
+    callStore.leave()
     // Stop first: the server closes this session's sockets with 4401 as part of the logout.
     stopRealtime()
     try {
@@ -202,9 +206,9 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
       if (me.peer) {
         startRealtime({
           onLoggedOut: () => {
+            callStore.reset()
             stopRealtime()
             chatStore.reset()
-            callStore.reset()
             loggedOutRef.current()
           },
         })
