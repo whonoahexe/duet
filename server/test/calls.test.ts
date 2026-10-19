@@ -191,6 +191,31 @@ describe("call.decline", () => {
     bob.send({ t: "call.decline", callId })
     expect(await nextOf(alice, "call.ended")).toEqual({ t: "call.ended", callId, reason: "declined" })
   })
+
+  it("WR-08: ends the ringing call as failed when the callee's Accept could not set the call up", async () => {
+    // Its own app: the file's other describes use most of Alice's 10 invites per minute.
+    const d = await makeTestApp({ seed: true })
+    try {
+      const alice = await connect(await loginCookie(d.app, "alice"), d)
+      const bob = await connect(await loginCookie(d.app, "bob"), d)
+      const callId = await ring(alice, bob)
+      bob.send({ t: "call.decline", callId, reason: "failed" })
+      expect(await nextOf(alice, "call.ended")).toEqual({ t: "call.ended", callId, reason: "failed" })
+      expect(await nextOf(bob, "call.ended")).toEqual({ t: "call.ended", callId, reason: "failed" })
+    } finally {
+      for (const c of open) c.ws.terminate()
+      open = []
+      await d.close()
+    }
+  })
+
+  it("WR-08: rejects a call.decline with any other reason as a bad frame", async () => {
+    const { ClientFrame } = await import("@duet/shared")
+    const callId = randomUUID()
+    expect(ClientFrame.safeParse({ t: "call.decline", callId, reason: "failed" }).success).toBe(true)
+    expect(ClientFrame.safeParse({ t: "call.decline", callId }).success).toBe(true)
+    expect(ClientFrame.safeParse({ t: "call.decline", callId, reason: "busy" }).success).toBe(false)
+  })
 })
 
 describe("call.media (D-03, T-03-14)", () => {

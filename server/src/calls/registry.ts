@@ -325,12 +325,13 @@ export function createCallRegistry({
     log.info({ evt: "call_accept", callId: call.id, callerId: call.callerId, calleeId: call.calleeId })
   }
 
-  function decline(connId: string, userId: string, call: Call): void {
+  function decline(connId: string, userId: string, call: Call, failed: boolean): void {
     if (userId !== call.calleeId || call.status !== "ringing") {
       notAllowed(connId)
       return
     }
-    end(call, "declined")
+    // WR-08: an Accept that failed on the callee's device is not a refusal.
+    end(call, failed ? "failed" : "declined")
   }
 
   function hangUp(connId: string, call: Call): void {
@@ -439,7 +440,7 @@ export function createCallRegistry({
           accept(connId, userId, call)
           return
         case "call.decline":
-          decline(connId, userId, call)
+          decline(connId, userId, call, frame.reason === "failed")
           return
         case "call.end":
           hangUp(connId, call)

@@ -57,8 +57,12 @@ export const ClientFrame = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("call.invite"), callId: CallId, kind: CallKind }),
   /** Answer the ringing call on this device (the first device to accept wins, D-11). */
   z.strictObject({ t: z.literal("call.accept"), callId: CallId }),
-  /** Refuse the ringing call (D-13). */
-  z.strictObject({ t: z.literal("call.decline"), callId: CallId }),
+  /**
+   * Refuse the ringing call (D-13). WR-08: `reason: "failed"` when Accept was tapped but this device
+   * could not set the call up (microphone, TURN credentials, session): the call ends as failed, so the
+   * caller sees "Couldn't connect" instead of "Declined".
+   */
+  z.strictObject({ t: z.literal("call.decline"), callId: CallId, reason: z.literal("failed").optional() }),
   /** Hang up an active call, or cancel it while it rings (CALL-04). */
   z.strictObject({ t: z.literal("call.end"), callId: CallId }),
   /**

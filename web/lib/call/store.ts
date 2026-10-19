@@ -612,8 +612,10 @@ async function answer(callId: string, media: CallMediaResult): Promise<void> {
     dropMedia(media)
     return
   }
+  // WR-08: a technical failure after the Accept tap ends the call as failed (the caller sees "Couldn't
+  // connect"). A Decline tap, and a refused microphone (UI-SPEC section 8), send a plain decline.
   if (!media.ok) {
-    sendFrame({ t: "call.decline", callId })
+    sendFrame(media.reason === "denied" ? { t: "call.decline", callId } : { t: "call.decline", callId, reason: "failed" })
     if (media.reason === "denied") {
       closeNow()
       set({ permission: "microphone" })
@@ -633,13 +635,13 @@ async function answer(callId: string, media: CallMediaResult): Promise<void> {
     pendingIce = iceServers
   } catch {
     if (state.callId === callId && state.phase === "ringing-in") {
-      sendFrame({ t: "call.decline", callId })
+      sendFrame({ t: "call.decline", callId, reason: "failed" })
       showFailure()
     }
     return
   }
   if (!startSession(callId, "callee")) {
-    sendFrame({ t: "call.decline", callId })
+    sendFrame({ t: "call.decline", callId, reason: "failed" })
     showFailure()
     return
   }

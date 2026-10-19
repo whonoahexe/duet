@@ -316,6 +316,32 @@ describe("every device rings, the first answer wins (D-11)", () => {
   })
 })
 
+describe("a failed Accept (WR-08)", () => {
+  it("ends the call as failed, not declined, on every connection of both people", () => {
+    const missed: string[] = []
+    const h = harness({ push: { notifyCall() {}, notifyMissed: (c) => missed.push(c.id) } })
+    const a = h.attach(ALICE)
+    const b1 = h.attach(BOB)
+    const b2 = h.attach(BOB)
+    const callId = h.invite(a)
+    h.frame(b1, { t: "call.decline", callId, reason: "failed" })
+    for (const conn of [a, b1, b2]) {
+      expect(h.to(conn, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "failed" }])
+    }
+    expect(missed).toEqual([])
+    h.registry.close()
+  })
+
+  it("refuses a failed decline from the caller like any decline", () => {
+    const h = harness()
+    const a = h.attach(ALICE)
+    const callId = h.invite(a)
+    h.frame(a, { t: "call.decline", callId, reason: "failed" })
+    expect(h.to(a)).toEqual([{ t: "error", code: "not_allowed" }])
+    h.registry.close()
+  })
+})
+
 describe("glare (D-14)", () => {
   it("merges the callee's own invite into the ringing call as an accept", () => {
     const h = harness()
