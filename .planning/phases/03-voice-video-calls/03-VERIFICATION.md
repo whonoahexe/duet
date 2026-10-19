@@ -1,7 +1,7 @@
 ---
 phase: 03-voice-video-calls
 verified: 2026-10-19T07:20:04Z
-status: human_needed
+status: passed
 score: 76/77 must-haves verified
 covered_files: [".planning/phases/03-voice-video-calls/03-01-PLAN.md", ".planning/phases/03-voice-video-calls/03-01-SUMMARY.md", ".planning/phases/03-voice-video-calls/03-02-PLAN.md", ".planning/phases/03-voice-video-calls/03-02-SUMMARY.md", ".planning/phases/03-voice-video-calls/03-03-PLAN.md", ".planning/phases/03-voice-video-calls/03-03-SUMMARY.md", ".planning/phases/03-voice-video-calls/03-04-PLAN.md", ".planning/phases/03-voice-video-calls/03-04-SUMMARY.md", "README.md", "scripts/lib/e2e.mjs", "scripts/smoke-calls.mjs", "scripts/smoke-calls.sh", "server/src/app.ts", "server/src/calls/registry.ts", "server/src/calls/routes.ts", "server/src/config.ts", "server/src/push/routes.ts", "server/src/push/sender.ts", "server/src/ws/hub.ts", "server/test/call-logic.test.ts", "server/test/call-push.test.ts", "server/test/call-registry.test.ts", "server/test/calls.test.ts", "server/test/helpers.ts", "server/test/sw.test.ts", "shared/src/call.ts", "shared/src/index.ts", "shared/src/push.ts", "shared/src/ws.ts", "web/components/app/call-provider.tsx", "web/components/app/call-screen.tsx", "web/components/app/incoming-call.tsx", "web/components/app/on-call-bar.tsx", "web/components/app/permission-drawer.tsx", "web/components/app/shell.tsx", "web/lib/call/media.ts", "web/lib/call/session.ts", "web/lib/call/store.ts", "web/lib/call/tones.ts", "web/lib/call/wake-lock.ts", "web/lib/chat/events.ts", "web/lib/chat/push.ts", "web/lib/chat/realtime.ts", "web/lib/rtc/peer.ts", "web/lib/rtc/stats.ts", "web/public/sw.js"]
 covered_digest: "v3:sha256:06a5b1310688bb433ceb859598b558c5a1cceb745ce71df29590718ed8b26925"

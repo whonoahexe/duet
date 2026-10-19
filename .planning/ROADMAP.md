@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation, Auth & Media Plane** - Live HTTPS app on the new domain, two-account password login, installable PWA; media track proves P2P WebRTC + Cloudflare TURN carries media over cellular (completed 2026-10-15)
 - [x] **Phase 2: Chat, Media & Push** - Reliable real-time chat with history, receipts, typing, reactions and replies; photos, video clips and voice notes on both phones; message push notifications (completed 2026-10-15)
-- [ ] **Phase 3: Voice & Video Calls** - 1:1 peer-to-peer voice/video calls (Cloudflare TURN relay) with push-to-answer, in-call controls and reconnect, on Wi-Fi and cellular
+- [x] **Phase 3: Voice & Video Calls** - 1:1 peer-to-peer voice/video calls (Cloudflare TURN relay) with push-to-answer, in-call controls and reconnect, on Wi-Fi and cellular (completed 2026-10-19)
 
 ## Phase Details
 
@@ -99,7 +99,7 @@ Plans:
   3. During a call, user can mute/unmute, turn the camera on/off, switch between front and back camera, and hang up, and the screen does not lock for the duration of the call
   4. A brief network drop mid-call shows "Reconnecting…" and the call resumes automatically without either person redialing
 
-**Plans:** 4/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 **Wave 1**
@@ -125,4 +125,4 @@ Phases execute in numeric order: 1 → 2 → 3. The Phase 1 ops track (INFR-03/0
 |-------|----------------|--------|-----------|
 | 1. Foundation, Auth & Media Plane | 5/5 | Complete    | 2026-10-15 |
 | 2. Chat, Media & Push | 6/6 | Complete    | 2026-10-15 |
-| 3. Voice & Video Calls | 4/4 | In Progress | - |
+| 3. Voice & Video Calls | 4/4 | Complete    | 2026-10-19 |
