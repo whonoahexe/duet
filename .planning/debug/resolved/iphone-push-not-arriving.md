@@ -1,8 +1,8 @@
 ---
-status: diagnosed
+status: resolved
 trigger: "notifications are not working on iphone but pass on android"
 created: 2026-10-14T00:00:00Z
-updated: 2026-10-14T00:40:00Z
+updated: 2026-10-19T00:00:00Z
 goal: find_root_cause_only
 symptoms_prefilled: true
 ---

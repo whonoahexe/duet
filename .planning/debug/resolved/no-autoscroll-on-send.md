@@ -1,8 +1,8 @@
 ---
-status: diagnosed
+status: resolved
 trigger: "it should auto scroll down when a msg is sent"
 created: 2026-10-14T00:00:00Z
-updated: 2026-10-14T00:22:00Z
+updated: 2026-10-19T00:00:00Z
 goal: find_root_cause_only
 symptoms_prefilled: true
 ---
