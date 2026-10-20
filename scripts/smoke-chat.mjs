@@ -806,7 +806,7 @@ Object.assign(scenarios, {
 
   /**
    * QT-lzx-camera / QT-lzx-save: the + menu's Gallery item opens the multi-file picker with no capture,
-   * its Record video and Take photo items open single-file choosers that ask for the rear camera
+   * its Video and Photo items open single-file choosers that ask for the rear camera
    * (capture=environment); a captured photo goes through the preview drawer to Bob, whose viewer Save
    * downloads the display copy as duet-<id>.webp.
    */
@@ -833,9 +833,9 @@ Object.assign(scenarios, {
     if (galleryAttrs.accept !== "image/*,video/*" || galleryAttrs.capture !== null || !gallery.isMultiple()) {
       throw new Error(`the Gallery item opened accept=${galleryAttrs.accept} capture=${galleryAttrs.capture} multiple=${gallery.isMultiple()}`)
     }
-    await expectCapture(await chooserFor("Record video"), "video/*", "Record video")
-    const photoChooser = await chooserFor("Take photo")
-    await expectCapture(photoChooser, "image/*", "Take photo")
+    await expectCapture(await chooserFor("Video"), "video/*", "Video")
+    const photoChooser = await chooserFor("Photo")
+    await expectCapture(photoChooser, "image/*", "Photo")
     await photoChooser.setFiles(makeJpeg(`camera-${randomUUID().slice(0, 8)}.jpg`, 1200, 900))
     const drawer = previewDrawer(ada)
     await drawer.getByText("1 photo", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })

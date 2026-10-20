@@ -216,11 +216,11 @@ export function Composer({ peerName }: { peerName: string }) {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => cameraPhotoRef.current?.click()}>
                   <CameraIcon />
-                  Take photo
+                  Photo
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => cameraVideoRef.current?.click()}>
                   <VideoCameraIcon />
-                  Record video
+                  Video
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
