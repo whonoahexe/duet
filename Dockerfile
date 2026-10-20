@@ -21,6 +21,10 @@ RUN npm prune --omit=dev
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production
+# QT-4qu: the AES-256 key for media at rest arrives only through the compose read-only bind mount of
+# the host's ~/.config/duet/media.key. /run is root-owned and the process runs as node, so the
+# container can never mint a replacement key: a missing mount fails the boot with MediaKeyError.
+ENV MEDIA_KEY_FILE=/run/duet/media.key
 WORKDIR /app
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/node_modules ./node_modules

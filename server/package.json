@@ -9,7 +9,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "db:generate": "drizzle-kit generate",
-    "seed": "node --import tsx scripts/seed-users.ts"
+    "seed": "node --import tsx scripts/seed-users.ts",
+    "media-key": "node --import tsx scripts/media-key.ts",
+    "media-check": "node --import tsx scripts/media-check.ts"
   },
   "dependencies": {
     "@duet/shared": "*",

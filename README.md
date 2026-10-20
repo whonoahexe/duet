@@ -47,6 +47,7 @@ Secrets live outside the repo in `${DUET_SECRETS_DIR:-~/.config/duet}`, mode 600
 | `cloudflare.ini` (`dns_cloudflare_api_token = ...`) | tunnel setup and TURN key creation (`deploy/cloudflared/setup.sh`, `deploy/cloudflare/turn-key.sh`) |
 | `cloudflare.env` (`CF_ACCOUNT_ID=...`) | `setup.sh` (the account that owns the tunnel) |
 | `seed-users.json` | one-off seeding; shred it afterwards |
+| `media.key` | the AES-256 key for media at rest. Created by `npm --prefix server run media-key` (never overwritten, never printed) and bind-mounted read-only into the container at `/run/duet/media.key`. **Back it up off this machine: losing it loses every stored photo, video and voice note.** |
 
 In the repo, `.env` (copied from `.env.example`) holds `APP_ORIGIN`, `COOKIE_SECURE`, `LOG_LEVEL` and the TURN variables `CF_TURN_KEY_ID` / `CF_TURN_KEY_API_TOKEN` (optional: `TURN_CREDENTIAL_TTL_SECONDS`). They reach the container only through the compose `env_file`. The public domain lives only there. `.env`, `data/` and the tunnel credentials are gitignored and dockerignored.
 
@@ -55,6 +56,7 @@ In the repo, `.env` (copied from `.env.example`) holds `APP_ORIGIN`, `COOKIE_SEC
 ```bash
 cp .env.example .env                 # once; set APP_ORIGIN to the public origin
 bash deploy/cloudflared/setup.sh     # once (idempotent): tunnel "duet" + the single proxied CNAME
+npm --prefix server run media-key    # once: creates ~/.config/duet/media.key (mode 600), or reuses it
 docker compose up -d --build         # services: duet (no published port) + cloudflared
 ```
 
@@ -188,6 +190,8 @@ Photos, short video clips and voice notes are uploaded to duet and normalized on
 - **Voice notes** (hold the mic, slide left to cancel, slide up or tap to lock; no length limit) are normalized to AAC `.m4a` (64 kbps mono) with the duration and a 40-bar waveform computed on the server, so iPhone (AAC) and Chrome (Opus) recordings play on both phones.
 - Every video and voice upload is probed with `ffprobe` first: only allowlisted containers (MP4/MOV, Matroska/WebM, and for voice also Ogg, WAV, MP3, AAC) are processed, with an explicit input format, no shell and a kill timeout. A playlist disguised as a video is refused with 422.
 - Uploads are chunked in 8 MiB parts, because Cloudflare rejects request bodies over 100 MB.
+- **Encrypted at rest.** Every file in `data/media` (originals, variants, upload parts) is AES-256-GCM in 64 KiB chunks (DUETENC v1), under `~/.config/duet/media.key`. The server decrypts on serve, with Range, so video scrubbing still works. sharp and ffmpeg only see plaintext in `data/media/work` scratch dirs, which are removed after each upload step and job and wiped at boot. Files from before this change are encrypted once at boot (idempotent, verified per file). `npm --prefix server run media-check` deep-decrypts everything and prints `media-check ok` when no file is plaintext or corrupt (`-- --compare DIR` also checks each file against a plaintext copy). This only stops casual browsing of the folder: anyone who can read the key file (same login, or root) can decrypt. The server refuses to boot when encrypted media exists and the key is missing.
+- Message text in `data/duet.sqlite` is not encrypted.
 - Originals live in `data/media/<id>/original` and are never served; `/media/<id>/<variant>` only serves the generated copies, to a logged-in session, with Range support. Video and voice originals are kept too (to reclaim space later, delete `original` for ready video/audio attachments; nothing reads them again).
 
 Container toolchain self-test (prints `heic ok`, `video ok`, `voice ok` and `media-selftest ok`):

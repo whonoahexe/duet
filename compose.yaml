@@ -12,6 +12,15 @@ services:
       HOST: 0.0.0.0
     volumes:
       - ./data:/data
+      # QT-4qu: the media-at-rest key, read-only (the Dockerfile sets MEDIA_KEY_FILE to this target).
+      # create_host_path false: compose refuses to start when the host key is missing, instead of
+      # creating a root-owned directory in its place. Run `npm --prefix server run media-key` first.
+      - type: bind
+        source: ${HOME}/.config/duet/media.key
+        target: /run/duet/media.key
+        read_only: true
+        bind:
+          create_host_path: false
     # No `ports:` on purpose: only cloudflared (same compose network) reaches duet:3100,
     # so CF-Connecting-IP (the login rate-limit key) cannot be forged from the LAN.
 
