@@ -6,7 +6,7 @@ import type { FastifyBaseLogger } from "fastify"
 import type { AttachmentKind } from "@duet/shared"
 import type { Db } from "../db/client"
 import { attachments } from "../db/schema"
-import { encryptFile } from "./crypto"
+import { decryptToFile, encryptFile } from "./crypto"
 import { MediaError } from "./exec"
 import { processAudio } from "./audio"
 import { processImage } from "./image"
@@ -105,15 +105,18 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
   }
 
   /**
-   * Run a handler in a fresh media/work/<id>-XXXXXX scratch dir and store each variant it wrote
-   * encrypted in media/<id> (T-4qu-01). The scratch dir is removed whatever happens.
+   * Run a handler in a fresh media/work/<id>-XXXXXX scratch dir (T-4qu-01): the encrypted original
+   * is decrypted into scratch/original, sharp/ffmpeg write their variants next to it, and each
+   * variant is stored encrypted in media/<id>. The scratch dir is removed whatever happens.
    */
   async function runInScratch(id: string, run: KindHandler): Promise<JobResult> {
     const dir = attachmentDir(mediaRoot, id)
     await mkdir(workRoot(mediaRoot), { recursive: true, mode: 0o700 })
     const scratch = await mkdtemp(path.join(workRoot(mediaRoot), `${id}-`))
     try {
-      const result = await run(path.join(dir, "original"), scratch)
+      const original = path.join(scratch, "original")
+      await decryptToFile(key, path.join(dir, "original"), original)
+      const result = await run(original, scratch)
       for (const name of VARIANT_FILES) {
         const produced = path.join(scratch, name)
         if (existsSync(produced)) await encryptFile(key, produced, path.join(dir, name))

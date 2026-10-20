@@ -20,6 +20,7 @@ import { createPushSender, type PushSender, type WebPushSend } from "./push/send
 import { createChatEvents, type ChatEvents } from "./chat/events"
 import { messageChangedForAttachment } from "./chat/service"
 import { loadMediaKey } from "./media/crypto"
+import { encryptMediaAtRest } from "./media/migrate"
 import { createMediaProcessor, type MediaProcessor } from "./media/process"
 import { mediaRoutes } from "./media/routes"
 import { uploadRoutes } from "./media/uploads"
@@ -185,8 +186,10 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     },
   })
   app.decorate("media", media)
-  // Boot recovery: re-queue attachments still processing, drop stale temp parts and uploads.
+  // Boot: encrypt any plaintext media left from before QT-4qu (idempotent), then recovery: re-queue
+  // attachments still processing, drop stale temp parts and uploads. Both finish before listen().
   app.addHook("onReady", async () => {
+    await encryptMediaAtRest({ key, mediaRoot, log: app.log })
     await media.start()
   })
   // Before onClose closes the database: let a running job finish its write.
@@ -236,7 +239,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     })
   }
 
-  await app.register(uploadRoutes, { processor: media, mediaRoot })
+  await app.register(uploadRoutes, { processor: media, mediaRoot, key })
   await app.register(mediaRoutes, { mediaRoot, key })
 
   app.setNotFoundHandler((req, reply) => {

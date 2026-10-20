@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto"
-import { existsSync, statSync } from "node:fs"
+import { existsSync } from "node:fs"
 import path from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { UPLOAD_CHUNK_SIZE } from "@duet/shared"
+import { readEncHeader } from "../src/media/crypto"
 import { loginCookie, makeTestApp, TEST_ORIGIN, type TestApp } from "./helpers"
 
 let t: TestApp
@@ -67,7 +68,7 @@ describe("chunked uploads (MDIA-05, Pattern 5)", () => {
     expect(["processing", "ready"]).toContain(attachment.status)
 
     const original = path.join(t.dataDir, "media", id, "original")
-    expect(statSync(original).size).toBe(9_000_000)
+    expect((await readEncHeader(original))!.plainSize).toBe(9_000_000)
     expect(existsSync(path.join(t.dataDir, "media", "tmp", id))).toBe(false)
     await t.app.media.idle()
   })

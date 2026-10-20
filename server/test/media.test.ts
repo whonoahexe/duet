@@ -8,8 +8,9 @@ import { eq } from "drizzle-orm"
 import { selectionSendLabel, selectionTitle } from "@duet/shared"
 import { attachments, users } from "../src/db/schema"
 import { hasTool, runTool } from "../src/media/exec"
+import { readDecrypted, readEncHeader } from "../src/media/crypto"
 import { processImage } from "../src/media/image"
-import { loginCookie, makeDataDir, makeTestApp, openWs, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
+import { loginCookie, makeDataDir, makeTestApp, mediaKey, openWs, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
 
 let t: TestApp
 let aliceCookie: string
@@ -372,7 +373,7 @@ describe("upload concurrency (MDIA-05)", () => {
         expect(r.statusCode).toBe(200)
         expect(r.json().attachment).toMatchObject({ id, status: "processing" })
       }
-      expect(readFileSync(path.join(t.dataDir, "media", id, "original")).equals(bytes)).toBe(true)
+      expect((await readDecrypted(await mediaKey(t.app), path.join(t.dataDir, "media", id, "original"))).equals(bytes)).toBe(true)
     } finally {
       t.app.media.resume()
       await t.app.media.idle()
@@ -403,7 +404,7 @@ describe("upload concurrency (MDIA-05)", () => {
       headers: { cookie: aliceCookie, origin: TEST_ORIGIN },
     })
     expect(done.statusCode).toBe(200)
-    expect(readFileSync(path.join(t.dataDir, "media", id, "original")).equals(last)).toBe(true)
+    expect((await readDecrypted(await mediaKey(t.app), path.join(t.dataDir, "media", id, "original"))).equals(last)).toBe(true)
     await t.app.media.idle()
   })
 })
@@ -456,6 +457,8 @@ describe("boot recovery (Pattern 6)", () => {
       await second.app.media.idle()
       const byId = (id: string) => second.app.db.select().from(attachments).where(eq(attachments.id, id)).get()
       expect(byId(leftover)).toMatchObject({ status: "ready", width: 500, height: 400 })
+      // QT-4qu: the plaintext leftover original was encrypted at boot before it was processed.
+      expect(await readEncHeader(path.join(media, leftover, "original"))).not.toBeNull()
       expect(existsSync(path.join(media, leftover, "display.webp"))).toBe(true)
       expect(byId(stale)).toBeUndefined()
       expect(existsSync(path.join(media, "tmp", stale))).toBe(false)

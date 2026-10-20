@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto"
-import { createReadStream, createWriteStream, existsSync } from "node:fs"
-import { mkdir, rename, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { appendFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { pipeline } from "node:stream/promises"
 import { eq } from "drizzle-orm"
 import type { FastifyInstance } from "fastify"
 import {
@@ -19,8 +18,9 @@ import {
 import { requireUser } from "../auth/session"
 import { toAttachmentDto } from "../chat/service"
 import { attachments } from "../db/schema"
+import { encryptBuffer, encryptFile, readDecrypted } from "./crypto"
 import { MediaError } from "./exec"
-import { attachmentDir, uploadTmpDir, type MediaProcessor } from "./process"
+import { attachmentDir, uploadTmpDir, workRoot, type MediaProcessor } from "./process"
 import { VIDEO_FORMATS, VOICE_FORMATS, inputFormatFor, probeMedia } from "./probe"
 
 /** Attachment ids are 128-bit randomBytes as base64url: exactly 22 characters (T-02-23). */
@@ -63,6 +63,8 @@ export interface UploadRoutesOptions {
   processor: MediaProcessor
   /** <DATA_DIR>/media */
   mediaRoot: string
+  /** AES-256 media key: chunk parts and the assembled original are stored encrypted (QT-4qu-write). */
+  key: Buffer
 }
 
 /**
@@ -73,7 +75,7 @@ export interface UploadRoutesOptions {
  * requests are already Origin-checked globally.
  */
 export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptions) {
-  const { processor, mediaRoot } = opts
+  const { processor, mediaRoot, key } = opts
 
   app.addContentTypeParser(
     "application/octet-stream",
@@ -130,11 +132,12 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
       if (body.length !== expected) return reply.code(400).send({ error: "bad_chunk" })
 
       // A retried chunk overwrites atomically: write a unique temp file, then rename over the part.
+      // The part is stored encrypted (T-4qu-01).
       const dir = uploadTmpDir(mediaRoot, id)
       await mkdir(dir, { recursive: true })
       const tmp = path.join(dir, `${index}.part.${randomBytes(4).toString("hex")}.tmp`)
       try {
-        await writeFile(tmp, body)
+        await writeFile(tmp, encryptBuffer(key, body))
         await rename(tmp, path.join(dir, `${index}.part`))
       } catch (err) {
         await rm(tmp, { force: true })
@@ -157,31 +160,33 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
     const parts = Array.from({ length: count }, (_, i) => path.join(dir, `${i}.part`))
     if (!parts.every((p) => existsSync(p))) return "incomplete"
 
+    // The plaintext exists only in a media/work scratch dir while this step runs (T-4qu-01): the
+    // parts are decrypted (each at most 8 MiB, one at a time) into scratch/original, which is
+    // probed and then stored encrypted. A part without a valid header throws (500).
     const outDir = attachmentDir(mediaRoot, id)
-    await mkdir(outDir, { recursive: true })
-    const original = path.join(outDir, "original")
-    const tmp = `${original}.tmp`
-    const out = createWriteStream(tmp)
+    await mkdir(workRoot(mediaRoot), { recursive: true, mode: 0o700 })
+    const scratch = await mkdtemp(path.join(workRoot(mediaRoot), `${id}-`))
     try {
-      for (let i = 0; i < parts.length; i++) {
-        await pipeline(createReadStream(parts[i]), out, { end: i === parts.length - 1 })
+      const plain = path.join(scratch, "original")
+      await writeFile(plain, "", { flag: "wx", mode: 0o600 })
+      for (const part of parts) await appendFile(plain, await readDecrypted(key, part))
+
+      // Video/audio: ffprobe before anything else touches the file; a refused upload never reaches
+      // ffmpeg and its bytes are deleted (an HLS playlist is not worth keeping).
+      const rejected = await gate(kind, plain)
+      if (rejected) {
+        app.db.update(attachments).set({ status: "failed", error: rejected }).where(eq(attachments.id, id)).run()
+        await rm(dir, { recursive: true, force: true })
+        await rm(outDir, { recursive: true, force: true })
+        return { rejected }
       }
-      await rename(tmp, original)
-    } catch (err) {
-      out.destroy()
-      await rm(tmp, { force: true })
-      throw err
+
+      await mkdir(outDir, { recursive: true })
+      await encryptFile(key, plain, path.join(outDir, "original"))
+    } finally {
+      await rm(scratch, { recursive: true, force: true })
     }
     await rm(dir, { recursive: true, force: true })
-
-    // Video/audio: ffprobe before anything else touches the file; a refused upload never reaches
-    // ffmpeg and its bytes are deleted (an HLS playlist is not worth keeping).
-    const rejected = await gate(kind, original)
-    if (rejected) {
-      app.db.update(attachments).set({ status: "failed", error: rejected }).where(eq(attachments.id, id)).run()
-      await rm(outDir, { recursive: true, force: true })
-      return { rejected }
-    }
 
     const row = app.db
       .update(attachments)

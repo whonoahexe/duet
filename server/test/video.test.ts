@@ -10,7 +10,8 @@ import { formatDuration } from "@duet/shared"
 import { attachments } from "../src/db/schema"
 import { MediaError } from "../src/media/exec"
 import { VIDEO_FORMATS, inputFormatFor, probeMedia } from "../src/media/probe"
-import { decryptedCopy, loginCookie, makeTestApp, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
+import { readDecrypted } from "../src/media/crypto"
+import { decryptedCopy, loginCookie, makeTestApp, mediaKey, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
 
 let t: TestApp
 let aliceCookie: string
@@ -212,7 +213,7 @@ describe("processVideo through the slow lane (MDIA-03, D-08)", () => {
   })
 
   it("keeps the original byte-identical and serves video and poster with Range", async () => {
-    expect(readFileSync(path.join(mediaDir(id), "original")).equals(original)).toBe(true)
+    expect((await readDecrypted(await mediaKey(t.app), path.join(mediaDir(id), "original"))).equals(original)).toBe(true)
     const ranged = await t.app.inject({ method: "GET", url: `/media/${id}/video`, headers: { cookie: bobCookie, range: "bytes=0-1" } })
     expect(ranged.statusCode).toBe(206)
     expect(ranged.headers["content-type"]).toBe("video/mp4")

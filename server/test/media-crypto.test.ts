@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { Writable } from "node:stream"
 import sharp from "sharp"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import {
@@ -16,8 +17,18 @@ import {
   readDecrypted,
   readEncHeader,
 } from "../src/media/crypto"
+import { buildApp } from "../src/app"
 import { parseRange } from "../src/media/routes"
-import { loginCookie, makeTestApp, uploadBytes, type TestApp } from "./helpers"
+import {
+  TEST_ORIGIN,
+  loginCookie,
+  makeDataDir,
+  makeTestApp,
+  mediaKey,
+  testConfig,
+  uploadBytes,
+  type TestApp,
+} from "./helpers"
 
 /** QT-4qu: DUETENC v1 media at rest. */
 
@@ -273,6 +284,174 @@ describe("stored variants are encrypted and /media decrypts them (QT-4qu-serve)"
       expect(res.json()).toEqual({ error: "media_unreadable" })
     } finally {
       writeFileSync(file, saved)
+    }
+  })
+})
+
+describe("originals and upload parts are encrypted (QT-4qu-write)", () => {
+  let t: TestApp
+  let cookie: string
+  beforeAll(async () => {
+    t = await makeTestApp({ seed: true })
+    cookie = await loginCookie(t.app, "alice")
+  })
+  afterAll(async () => {
+    await t.app.media.idle()
+    await t.close()
+  })
+
+  const workEntries = () => {
+    const work = path.join(t.dataDir, "media", "work")
+    return existsSync(work) ? readdirSync(work) : []
+  }
+
+  it("stores chunk parts and the assembled original as ciphertext; no scratch is left", async () => {
+    const jpg = await sharp({ create: { width: 300, height: 200, channels: 3, background: "#225588" } }).jpeg().toBuffer()
+    const created = await t.app.inject({
+      method: "POST",
+      url: "/api/uploads",
+      headers: { cookie, origin: TEST_ORIGIN },
+      payload: { kind: "image", size: jpg.length },
+    })
+    const { id } = created.json() as { id: string }
+    const put = await t.app.inject({
+      method: "PUT",
+      url: `/api/uploads/${id}/chunks/0`,
+      headers: { cookie, origin: TEST_ORIGIN, "content-type": "application/octet-stream" },
+      payload: jpg,
+    })
+    expect(put.statusCode).toBe(204)
+    const part = path.join(t.dataDir, "media", "tmp", id, "0.part")
+    const key = await mediaKey(t.app)
+    expect(await readEncHeader(part)).not.toBeNull()
+    expect((await readDecrypted(key, part)).equals(jpg)).toBe(true)
+
+    const done = await t.app.inject({ method: "POST", url: `/api/uploads/${id}/complete`, headers: { cookie, origin: TEST_ORIGIN } })
+    expect(done.statusCode).toBe(200)
+    const original = path.join(t.dataDir, "media", id, "original")
+    expect((await readEncHeader(original))!.plainSize).toBe(jpg.length)
+    expect((await readDecrypted(key, original)).equals(jpg)).toBe(true)
+    expect(existsSync(path.join(t.dataDir, "media", "tmp", id))).toBe(false)
+    await t.app.media.idle()
+    expect(workEntries()).toEqual([])
+  })
+
+  it("a video refused at complete leaves no media dir and no scratch", async () => {
+    const bytes = Buffer.from("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:1,\nhttp://example.invalid/x.ts\n")
+    const created = await t.app.inject({
+      method: "POST",
+      url: "/api/uploads",
+      headers: { cookie, origin: TEST_ORIGIN },
+      payload: { kind: "video", size: bytes.length },
+    })
+    const { id } = created.json() as { id: string }
+    await t.app.inject({
+      method: "PUT",
+      url: `/api/uploads/${id}/chunks/0`,
+      headers: { cookie, origin: TEST_ORIGIN, "content-type": "application/octet-stream" },
+      payload: bytes,
+    })
+    const done = await t.app.inject({ method: "POST", url: `/api/uploads/${id}/complete`, headers: { cookie, origin: TEST_ORIGIN } })
+    expect(done.statusCode).toBe(422)
+    expect(existsSync(path.join(t.dataDir, "media", id))).toBe(false)
+    expect(existsSync(path.join(t.dataDir, "media", "tmp", id))).toBe(false)
+    expect(workEntries()).toEqual([])
+  })
+})
+
+describe("boot migration of existing media (QT-4qu-migrate, T-4qu-07)", () => {
+  function capture() {
+    const lines: string[] = []
+    const stream = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(chunk.toString())
+        cb()
+      },
+    })
+    const atRest = () =>
+      lines
+        .flatMap((l) => l.split("\n"))
+        .filter((l) => l.includes('"evt":"media_at_rest"'))
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+    return { stream, atRest }
+  }
+
+  it("encrypts plaintext once, removes crash scratch, skips ciphertext, and is idempotent", async () => {
+    const dir = makeDataDir()
+    const media = path.join(dir, "media")
+    const id = "M".repeat(22)
+    const att = path.join(media, id)
+    mkdirSync(att, { recursive: true })
+    const originalBytes = randomBytes(200_000)
+    const displayBytes = Buffer.concat([Buffer.from("RIFF"), randomBytes(5000)])
+    writeFileSync(path.join(att, "original"), originalBytes)
+    writeFileSync(path.join(att, "display.webp"), displayBytes)
+    writeFileSync(path.join(att, "display.webp.tmp"), randomBytes(10))
+    writeFileSync(path.join(att, ".video.tmp.mp4"), randomBytes(10))
+    const tmp = path.join(media, "tmp", "P".repeat(22))
+    mkdirSync(tmp, { recursive: true })
+    const partBytes = randomBytes(3000)
+    writeFileSync(path.join(tmp, "0.part"), partBytes)
+    const stray = path.join(media, "work", "x")
+    mkdirSync(stray, { recursive: true })
+    writeFileSync(path.join(stray, "original"), randomBytes(100))
+
+    // An already-encrypted thumb needs the key that boot will use: create it first.
+    const keyFile = path.join(dir, "media.key")
+    const { key } = await loadMediaKey({ keyFile, mediaRoot: media })
+    const thumb = path.join(att, "thumb.webp")
+    writeFileSync(thumb, encryptBuffer(key, randomBytes(1234)))
+    const old = new Date(Date.now() - 3600_000)
+    utimesSync(thumb, old, old)
+    const thumbBytes = readFileSync(thumb)
+    const thumbMtime = statSync(thumb).mtimeMs
+
+    const first = capture()
+    const t1 = await makeTestApp({ dataDir: dir, seed: false, logStream: first.stream })
+    await t1.app.ready()
+    expect((await readDecrypted(key, path.join(att, "original"))).equals(originalBytes)).toBe(true)
+    expect((await readDecrypted(key, path.join(att, "display.webp"))).equals(displayBytes)).toBe(true)
+    expect(existsSync(path.join(att, "display.webp.tmp"))).toBe(false)
+    expect(existsSync(path.join(att, ".video.tmp.mp4"))).toBe(false)
+    expect(readFileSync(thumb).equals(thumbBytes)).toBe(true)
+    expect(statSync(thumb).mtimeMs).toBe(thumbMtime)
+    expect((await readDecrypted(key, path.join(tmp, "0.part"))).equals(partBytes)).toBe(true)
+    expect(existsSync(path.join(media, "work"))).toBe(false)
+    expect(first.atRest()).toHaveLength(1)
+    expect(first.atRest()[0]).toMatchObject({ encrypted: 3, alreadyEncrypted: 1, removed: 2, failed: 0 })
+    await t1.app.close()
+
+    const snapshot = () =>
+      Object.fromEntries(
+        [path.join(att, "original"), path.join(att, "display.webp"), thumb, path.join(tmp, "0.part")].map((f) => [
+          f,
+          readFileSync(f).toString("base64"),
+        ]),
+      )
+    const before = snapshot()
+    const second = capture()
+    const t2 = await makeTestApp({ dataDir: dir, seed: false, logStream: second.stream })
+    try {
+      await t2.app.ready()
+      expect(second.atRest()[0]).toMatchObject({ encrypted: 0, alreadyEncrypted: 4, removed: 0, failed: 0 })
+      expect(snapshot()).toEqual(before)
+    } finally {
+      await t2.close()
+    }
+  })
+
+  it("refuses to boot when encrypted media exists and the key is gone", async () => {
+    const dir = makeDataDir()
+    try {
+      const media = path.join(dir, "media")
+      const att = path.join(media, "K".repeat(22))
+      mkdirSync(att, { recursive: true })
+      writeFileSync(path.join(att, "thumb.webp"), encryptBuffer(randomBytes(32), randomBytes(100)))
+      const config = testConfig(dir)
+      await expect(buildApp(config)).rejects.toBeInstanceOf(MediaKeyError)
+      expect(existsSync(config.MEDIA_KEY_FILE)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
