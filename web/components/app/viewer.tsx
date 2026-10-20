@@ -7,6 +7,7 @@ import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/com
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
 import type { AlbumTile } from "@/components/app/album"
+import { useBackClose } from "@/lib/back-close"
 import { claimPlayback, releasePlayback } from "@/lib/chat/playback"
 
 /** The display copy (long edge 2048, D-09), never the original (assumption: one album at a time). */
@@ -125,6 +126,7 @@ export function Viewer({
   onClose: () => void
 }) {
   const open = index !== null
+  useBackClose(open, onClose)
   const [api, setApi] = useState<CarouselApi>()
   const [current, setCurrent] = useState(index ?? 0)
 

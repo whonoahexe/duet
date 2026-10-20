@@ -29,6 +29,7 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Toaster } from "@/components/ui/sonner"
 import { ApiError, apiPost } from "@/lib/api"
+import { leaveTo, useBackClose } from "@/lib/back-close"
 import { startRealtime, stopRealtime } from "@/lib/chat/realtime"
 import {
   bridgeServiceWorkerMessages,
@@ -132,6 +133,8 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   // D-16: the installed app shows the notifications card until push is on (null = not shown).
   const [cardState, setCardState] = useState<PushState | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  useBackClose(menuOpen, () => setMenuOpen(false))
 
   useEffect(() => {
     let cancelled = false
@@ -237,7 +240,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
               Waiting for your person
             </span>
           )}
-          <DropdownMenu>
+          <DropdownMenu open={menuOpen} onOpenChange={(next) => setMenuOpen(next)}>
             <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Menu" />}>
               <DotsThreeVerticalIcon weight="bold" />
             </DropdownMenuTrigger>
@@ -247,7 +250,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
                 Notifications
               </DropdownMenuItem>
               {/* The installed app has no URL bar, so the hidden call test is reached from here (Pitfall M6). */}
-              <DropdownMenuItem onClick={() => window.location.assign("/debug/call/")}>
+              <DropdownMenuItem onClick={() => leaveTo("/debug/call/")}>
                 <PhoneCallIcon />
                 Call test
               </DropdownMenuItem>

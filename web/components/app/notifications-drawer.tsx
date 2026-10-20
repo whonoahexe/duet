@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { Spinner } from "@/components/ui/spinner"
+import { useBackClose } from "@/lib/back-close"
 import { blockedInstructions, enablePush, getPushState, sendTestPush, type PushState } from "@/lib/chat/push"
 import { isIos, isStandalone } from "@/lib/platform"
 
@@ -25,6 +26,7 @@ export function NotificationsDrawer({
 }) {
   const [state, setState] = useState<PushState | "ios-browser" | null>(null)
   const [busy, setBusy] = useState(false)
+  useBackClose(open, () => onOpenChange(false))
 
   useEffect(() => {
     if (!open) return

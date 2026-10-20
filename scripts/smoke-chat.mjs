@@ -683,6 +683,89 @@ Object.assign(scenarios, {
     await drawer.waitFor({ state: "hidden", timeout: 5_000 })
     await landsOnLatest(albumWithCaption(bob, caption), 10_000)
   },
+
+  /**
+   * QT-lzx-back: Android's system back closes the top overlay instead of leaving the app. A history
+   * back step closes the viewer without a reload; open/Escape cycles leave no stray entries; header
+   * menu -> Notifications keeps the drawer open and back closes it; back closes the menu itself; the
+   * Call test item still leaves for /debug/call/.
+   */
+  async back({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const caption = uniqueText("back")
+    await pickFiles(ada, [makeJpeg(`back-${randomUUID().slice(0, 8)}.jpg`, 800, 600)])
+    const drawer = previewDrawer(ada)
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send photo", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+    const onBob = albumWithCaption(bob, caption)
+    await onBob.waitFor({ state: "visible", timeout: 20_000 })
+    await until(() => mediaImagesLoaded(onBob, 1), 20_000, "Bob's photo never loaded from /media/")
+
+    const mark = (page) => page.evaluate(() => {
+      window.__duetNoReload = true
+      return history.length
+    })
+    const intact = async (page, step) => {
+      if (!(await page.evaluate(() => window.__duetNoReload === true))) throw new Error(`${step}: ${page.__name}'s page reloaded or left`)
+    }
+    const historyLength = (page) => page.evaluate(() => history.length)
+    const backStep = (page) => page.evaluate(() => history.back())
+    const bobBase = await mark(bob)
+
+    const viewerImage = bob.getByTestId("viewer-image")
+    const openViewer = async () => {
+      await onBob.getByRole("button", { name: "Open photo 1 of 1" }).click()
+      await viewerImage.waitFor({ state: "visible", timeout: 5_000 })
+    }
+    await openViewer()
+    await until(async () => (await historyLength(bob)) === bobBase + 1, 3_000, "opening the viewer did not add a history entry")
+    await backStep(bob)
+    await viewerImage.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {
+      throw new Error("a history back step did not close the viewer")
+    })
+    await intact(bob, "back from the viewer")
+    if (!(await bob.getByPlaceholder(`Message ${ADA.displayName}`).isVisible())) throw new Error("back from the viewer left the chat")
+
+    for (let i = 0; i < 3; i++) {
+      await openViewer()
+      await bob.keyboard.press("Escape")
+      await viewerImage.waitFor({ state: "hidden", timeout: 3_000 })
+    }
+    await new Promise((r) => setTimeout(r, 300))
+    if ((await historyLength(bob)) !== bobBase + 1) {
+      throw new Error(`history grew to ${await historyLength(bob)} after open/Escape cycles (expected ${bobBase + 1})`)
+    }
+    await intact(bob, "open/Escape cycles")
+
+    const menuButton = bob.getByRole("button", { name: "Menu" })
+    const notifications = bob.getByTestId("notifications-drawer")
+    await menuButton.click()
+    await bob.getByRole("menuitem", { name: "Notifications" }).click()
+    await notifications.waitFor({ state: "visible", timeout: 3_000 })
+    await new Promise((r) => setTimeout(r, 500))
+    if (!(await notifications.isVisible())) throw new Error("the Notifications drawer closed along with the menu")
+    await backStep(bob)
+    await notifications.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {
+      throw new Error("a history back step did not close the Notifications drawer")
+    })
+    await intact(bob, "back from the Notifications drawer")
+
+    const menu = bob.getByRole("menu")
+    await menuButton.click()
+    await menu.waitFor({ state: "visible", timeout: 3_000 })
+    await backStep(bob)
+    await menu.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {
+      throw new Error("a history back step did not close the header menu")
+    })
+    await intact(bob, "back from the header menu")
+    await until(async () => (await historyLength(bob)) === bobBase + 1, 3_000, "history did not settle at base + 1 for Bob")
+
+    await menuButton.click()
+    await bob.getByRole("menuitem", { name: "Call test" }).click()
+    await until(() => bob.url().includes("/debug/call/"), 10_000, "Call test did not reach /debug/call/")
+    await openChat(bob, ADA.displayName)
+  },
 })
 
 const requested = process.argv.slice(3)
