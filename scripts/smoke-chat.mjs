@@ -707,7 +707,13 @@ Object.assign(scenarios, {
       if (!(await page.evaluate(() => window.__duetNoReload === true))) throw new Error(`${step}: ${page.__name}'s page reloaded or left`)
     }
     const historyLength = (page) => page.evaluate(() => history.length)
-    const backStep = (page) => page.evaluate(() => history.back())
+    // A human never presses back within the same tick an overlay opened: let its entry land first
+    // (pushing over a forward entry leaves history.length unchanged, so the length cannot be awaited).
+    const backStep = (page) =>
+      page.evaluate(async () => {
+        await new Promise((r) => setTimeout(r, 100))
+        history.back()
+      })
     const adaBase = await mark(ada)
     const caption = uniqueText("back")
     await pickFiles(ada, [makeJpeg(`back-${randomUUID().slice(0, 8)}.jpg`, 800, 600)])
