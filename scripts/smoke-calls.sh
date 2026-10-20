@@ -7,6 +7,8 @@
 # The TURN vars are read here and handed to the server process only; they are never printed.
 # The server rings for 10 s instead of 45 s (CALL_RING_TIMEOUT_MS) so the no-answer scenario is quick, and
 # allows 100 invites a minute instead of 10 (CALL_INVITE_LIMIT): a full run starts more calls than that.
+# The server logs at info (the call lines and the phones' call_diag lines are info) to "$tmp/server.log";
+# SMOKE_SERVER_LOG names that file for the node script, whose call-log scenario reads one call's lines.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,7 +56,7 @@ printf '%s' '[{"username":"smoke-ada","displayName":"Ada Smoke","password":"smok
   export CF_TURN_KEY_ID="$turn_id" CF_TURN_KEY_API_TOKEN="$turn_tok"
   exec env -u TURN_CREDENTIAL_TTL_SECONDS \
     DATA_DIR="$tmp" PORT="$PORT" HOST=127.0.0.1 NODE_ENV=production \
-    APP_ORIGIN="$BASE" COOKIE_SECURE=false LOG_LEVEL=warn CALL_RING_TIMEOUT_MS=10000 CALL_INVITE_LIMIT=100 \
+    APP_ORIGIN="$BASE" COOKIE_SECURE=false LOG_LEVEL=info CALL_RING_TIMEOUT_MS=10000 CALL_INVITE_LIMIT=100 \
     node --import tsx src/index.ts
 ) >"$tmp/server.log" 2>&1 &
 server_pid=$!
@@ -68,7 +70,7 @@ for _ in $(seq 1 40); do
 done
 [ -n "$ready" ] || { echo "smoke-calls: /healthz not ready after 20 s" >&2; exit 1; }
 
-if ! CHROME="$chrome" node scripts/smoke-calls.mjs "$BASE" "$@"; then
+if ! CHROME="$chrome" SMOKE_SERVER_LOG="$tmp/server.log" node scripts/smoke-calls.mjs "$BASE" "$@"; then
   echo "smoke-calls: server log tail:" >&2
   tail -n 30 "$tmp/server.log" >&2
   exit 1

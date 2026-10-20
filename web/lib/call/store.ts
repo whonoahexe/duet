@@ -22,6 +22,7 @@ import { isIos } from "@/lib/platform"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import type { CallSample } from "@/lib/rtc/stats"
 import { flipCamera, getCallMedia, getCamera, getMic, type CallMediaResult, type Facing } from "./media"
+import { callLog, endCallLog, startCallLog } from "./diag-log"
 import { CallSession, forceRelayFlag } from "./session"
 import { startRingback, startRingtone, stopTones, unlockAudio, type Tone } from "./tones"
 import { holdWakeLock, releaseWakeLock } from "./wake-lock"
@@ -197,6 +198,11 @@ function commit(next: CallState): void {
     // no "Incoming call" behind in this phone's tray.
     const ended = (state.phase === "idle" || state.phase === "ended") && prev.phase !== "idle" && prev.phase !== "ended"
     if (state.phase === "ringing-in" || ended) void clearNotifications()
+    // 261020-oj7: the call's log follows the phase (a new callId, including the D-14 glare adoption,
+    // starts a new log; ended or idle ends it).
+    if (state.callId) startCallLog(state.callId, state.role ?? "caller")
+    callLog({ k: "phase", phase: state.phase })
+    if ((state.phase === "ended" || state.phase === "idle") && prev.phase !== state.phase) endCallLog()
   }
   for (const l of listeners) l()
 }
@@ -546,6 +552,7 @@ function missedCallToast(kind: CallKind, callId?: string): void {
 
 function handleEnded(frame: Extract<ServerFrame, { t: "call.ended" }>): void {
   if (frame.callId !== state.callId || state.phase === "ended" || state.phase === "idle") return
+  callLog({ k: "end", cause: "remote", serverReason: frame.reason })
   const noMedia = state.mediaStartedAt === null
   switch (frame.reason) {
     case "busy":
@@ -985,11 +992,13 @@ export const callStore = {
     const callId = state.callId
     if (!callId) return
     if (state.phase === "ringing-out") {
+      callLog({ k: "end", cause: "cancel" })
       sendFrame({ t: "call.end", callId })
       closeNow()
       return
     }
     if (state.phase !== "connecting" && state.phase !== "live") return
+    callLog({ k: "end", cause: "hangup" })
     sendFrame({ t: "call.end", callId })
     if (state.mediaStartedAt !== null) showEnded(callEndedText(), ENDED_SHOW_MS)
     else closeNow()

@@ -329,6 +329,65 @@ async function expectNoIncoming(page, peer, ms) {
   if (await incomingDialog(page, peer).isVisible()) throw new Error(`${page.__name} got an incoming call dialog`)
 }
 
+/** The server's log lines (parsed JSON) that carry `callId`; unparseable lines are skipped. */
+async function serverLines(callId) {
+  const file = process.env.SMOKE_SERVER_LOG
+  if (!file) throw new Error("SMOKE_SERVER_LOG is not set (run through scripts/smoke-calls.sh)")
+  const { readFile } = await import("node:fs/promises")
+  const text = await readFile(file, "utf8")
+  const raw = []
+  const parsed = []
+  for (const line of text.split("\n")) {
+    if (!line.includes(callId)) continue
+    raw.push(line)
+    try {
+      const obj = JSON.parse(line)
+      if (obj && obj.callId === callId) parsed.push(obj)
+    } catch {
+      // not a JSON line
+    }
+  }
+  return { raw, parsed }
+}
+
+/**
+ * Nothing private in any log line of a call (261020-oj7): no IP, candidate, SDP, ICE server URL,
+ * credential, device id or label, and no display name. A failure names the line's evt/k and the
+ * pattern, never the line itself.
+ */
+const PRIVATE_PATTERNS = [
+  ["IPv4 address", /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/],
+  ["IPv6 address", /\b[0-9a-f]{1,4}(?::[0-9a-f]{0,4}){2,}/i],
+  ["candidate", /candidate/i],
+  ["sdp", /sdp/i],
+  ["v=0", /v=0/],
+  ["turn:", /turn:/i],
+  ["turns:", /turns:/i],
+  ["stun:", /stun:/i],
+  ["username", /username/i],
+  ["credential", /credential/i],
+  ["deviceId", /deviceid/i],
+  ["label", /label/i],
+  ["Ada Smoke", /Ada Smoke/],
+  ["Bob Smoke", /Bob Smoke/],
+]
+
+function privacyScan(raw) {
+  for (const line of raw) {
+    for (const [name, re] of PRIVATE_PATTERNS) {
+      if (!re.test(line)) continue
+      let tag = "?"
+      try {
+        const o = JSON.parse(line)
+        tag = `${o.evt ?? "?"}${o.k ? `/${o.k}` : ""}`
+      } catch {
+        // not JSON
+      }
+      throw new Error(`a log line of the call (${tag}) matches the private pattern "${name}"`)
+    }
+  }
+}
+
 /** name -> async (ctx, opened) => void. Each prints "scenario <name> ok" on success. */
 const scenarios = {
   /**
@@ -897,6 +956,54 @@ const scenarios = {
     await expectNoIncoming(bob, ADA, 2_000)
     await drawer.getByRole("button", { name: "Close" }).click()
     await drawer.waitFor({ state: "hidden", timeout: 3_000 })
+  },
+  /**
+   * 261020-oj7: one grep of a callId over the server log shows the whole call from both phones, and
+   * nothing private. A real two-browser call; then the server log (SMOKE_SERVER_LOG) must hold both
+   * fixture users' call_diag lines (batch, phase live, end) under the callId, and no line of the call
+   * may carry an IP, candidate, SDP, ICE server URL, credential, device id/label or a display name.
+   */
+  async "call-log"(ctx, opened) {
+    const ada = await openApp(ctx, ADA, BOB, opened)
+    const bob = await openApp(ctx, BOB, ADA, opened)
+    await connectVoice(ada, bob)
+    const callId = (await diag(ada)).callId
+    await sleep(3_000)
+    await hangUpBoth(ada, BOB, bob)
+
+    const adaId = ctx.ids[ADA.username]
+    const bobId = ctx.ids[BOB.username]
+    const diagOf = (lines, userId) => lines.filter((o) => o.evt === "call_diag" && o.userId === userId)
+    const checks = (lines) => {
+      const missing = []
+      for (const [who, userId, cause] of [
+        ["Ada", adaId, "hangup"],
+        ["Bob", bobId, "remote"],
+      ]) {
+        const mine = diagOf(lines, userId)
+        const batch = mine.find((o) => o.k === "batch")
+        if (!batch || typeof batch.os !== "string" || typeof batch.browser !== "string" || typeof batch.standalone !== "boolean") {
+          missing.push(`${who} batch`)
+        }
+        if (!mine.some((o) => o.k === "phase" && o.phase === "live" && typeof o.ms === "number")) missing.push(`${who} phase live`)
+        const end = mine.find((o) => o.k === "end")
+        if (!end || end.cause !== cause || (who === "Bob" && end.serverReason !== "hangup")) missing.push(`${who} end ${cause}`)
+      }
+      return missing
+    }
+    let last = { raw: [], parsed: [] }
+    let missing = ["nothing read yet"]
+    await until(
+      async () => {
+        last = await serverLines(callId)
+        missing = checks(last.parsed)
+        return missing.length === 0
+      },
+      10_000,
+      () => `the server log of the call lacks: ${missing.join(", ")}`,
+    )
+    if (last.raw.length < 6) throw new Error(`only ${last.raw.length} log lines carry the callId`)
+    privacyScan(last.raw)
   },
 }
 
