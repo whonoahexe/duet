@@ -960,7 +960,8 @@ const scenarios = {
   /**
    * 261020-oj7: one grep of a callId over the server log shows the whole call from both phones, and
    * nothing private. A real two-browser call; then the server log (SMOKE_SERVER_LOG) must hold both
-   * fixture users' call_diag lines (batch, phase live, end) under the callId, and no line of the call
+   * fixture users' call_diag lines (batch, phase live, end) and the server's call lines (who sent each
+   * frame, ringMs, who ended the call) under the callId, and no line of the call
    * may carry an IP, candidate, SDP, ICE server URL, credential, device id/label or a display name.
    */
   async "call-log"(ctx, opened) {
@@ -988,6 +989,20 @@ const scenarios = {
         if (!mine.some((o) => o.k === "phase" && o.phase === "live" && typeof o.ms === "number")) missing.push(`${who} phase live`)
         const end = mine.find((o) => o.k === "end")
         if (!end || end.cause !== cause || (who === "Bob" && end.serverReason !== "hangup")) missing.push(`${who} end ${cause}`)
+      }
+      // The server's side: who sent each frame, the ring time and who ended the call.
+      if (!lines.some((o) => o.evt === "call_invite" && o.callerId === adaId)) missing.push("call_invite by Ada")
+      for (const [frame, who, userId] of [
+        ["call.invite", "Ada", adaId],
+        ["call.accept", "Bob", bobId],
+        ["call.end", "Ada", adaId],
+      ]) {
+        if (!lines.some((o) => o.evt === "call_frame" && o.frame === frame && o.userId === userId)) missing.push(`call_frame ${frame} by ${who}`)
+      }
+      if (!lines.some((o) => o.evt === "call_accept" && typeof o.ringMs === "number")) missing.push("call_accept ringMs")
+      const end = lines.find((o) => o.evt === "call_end")
+      if (!end || end.by !== "caller" || end.byUserId !== adaId || end.cause !== "frame" || end.reason !== "hangup") {
+        missing.push("call_end by Ada (caller, frame, hangup)")
       }
       return missing
     }

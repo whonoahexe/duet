@@ -53,10 +53,10 @@ function harness(opts: Partial<CallRegistryOptions> = {}) {
       registry.onAttach(conn, userId)
       return conn
     },
-    close(conn: string): void {
+    close(conn: string, code?: number): void {
       const userId = conns.get(conn)
       conns.delete(conn)
-      if (userId) registry.onClose(conn, userId)
+      if (userId) registry.onClose(conn, userId, code)
     },
     /** Frames one connection received, optionally only of type t. */
     to(conn: string, t?: string): ServerFrame[] {
@@ -515,5 +515,179 @@ describe("CALL_INVITE_LIMIT config (T-03-03)", () => {
   it("accepts 1..1000 and rejects 0", () => {
     expect(loadConfig({ ...base, CALL_INVITE_LIMIT: "100" }).CALL_INVITE_LIMIT).toBe(100)
     expect(() => loadConfig({ ...base, CALL_INVITE_LIMIT: "0" })).toThrow(ConfigError)
+  })
+})
+
+describe("call logs: who, when, why (261020-oj7)", () => {
+  type Line = Record<string, unknown>
+  function logged() {
+    const lines: Line[] = []
+    const h = harness({ log: { info: (o) => lines.push(o as Line) } })
+    const of = (evt: string) => lines.filter((l) => l.evt === evt)
+    return { h, lines, of }
+  }
+
+  it("names the sender of every frame and who ended the call, with ring and call timing", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    vi.advanceTimersByTime(3000)
+    h.frame(b, { t: "call.accept", callId })
+    h.frame(a, { t: "call.media", callId, camera: true })
+    vi.advanceTimersByTime(5000)
+    h.frame(a, { t: "call.end", callId })
+    const frames = of("call_frame")
+    expect(frames[0]).toMatchObject({ callId, frame: "call.invite", userId: ALICE, connId: a, kind: "voice" })
+    expect(frames[1]).toMatchObject({ callId, frame: "call.accept", userId: BOB, connId: b, party: "callee" })
+    expect(frames[2]).toMatchObject({ callId, frame: "call.media", userId: ALICE, connId: a, camera: true, party: "caller" })
+    expect(frames[3]).toMatchObject({ callId, frame: "call.end", userId: ALICE, connId: a, party: "caller" })
+    expect(of("call_invite")[0]).toMatchObject({ callId, connId: a, ringTimeoutMs: 45_000 })
+    expect(of("call_accept")[0]).toMatchObject({ callId, connId: b, ringMs: 3000 })
+    expect(of("call_end")[0]).toMatchObject({
+      callId,
+      reason: "hangup",
+      by: "caller",
+      byUserId: ALICE,
+      byConnId: a,
+      cause: "frame",
+      ringMs: 3000,
+      durationMs: 5000,
+      totalMs: 8000,
+    })
+    h.registry.close()
+  })
+
+  it("names the callee when Bob hangs up, and on a decline", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const first = h.invite(a)
+    h.frame(b, { t: "call.accept", callId: first })
+    h.frame(b, { t: "call.end", callId: first })
+    expect(of("call_end")[0]).toMatchObject({ callId: first, reason: "hangup", by: "callee", byUserId: BOB, byConnId: b, cause: "frame" })
+    const second = h.invite(a)
+    h.frame(b, { t: "call.decline", callId: second })
+    expect(of("call_end")[1]).toMatchObject({ callId: second, reason: "declined", by: "callee", byUserId: BOB, cause: "frame" })
+    expect(of("call_end")[1]!.ringMs).toBeUndefined()
+    h.registry.close()
+  })
+
+  it("an unanswered ring ends by the server (ring_timeout), with no byUserId", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    h.attach(BOB)
+    const callId = h.invite(a)
+    vi.advanceTimersByTime(45_000)
+    const end = of("call_end")[0]!
+    expect(end).toMatchObject({ callId, reason: "no-answer", by: "server", cause: "ring_timeout" })
+    expect(end).not.toHaveProperty("byUserId")
+    h.registry.close()
+  })
+
+  it("logs the callee's socket closing and coming back, the grace timer starting and stopping, and its expiry", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.frame(b, { t: "call.accept", callId })
+    h.close(b, 1006)
+    expect(of("call_ws_close")[0]).toEqual({
+      evt: "call_ws_close",
+      callId,
+      connId: b,
+      userId: BOB,
+      party: "callee",
+      bound: true,
+      code: 1006,
+      status: "active",
+    })
+    expect(of("call_absent_start")[0]).toEqual({
+      evt: "call_absent_start",
+      callId,
+      party: "callee",
+      connId: b,
+      graceMs: 35_000,
+      cause: "absent_grace",
+    })
+    vi.advanceTimersByTime(4000)
+    const b2 = h.attach(BOB, `session-${b}`)
+    expect(of("call_ws_open")[0]).toMatchObject({ callId, connId: b2, userId: BOB, party: "callee", status: "active" })
+    h.frame(b2, { t: "call.rejoin", callId })
+    expect(of("call_absent_stop")[0]).toEqual({ evt: "call_absent_stop", callId, party: "callee", by: "rejoin", awayMs: 4000 })
+    h.close(b2, 1001)
+    vi.advanceTimersByTime(35_000)
+    expect(of("call_end")[0]).toMatchObject({ callId, reason: "dropped", by: "server", cause: "absent_grace" })
+    h.registry.close()
+  })
+
+  it("logs the caller's absence while ringing and its expiry as cancelled", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    h.attach(BOB)
+    const callId = h.invite(a)
+    h.close(a, 1001)
+    expect(of("call_ws_close")[0]).toMatchObject({ callId, connId: a, party: "caller", bound: true, code: 1001, status: "ringing" })
+    expect(of("call_absent_start")[0]).toMatchObject({ callId, party: "caller", connId: a, graceMs: 10_000, cause: "caller_absent" })
+    vi.advanceTimersByTime(10_000)
+    expect(of("call_end")[0]).toMatchObject({ callId, reason: "cancelled", by: "server", cause: "caller_absent" })
+    h.registry.close()
+  })
+
+  it("an accept stops the caller's absence timer (CR-01) and starts the active-call grace", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.close(a)
+    vi.advanceTimersByTime(2000)
+    h.frame(b, { t: "call.accept", callId })
+    expect(of("call_absent_stop")[0]).toMatchObject({ callId, party: "caller", by: "accept", awayMs: 2000 })
+    expect(of("call_absent_start")[1]).toMatchObject({ callId, party: "caller", connId: a, graceMs: 35_000, cause: "absent_grace" })
+    h.registry.close()
+  })
+
+  it("logs refused frames: not_allowed and stale", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.frame(a, { t: "call.accept", callId })
+    expect(of("call_refused")[0]).toMatchObject({ callId, frame: "call.accept", userId: ALICE, connId: a, why: "not_allowed" })
+    h.frame(b, { t: "call.decline", callId })
+    h.frame(b, { t: "call.accept", callId })
+    expect(of("call_refused")[1]).toMatchObject({ callId, frame: "call.accept", userId: BOB, connId: b, why: "stale", reason: "declined" })
+    h.registry.close()
+  })
+
+  it("logs the WR-09 reload that abandoned a call", () => {
+    const { h, of } = logged()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.frame(b, { t: "call.accept", callId })
+    h.close(a)
+    const a2 = h.attach(ALICE, `session-${a}`)
+    h.invite(a2)
+    expect(of("call_end")[0]).toMatchObject({ callId, reason: "dropped", by: "caller", byUserId: ALICE, byConnId: a2, cause: "abandoned" })
+    h.registry.close()
+  })
+
+  it("logs no call_ws_* line for a non-party or without a current call", () => {
+    const { h, of } = logged()
+    const x = h.attach("2d8b6c0a-3f4e-4d5c-9b0a-9f8e7d6c5b4a")
+    h.close(x, 1006)
+    const a = h.attach(ALICE)
+    h.close(a, 1006)
+    expect(of("call_ws_close")).toEqual([])
+    expect(of("call_ws_open")).toEqual([])
+    const a2 = h.attach(ALICE)
+    h.attach(BOB)
+    h.invite(a2)
+    const y = h.attach("2d8b6c0a-3f4e-4d5c-9b0a-9f8e7d6c5b4a")
+    h.close(y, 1000)
+    expect(of("call_ws_close")).toEqual([])
+    expect(of("call_ws_open")).toEqual([])
+    h.registry.close()
   })
 })

@@ -60,7 +60,7 @@ export interface CallRegistry {
    * gone while ringing cancels after CALLER_ABSENT_MS, a bound party gone while active drops after
    * ABSENT_GRACE_MS.
    */
-  onClose(connId: string, userId: string): void
+  onClose(connId: string, userId: string, code?: number): void
   /**
    * GET /api/calls/:id: the current or a recent call's status for one of its two parties; null for an
    * unknown call or anyone else (T-03-09).
@@ -104,6 +104,27 @@ interface Call {
   activeAt?: number
   ringTimer?: ReturnType<typeof setTimeout>
   absentTimer?: ReturnType<typeof setTimeout>
+  /** 261020-oj7: whose absence the armed absentTimer waits for, and since when (for call_absent_stop). */
+  absentParty?: Party
+  absentSince?: number
+}
+
+type Party = "caller" | "callee"
+
+/**
+ * Who ended a call (261020-oj7: the 2026-10-20 hangup/redial calls could not say who hung up). A
+ * party's frame names that party, its user and its connection; a timer names the server.
+ */
+type EndCause =
+  | { by: Party; byUserId: string; byConnId: string; cause: "frame" | "abandoned" }
+  | { by: "server"; cause: "ring_timeout" | "caller_absent" | "absent_grace" }
+
+/** The call.* frame being handled, for the call_refused line of notAllowed / answerStale. */
+interface FrameContext {
+  callId: string
+  frame: CallClientFrame["t"]
+  userId: string
+  connId: string
 }
 
 interface RecentCall {
@@ -118,7 +139,12 @@ interface RecentCall {
  * The single-call state machine (RESEARCH Pattern 1). With exactly two people there is at most one
  * call in the whole system, so it holds one `current` call and no database table. It decides who may
  * accept, decline and end, joins exactly the two bound connections to the call room and tells every
- * device of both people how the call ended. Logs carry evt keys, ids, reasons and durations only.
+ * device of both people how the call ended. Logs carry evt keys, ids, roles, reasons, causes, close
+ * codes and durations only.
+ *
+ * 261020-oj7: every call frame (call_frame), refusal (call_refused), absence timer (call_absent_start /
+ * call_absent_stop), party socket closing and opening (call_ws_close / call_ws_open) and the end (who,
+ * why, ring and call timing) is logged under the callId, so one grep tells the server's side of a call.
  */
 export function createCallRegistry({
   log,
@@ -135,6 +161,8 @@ export function createCallRegistry({
   const recent = new Map<string, RecentCall>()
   /** Invite timestamps per user inside the sliding window (the flood guard). */
   const invites = new Map<string, number[]>()
+  /** The frame onFrame is handling (read by notAllowed / answerStale for call_refused). */
+  let frameCtx: FrameContext | null = null
 
   /** Count one ringing invite; false when this person is over INVITE_LIMIT in the window. */
   function underInviteLimit(userId: string): boolean {
@@ -175,16 +203,52 @@ export function createCallRegistry({
   }
 
   function notAllowed(connId: string): void {
+    if (frameCtx) log.info({ evt: "call_refused", ...frameCtx, why: "not_allowed" })
     transport.sendToConn(connId, { t: "error", code: "not_allowed" })
   }
 
   /** A frame about a call that is not the current one: its stored reason, or failed when unknown. */
   function answerStale(connId: string, callId: string): void {
     const r = recent.get(callId)
-    transport.sendToConn(connId, { t: "call.ended", callId, reason: r?.reason ?? "failed" })
+    const reason = r?.reason ?? "failed"
+    if (frameCtx) log.info({ evt: "call_refused", ...frameCtx, why: "stale", reason })
+    transport.sendToConn(connId, { t: "call.ended", callId, reason })
   }
 
-  function end(call: Call, reason: CallEndReason): void {
+  function partyOf(call: Call, userId: string): Party | undefined {
+    return userId === call.callerId ? "caller" : userId === call.calleeId ? "callee" : undefined
+  }
+
+  /**
+   * Arm the absence timer for `party` (the only place it is armed): the caller gone while ringing
+   * cancels after callerAbsentMs; a bound party gone during an active call drops after absentGraceMs.
+   */
+  function armAbsence(call: Call, party: Party, connId: string | undefined, cause: "caller_absent" | "absent_grace"): void {
+    const graceMs = cause === "caller_absent" ? callerAbsentMs : absentGraceMs
+    const reason: CallEndReason = cause === "caller_absent" ? "cancelled" : "dropped"
+    call.absentTimer = timer(() => end(call, reason, { by: "server", cause }), graceMs)
+    call.absentParty = party
+    call.absentSince = now()
+    log.info({ evt: "call_absent_start", callId: call.id, party, connId, graceMs, cause })
+  }
+
+  /** Clear an armed absence timer (an accept or a rejoin), logging how long the party was away. */
+  function stopAbsence(call: Call, by: "accept" | "rejoin"): void {
+    if (call.absentTimer === undefined) return
+    clearTimeout(call.absentTimer)
+    call.absentTimer = undefined
+    log.info({
+      evt: "call_absent_stop",
+      callId: call.id,
+      party: call.absentParty,
+      by,
+      awayMs: call.absentSince !== undefined ? now() - call.absentSince : undefined,
+    })
+    call.absentParty = undefined
+    call.absentSince = undefined
+  }
+
+  function end(call: Call, reason: CallEndReason, who: EndCause): void {
     if (current !== call) return
     current = null
     clearTimers(call)
@@ -206,7 +270,10 @@ export function createCallRegistry({
       callerId: call.callerId,
       calleeId: call.calleeId,
       reason,
+      ...who,
+      ringMs: call.activeAt !== undefined ? call.activeAt - call.startedAt : undefined,
       durationMs: call.activeAt !== undefined ? at - call.activeAt : 0,
+      totalMs: at - call.startedAt,
     })
   }
 
@@ -244,7 +311,7 @@ export function createCallRegistry({
         // WR-09: this device reloaded (or crashed) mid-call. The page lost its call state, so it never
         // rejoins, and its party's connection is gone: the stale call ends and this invite goes ahead.
         log.info({ evt: "call_abandoned", callId: call.id, userId, replacedBy: callId })
-        end(call, "dropped")
+        end(call, "dropped", { by: partyOf(call, userId) ?? "caller", byUserId: userId, byConnId: connId, cause: "abandoned" })
       } else {
         // Busy: one call at a time; a person already in a call gets no second ring.
         log.info({ evt: "call_busy", callId, userId, currentCallId: call.id })
@@ -276,8 +343,8 @@ export function createCallRegistry({
     }
     current = call
     // D-07 / D-16: the call rings for the full timeout even when the callee has no open device.
-    call.ringTimer = timer(() => end(call, "no-answer"), ringTimeoutMs)
-    log.info({ evt: "call_invite", callId, callerId: userId, calleeId, kind })
+    call.ringTimer = timer(() => end(call, "no-answer", { by: "server", cause: "ring_timeout" }), ringTimeoutMs)
+    log.info({ evt: "call_invite", callId, callerId: userId, calleeId, kind, connId, ringTimeoutMs })
     transport.sendToUser(calleeId, { t: "call.ring", callId, kind, from: userId })
     push?.notifyCall({ id: callId, kind, callerId: userId, calleeId })
   }
@@ -308,10 +375,9 @@ export function createCallRegistry({
     call.ringTimer = undefined
     // CR-01: a caller whose socket closed while ringing armed the 10 s "cancelled" timer. Once the call is
     // answered that timer must not end it: the caller gets the active-call grace and the reason is dropped.
-    if (call.absentTimer !== undefined) clearTimeout(call.absentTimer)
-    call.absentTimer = undefined
+    stopAbsence(call, "accept")
     if (transport.sessionOf(call.callerConn) === undefined) {
-      call.absentTimer = timer(() => end(call, "dropped"), absentGraceMs)
+      armAbsence(call, "caller", call.callerConn, "absent_grace")
     }
     call.calleeConn = connId
     call.calleeSession = transport.sessionOf(connId)
@@ -322,7 +388,15 @@ export function createCallRegistry({
     transport.sendToConn(call.callerConn, { t: "call.accepted", callId: call.id })
     transport.sendToConn(connId, replaces ? { t: "call.accepted", callId: call.id, replaces } : { t: "call.accepted", callId: call.id })
     transport.sendToUser(call.calleeId, { t: "call.stop-ringing", callId: call.id, reason: "answered-elsewhere" }, connId)
-    log.info({ evt: "call_accept", callId: call.id, callerId: call.callerId, calleeId: call.calleeId })
+    log.info({
+      evt: "call_accept",
+      callId: call.id,
+      callerId: call.callerId,
+      calleeId: call.calleeId,
+      connId,
+      ringMs: call.activeAt - call.startedAt,
+      replaces,
+    })
   }
 
   function decline(connId: string, userId: string, call: Call, failed: boolean): void {
@@ -331,7 +405,7 @@ export function createCallRegistry({
       return
     }
     // WR-08: an Accept that failed on the callee's device is not a refusal.
-    end(call, failed ? "failed" : "declined")
+    end(call, failed ? "failed" : "declined", { by: "callee", byUserId: userId, byConnId: connId, cause: "frame" })
   }
 
   function hangUp(connId: string, call: Call): void {
@@ -340,14 +414,20 @@ export function createCallRegistry({
         notAllowed(connId)
         return
       }
-      end(call, "cancelled")
+      end(call, "cancelled", { by: "caller", byUserId: call.callerId, byConnId: connId, cause: "frame" })
       return
     }
     if (connId !== call.callerConn && connId !== call.calleeConn) {
       notAllowed(connId)
       return
     }
-    end(call, "hangup")
+    const fromCaller = connId === call.callerConn
+    end(call, "hangup", {
+      by: fromCaller ? "caller" : "callee",
+      byUserId: fromCaller ? call.callerId : call.calleeId,
+      byConnId: connId,
+      cause: "frame",
+    })
   }
 
   /**
@@ -378,7 +458,9 @@ export function createCallRegistry({
     if (!call || call.id !== callId) {
       const r = recent.get(callId)
       const party = r !== undefined && (userId === r.callerId || userId === r.calleeId)
-      transport.sendToConn(connId, { t: "call.ended", callId, reason: party ? r.reason : "dropped" })
+      const reason = party ? r.reason : "dropped"
+      if (frameCtx) log.info({ evt: "call_refused", ...frameCtx, why: "stale", reason })
+      transport.sendToConn(connId, { t: "call.ended", callId, reason })
       return
     }
     const session = transport.sessionOf(connId)
@@ -390,8 +472,7 @@ export function createCallRegistry({
       return
     }
     log.info({ evt: "call_rejoin", callId: call.id, userId })
-    if (call.absentTimer !== undefined) clearTimeout(call.absentTimer)
-    call.absentTimer = undefined
+    stopAbsence(call, "rejoin")
     if (call.status === "ringing") {
       call.callerConn = connId
       transport.sendToConn(connId, { t: "call.state", callId: call.id, status: "ringing", peerCamera: false })
@@ -406,7 +487,7 @@ export function createCallRegistry({
     // The absence timer is shared: the other party may still be away, so its grace starts again.
     const other = asCaller ? call.calleeConn : call.callerConn
     if (other === undefined || transport.sessionOf(other) === undefined) {
-      call.absentTimer = timer(() => end(call, "dropped"), absentGraceMs)
+      armAbsence(call, asCaller ? "callee" : "caller", other, "absent_grace")
     }
     transport.sendToConn(connId, {
       t: "call.state",
@@ -416,58 +497,83 @@ export function createCallRegistry({
     })
   }
 
+  /** Route one call.* frame (onFrame logged it and holds its context for call_refused). */
+  function handleFrame(connId: string, userId: string, frame: CallClientFrame): void {
+    if (frame.t === "call.invite") {
+      invite(connId, userId, frame.callId, frame.kind)
+      return
+    }
+    if (frame.t === "call.rejoin") {
+      rejoin(connId, userId, frame.callId)
+      return
+    }
+    const call = current
+    if (!call || call.id !== frame.callId) {
+      answerStale(connId, frame.callId)
+      return
+    }
+    if (userId !== call.callerId && userId !== call.calleeId) {
+      notAllowed(connId)
+      return
+    }
+    switch (frame.t) {
+      case "call.accept":
+        accept(connId, userId, call)
+        return
+      case "call.decline":
+        decline(connId, userId, call, frame.reason === "failed")
+        return
+      case "call.end":
+        hangUp(connId, call)
+        return
+      case "call.media":
+        media(connId, call, frame.camera)
+        return
+    }
+  }
+
   return {
     onFrame(connId, userId, frame) {
-      if (frame.t === "call.invite") {
-        invite(connId, userId, frame.callId, frame.kind)
-        return
-      }
-      if (frame.t === "call.rejoin") {
-        rejoin(connId, userId, frame.callId)
-        return
-      }
-      const call = current
-      if (!call || call.id !== frame.callId) {
-        answerStale(connId, frame.callId)
-        return
-      }
-      if (userId !== call.callerId && userId !== call.calleeId) {
-        notAllowed(connId)
-        return
-      }
-      switch (frame.t) {
-        case "call.accept":
-          accept(connId, userId, call)
-          return
-        case "call.decline":
-          decline(connId, userId, call, frame.reason === "failed")
-          return
-        case "call.end":
-          hangUp(connId, call)
-          return
-        case "call.media":
-          media(connId, call, frame.camera)
-          return
+      const line: Record<string, unknown> = { evt: "call_frame", callId: frame.callId, frame: frame.t, userId, connId }
+      if (frame.t === "call.invite") line.kind = frame.kind
+      if (frame.t === "call.media") line.camera = frame.camera
+      if (frame.t === "call.decline" && frame.reason !== undefined) line.reason = frame.reason
+      const party = current && current.id === frame.callId ? partyOf(current, userId) : undefined
+      if (party) line.party = party
+      log.info(line)
+      frameCtx = { callId: frame.callId, frame: frame.t, userId, connId }
+      try {
+        handleFrame(connId, userId, frame)
+      } finally {
+        frameCtx = null
       }
     },
 
     onAttach(connId, userId) {
       const call = current
-      if (!call || call.status !== "ringing" || userId !== call.calleeId) return
+      if (!call) return
+      const party = partyOf(call, userId)
+      if (party) log.info({ evt: "call_ws_open", callId: call.id, connId, userId, party, status: call.status })
+      if (call.status !== "ringing" || userId !== call.calleeId) return
       log.info({ evt: "call_ring_attach", callId: call.id, connId })
       transport.sendToConn(connId, { t: "call.ring", callId: call.id, kind: call.kind, from: call.callerId })
     },
 
-    onClose(connId) {
+    onClose(connId, userId, code) {
       const call = current
-      if (!call || call.absentTimer !== undefined) return
+      if (!call) return
+      const party = partyOf(call, userId)
+      if (party) {
+        const bound = connId === (party === "caller" ? call.callerConn : call.calleeConn)
+        log.info({ evt: "call_ws_close", callId: call.id, connId, userId, party, bound, code, status: call.status })
+      }
+      if (call.absentTimer !== undefined) return
       if (call.status === "ringing") {
-        if (connId === call.callerConn) call.absentTimer = timer(() => end(call, "cancelled"), callerAbsentMs)
+        if (connId === call.callerConn) armAbsence(call, "caller", connId, "caller_absent")
         return
       }
-      if (connId === call.callerConn || connId === call.calleeConn) {
-        call.absentTimer = timer(() => end(call, "dropped"), absentGraceMs)
-      }
+      if (connId === call.callerConn) armAbsence(call, "caller", connId, "absent_grace")
+      else if (connId === call.calleeConn) armAbsence(call, "callee", connId, "absent_grace")
     },
 
     statusFor(callId, userId) {

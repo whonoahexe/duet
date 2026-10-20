@@ -271,4 +271,25 @@ describe("POST /api/rtc/ice-servers", () => {
     expect(text).not.toContain(FIXTURE_CREDENTIAL)
     expect(text).not.toContain(FIXTURE_USERNAME)
   })
+
+  it("turn_mint lines carry the mint latency and the credential TTL (261020-oj7)", () => {
+    const mints = logs
+      .join("")
+      .split("\n")
+      .filter((l) => l.includes('"evt":"turn_mint"'))
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+    const ok = mints.filter((m) => m.ok === true)
+    const failed = mints.filter((m) => m.ok === false)
+    expect(ok.length).toBeGreaterThan(0)
+    expect(failed.length).toBeGreaterThan(0)
+    for (const m of ok) {
+      expect(typeof m.ms).toBe("number")
+      expect(m.ms as number).toBeGreaterThanOrEqual(0)
+      expect(m.ttlSeconds).toBe(t.app.config.TURN_CREDENTIAL_TTL_SECONDS)
+    }
+    for (const m of failed) {
+      expect(typeof m.ms).toBe("number")
+      expect(m.ms as number).toBeGreaterThanOrEqual(0)
+    }
+  })
 })

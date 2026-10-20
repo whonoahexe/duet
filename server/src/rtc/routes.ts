@@ -47,6 +47,9 @@ export async function rtcRoutes(app: FastifyInstance, opts: RtcRoutesOptions) {
     },
     async (request, reply) => {
       const userId = request.user!.id
+      // 261020-oj7: mint latency and the credential TTL are logged; the result itself never is.
+      const started = performance.now()
+      const ms = () => Math.round(performance.now() - started)
       try {
         const result: IceServersResponse = await mintIceServers({
           fetch: opts.fetch,
@@ -56,12 +59,12 @@ export async function rtcRoutes(app: FastifyInstance, opts: RtcRoutesOptions) {
           apiToken: app.config.CF_TURN_KEY_API_TOKEN,
           ttlSeconds: app.config.TURN_CREDENTIAL_TTL_SECONDS,
         })
-        request.log.info({ evt: "turn_mint", userId, ok: true })
+        request.log.info({ evt: "turn_mint", userId, ok: true, ms: ms(), ttlSeconds: result.ttlSeconds })
         reply.header("Cache-Control", "no-store")
         return result
       } catch (err) {
         if (err instanceof TurnError) {
-          request.log.warn({ evt: "turn_mint", userId, ok: false, code: err.code })
+          request.log.warn({ evt: "turn_mint", userId, ok: false, code: err.code, ms: ms() })
           reply.header("Cache-Control", "no-store")
           const status = err.code === "turn_unconfigured" ? 503 : 502
           return reply.code(status).send({ error: err.code })
