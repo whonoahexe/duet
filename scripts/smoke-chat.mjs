@@ -687,11 +687,22 @@ Object.assign(scenarios, {
   /**
    * QT-lzx-back: Android's system back closes the top overlay instead of leaving the app. A history
    * back step closes the viewer without a reload; open/Escape cycles leave no stray entries; header
-   * menu -> Notifications keeps the drawer open and back closes it; back closes the menu itself; the
-   * Call test item still leaves for /debug/call/.
+   * menu -> Notifications keeps the drawer open and back closes it; back closes the menu itself, Ada's
+   * preview drawer (nothing sent) and Bob's long-press message menu; the Call test item still leaves
+   * for /debug/call/.
    */
   async back({ ada, bob }) {
     await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const mark = (page) => page.evaluate(() => {
+      window.__duetNoReload = true
+      return history.length
+    })
+    const intact = async (page, step) => {
+      if (!(await page.evaluate(() => window.__duetNoReload === true))) throw new Error(`${step}: ${page.__name}'s page reloaded or left`)
+    }
+    const historyLength = (page) => page.evaluate(() => history.length)
+    const backStep = (page) => page.evaluate(() => history.back())
+    const adaBase = await mark(ada)
     const caption = uniqueText("back")
     await pickFiles(ada, [makeJpeg(`back-${randomUUID().slice(0, 8)}.jpg`, 800, 600)])
     const drawer = previewDrawer(ada)
@@ -702,15 +713,6 @@ Object.assign(scenarios, {
     await onBob.waitFor({ state: "visible", timeout: 20_000 })
     await until(() => mediaImagesLoaded(onBob, 1), 20_000, "Bob's photo never loaded from /media/")
 
-    const mark = (page) => page.evaluate(() => {
-      window.__duetNoReload = true
-      return history.length
-    })
-    const intact = async (page, step) => {
-      if (!(await page.evaluate(() => window.__duetNoReload === true))) throw new Error(`${step}: ${page.__name}'s page reloaded or left`)
-    }
-    const historyLength = (page) => page.evaluate(() => history.length)
-    const backStep = (page) => page.evaluate(() => history.back())
     const bobBase = await mark(bob)
 
     const viewerImage = bob.getByTestId("viewer-image")
@@ -738,7 +740,7 @@ Object.assign(scenarios, {
     }
     await intact(bob, "open/Escape cycles")
 
-    const menuButton = bob.getByRole("button", { name: "Menu" })
+    const menuButton = bob.getByRole("button", { name: "Menu", exact: true })
     const notifications = bob.getByTestId("notifications-drawer")
     await menuButton.click()
     await bob.getByRole("menuitem", { name: "Notifications" }).click()
@@ -759,7 +761,30 @@ Object.assign(scenarios, {
       throw new Error("a history back step did not close the header menu")
     })
     await intact(bob, "back from the header menu")
+
+    // Back drops a picked selection: the preview drawer closes and nothing is sent.
+    await pickFiles(ada, [makeJpeg(`back-drop-${randomUUID().slice(0, 8)}.jpg`, 640, 480)])
+    await backStep(ada)
+    await previewDrawer(ada).waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {
+      throw new Error("a history back step did not close the preview drawer")
+    })
+    await intact(ada, "back from the preview drawer")
+
+    // Back closes the long-press message menu.
+    const text = uniqueText("long press")
+    await sendFromComposer(ada, BOB.displayName, text)
+    await expectExactlyOnce(bob, text, 5_000)
+    await bubbleOf(bob, text).click({ button: "right" })
+    const reactions = bob.getByRole("group", { name: "Reactions" })
+    await reactions.waitFor({ state: "visible", timeout: 3_000 })
+    await backStep(bob)
+    await reactions.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {
+      throw new Error("a history back step did not close the message menu")
+    })
+    await intact(bob, "back from the message menu")
+
     await until(async () => (await historyLength(bob)) === bobBase + 1, 3_000, "history did not settle at base + 1 for Bob")
+    await until(async () => (await historyLength(ada)) === adaBase + 1, 3_000, "history did not settle at base + 1 for Ada")
 
     await menuButton.click()
     await bob.getByRole("menuitem", { name: "Call test" }).click()

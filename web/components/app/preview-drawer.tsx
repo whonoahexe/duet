@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { Textarea } from "@/components/ui/textarea"
+import { useBackClose } from "@/lib/back-close"
 
 export function kindOf(file: File): AttachmentKind {
   return file.type.startsWith("video/") ? "video" : "image"
@@ -114,6 +115,8 @@ export function PreviewDrawer({
     onDiscard()
     setCaption("")
   }
+  // Back drops the selection, like swiping the drawer down.
+  useBackClose(open, discard)
 
   return (
     <Drawer

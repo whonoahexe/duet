@@ -10,6 +10,7 @@ import { VoiceNote, type VoiceNoteProps } from "@/components/app/voice-note"
 import { Bubble, BubbleContent, BubbleGroup, BubbleReactions } from "@/components/ui/bubble"
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useBackClose } from "@/lib/back-close"
 import { chatStore } from "@/lib/chat/store"
 import { mergeHandlers, useLongPress, useSwipeReply } from "@/lib/chat/gestures"
 import { cn } from "@/lib/utils"
@@ -211,6 +212,7 @@ function PendingBubble({ item, ctx }: { item: GroupItem; ctx: RowContext }) {
 function StoredBubble({ item, seq, ctx }: { item: GroupItem; seq: number; ctx: RowContext }) {
   const { mine, meId, peerName } = ctx
   const [open, setOpen] = useState(false)
+  useBackClose(open, () => setOpen(false))
   const reply = () => chatStore.setReplyTarget(seq)
   const longPress = useLongPress({ onOpen: () => setOpen(true) })
   const swipe = useSwipeReply({ onReply: reply })

@@ -16,6 +16,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { useBackClose } from "@/lib/back-close"
 import { callStore, useCall, type CallState, type PipCorner } from "@/lib/call/store"
 import { cn } from "@/lib/utils"
 
@@ -369,6 +370,8 @@ export function CallScreen() {
   const active = call.phase === "ringing-out" || call.phase === "connecting" || call.phase === "live"
   // D-06: a minimized call keeps running with this Dialog closed (the on-call bar brings it back).
   const open = call.screen === "open" && (active || (ended && (call.endText !== null || call.endState !== null)))
+  // Back minimizes to the chat like Escape and never hangs up (same document, so capture keeps running).
+  useBackClose(open, () => callStore.minimize())
   const failed = ended && call.endState !== null
   const showPill = !ended
   const [focusInside, focusHandlers] = useFocusInside()

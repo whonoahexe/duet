@@ -3,6 +3,7 @@
 import { MicrophoneSlashIcon, VideoCameraSlashIcon } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
+import { useBackClose } from "@/lib/back-close"
 import { isIos } from "@/lib/platform"
 
 /** UI-SPEC Copywriting: permission body per platform, {microphone / camera} filled in. */
@@ -26,6 +27,7 @@ export function PermissionDrawer({
   onOpenChange: (open: boolean) => void
   device: "microphone" | "camera"
 }) {
+  useBackClose(open, () => onOpenChange(false))
   const Icon = device === "microphone" ? MicrophoneSlashIcon : VideoCameraSlashIcon
   return (
     <Drawer open={open} onOpenChange={(next) => onOpenChange(next)}>
