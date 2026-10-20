@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { CameraIcon, PaperPlaneRightIcon, PlusIcon, TrashIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
+import { CameraIcon, ImagesIcon, PaperPlaneRightIcon, PlusIcon, TrashIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
 import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, VIDEO_PICK_MAX_SECONDS, isBlankBody } from "@duet/shared"
 import { PreviewDrawer, kindOf, videoDurationMs, type PickedItem } from "@/components/app/preview-drawer"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
@@ -40,8 +40,8 @@ export function Composer({ peerName }: { peerName: string }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const cameraPhotoRef = useRef<HTMLInputElement>(null)
   const cameraVideoRef = useRef<HTMLInputElement>(null)
-  const [cameraOpen, setCameraOpen] = useState(false)
-  useBackClose(cameraOpen, () => setCameraOpen(false))
+  const [attachOpen, setAttachOpen] = useState(false)
+  useBackClose(attachOpen, () => setAttachOpen(false))
   const lastTypingRef = useRef(0)
   const canSend = !isBlankBody(text)
   const chat = useChat()
@@ -195,37 +195,32 @@ export function Composer({ peerName }: { peerName: string }) {
       <InputGroup className={cn(recording && "h-auto")}>
         {!recording && (
           <InputGroupAddon align="inline-start">
-            <InputGroupButton
-              variant="ghost"
-              size="icon-sm"
-              className="size-11 rounded-full"
-              aria-label="Attach photo or video"
-              onClick={() => fileRef.current?.click()}
-            >
-              <PlusIcon weight="bold" />
-            </InputGroupButton>
-            <DropdownMenu open={cameraOpen} onOpenChange={(next) => setCameraOpen(next)}>
+            <DropdownMenu open={attachOpen} onOpenChange={(next) => setAttachOpen(next)}>
               <DropdownMenuTrigger
                 render={
                   <InputGroupButton
                     variant="ghost"
                     size="icon-sm"
                     className="size-11 rounded-full"
-                    aria-label="Take photo or video"
+                    aria-label="Attach photo or video"
                   />
                 }
               >
-                <CameraIcon />
+                <PlusIcon weight="bold" />
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-auto">
-                {/* The click stays inside the item's tap, so the browser lets it open the camera. */}
+                {/* Each click stays inside the item's tap, so the browser lets it open the picker or camera. */}
+                <DropdownMenuItem onClick={() => fileRef.current?.click()}>
+                  <ImagesIcon />
+                  Gallery
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => cameraPhotoRef.current?.click()}>
                   <CameraIcon />
-                  Photo
+                  Take photo
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => cameraVideoRef.current?.click()}>
                   <VideoCameraIcon />
-                  Video
+                  Record video
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

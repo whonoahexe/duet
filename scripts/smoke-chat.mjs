@@ -146,7 +146,7 @@ function previewDrawer(page) {
   return page.locator('[data-slot="drawer-popup"]')
 }
 
-/** Pick files through the composer's hidden input (the "+" button opens it on a phone). */
+/** Pick files through the composer's hidden input (the "+" menu's Gallery item opens it on a phone). */
 async function pickFiles(page, files) {
   await page.getByTestId("attach-input").setInputFiles(files)
   await previewDrawer(page).waitFor({ state: "visible", timeout: 5_000 })
@@ -805,15 +805,16 @@ Object.assign(scenarios, {
   },
 
   /**
-   * QT-lzx-camera / QT-lzx-save: the camera button's Video and Photo items open single-file choosers
-   * that ask for the rear camera (capture=environment); a captured photo goes through the preview
-   * drawer to Bob, whose viewer Save downloads the display copy as duet-<id>.webp.
+   * QT-lzx-camera / QT-lzx-save: the + menu's Gallery item opens the multi-file picker with no capture,
+   * its Record video and Take photo items open single-file choosers that ask for the rear camera
+   * (capture=environment); a captured photo goes through the preview drawer to Bob, whose viewer Save
+   * downloads the display copy as duet-<id>.webp.
    */
   async camera({ ada, bob }) {
     await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
-    const cameraButton = ada.getByRole("button", { name: "Take photo or video" })
+    const attachButton = ada.getByRole("button", { name: "Attach photo or video" })
     const chooserFor = async (item) => {
-      await cameraButton.click()
+      await attachButton.click()
       const [chooser] = await Promise.all([
         ada.waitForEvent("filechooser", { timeout: 5_000 }),
         ada.getByRole("menuitem", { name: item, exact: true }).click(),
@@ -827,9 +828,14 @@ Object.assign(scenarios, {
       }
     }
 
-    await expectCapture(await chooserFor("Video"), "video/*", "Video")
-    const photoChooser = await chooserFor("Photo")
-    await expectCapture(photoChooser, "image/*", "Photo")
+    const gallery = await chooserFor("Gallery")
+    const galleryAttrs = await gallery.element().evaluate((el) => ({ accept: el.getAttribute("accept"), capture: el.getAttribute("capture") }))
+    if (galleryAttrs.accept !== "image/*,video/*" || galleryAttrs.capture !== null || !gallery.isMultiple()) {
+      throw new Error(`the Gallery item opened accept=${galleryAttrs.accept} capture=${galleryAttrs.capture} multiple=${gallery.isMultiple()}`)
+    }
+    await expectCapture(await chooserFor("Record video"), "video/*", "Record video")
+    const photoChooser = await chooserFor("Take photo")
+    await expectCapture(photoChooser, "image/*", "Take photo")
     await photoChooser.setFiles(makeJpeg(`camera-${randomUUID().slice(0, 8)}.jpg`, 1200, 900))
     const drawer = previewDrawer(ada)
     await drawer.getByText("1 photo", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
