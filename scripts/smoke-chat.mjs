@@ -692,7 +692,13 @@ Object.assign(scenarios, {
    * for /debug/call/.
    */
   async back({ ada, bob }) {
-    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    // A fresh URL, not openChat's "/": a same-URL goto replaces the current entry and keeps the forward
+    // entries an earlier scenario's closed overlays left behind, which would skew history.length.
+    const fresh = async (page, peerName) => {
+      await page.goto(`${BASE}/?back=${randomUUID().slice(0, 8)}`)
+      await page.getByPlaceholder(`Message ${peerName}`).waitFor({ state: "visible", timeout: 15_000 })
+    }
+    await Promise.all([fresh(ada, BOB.displayName), fresh(bob, ADA.displayName)])
     const mark = (page) => page.evaluate(() => {
       window.__duetNoReload = true
       return history.length
@@ -783,13 +789,63 @@ Object.assign(scenarios, {
     })
     await intact(bob, "back from the message menu")
 
-    await until(async () => (await historyLength(bob)) === bobBase + 1, 3_000, "history did not settle at base + 1 for Bob")
-    await until(async () => (await historyLength(ada)) === adaBase + 1, 3_000, "history did not settle at base + 1 for Ada")
+    await until(async () => (await historyLength(bob)) === bobBase + 1, 3_000, `history did not settle at base + 1 for Bob (base ${bobBase})`)
+    await until(async () => (await historyLength(ada)) === adaBase + 1, 3_000, `history did not settle at base + 1 for Ada (base ${adaBase})`)
 
     await menuButton.click()
     await bob.getByRole("menuitem", { name: "Call test" }).click()
     await until(() => bob.url().includes("/debug/call/"), 10_000, "Call test did not reach /debug/call/")
     await openChat(bob, ADA.displayName)
+  },
+
+  /**
+   * QT-lzx-camera / QT-lzx-save: the camera button's Video and Photo items open single-file choosers
+   * that ask for the rear camera (capture=environment); a captured photo goes through the preview
+   * drawer to Bob, whose viewer Save downloads the display copy as duet-<id>.webp.
+   */
+  async camera({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const cameraButton = ada.getByRole("button", { name: "Take photo or video" })
+    const chooserFor = async (item) => {
+      await cameraButton.click()
+      const [chooser] = await Promise.all([
+        ada.waitForEvent("filechooser", { timeout: 5_000 }),
+        ada.getByRole("menuitem", { name: item, exact: true }).click(),
+      ])
+      return chooser
+    }
+    const expectCapture = async (chooser, accept, item) => {
+      const attrs = await chooser.element().evaluate((el) => ({ accept: el.getAttribute("accept"), capture: el.getAttribute("capture") }))
+      if (attrs.accept !== accept || attrs.capture !== "environment" || chooser.isMultiple()) {
+        throw new Error(`the ${item} item opened accept=${attrs.accept} capture=${attrs.capture} multiple=${chooser.isMultiple()}`)
+      }
+    }
+
+    await expectCapture(await chooserFor("Video"), "video/*", "Video")
+    const photoChooser = await chooserFor("Photo")
+    await expectCapture(photoChooser, "image/*", "Photo")
+    await photoChooser.setFiles(makeJpeg(`camera-${randomUUID().slice(0, 8)}.jpg`, 1200, 900))
+    const drawer = previewDrawer(ada)
+    await drawer.getByText("1 photo", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
+    const caption = uniqueText("captured")
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send photo", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+
+    const onBob = albumWithCaption(bob, caption)
+    await onBob.waitFor({ state: "visible", timeout: 20_000 })
+    await until(() => mediaImagesLoaded(onBob, 1), 20_000, "Bob's captured photo never loaded from /media/")
+    await onBob.getByRole("button", { name: "Open photo 1 of 1" }).click()
+    const viewer = bob.getByRole("dialog")
+    await bob.getByTestId("viewer-image").waitFor({ state: "visible", timeout: 5_000 })
+    const save = viewer.getByRole("button", { name: "Save", exact: true })
+    await until(() => save.isEnabled(), 5_000, "the viewer's Save button stayed disabled")
+    const [download] = await Promise.all([bob.waitForEvent("download", { timeout: 15_000 }), save.click()])
+    if (!/^duet-[^/]+\.webp$/.test(download.suggestedFilename())) {
+      throw new Error(`Save downloaded "${download.suggestedFilename()}", expected duet-<id>.webp`)
+    }
+    await bob.keyboard.press("Escape")
+    await bob.getByTestId("viewer-image").waitFor({ state: "hidden", timeout: 3_000 })
   },
 })
 

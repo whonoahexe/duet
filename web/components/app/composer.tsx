@@ -2,13 +2,20 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { PaperPlaneRightIcon, PlusIcon, TrashIcon, XIcon } from "@phosphor-icons/react"
+import { CameraIcon, PaperPlaneRightIcon, PlusIcon, TrashIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
 import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, VIDEO_PICK_MAX_SECONDS, isBlankBody } from "@duet/shared"
 import { PreviewDrawer, kindOf, videoDurationMs, type PickedItem } from "@/components/app/preview-drawer"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
 import { MicButton, RecordingStatus, useVoiceRecorder } from "@/components/app/recorder"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
+import { useBackClose } from "@/lib/back-close"
 import { requestScrollToLatest } from "@/lib/chat/events"
 import { sendTyping } from "@/lib/chat/realtime"
 import { chatStore, useChat } from "@/lib/chat/store"
@@ -31,6 +38,10 @@ export function Composer({ peerName }: { peerName: string }) {
   const [picked, setPicked] = useState<PickedItem[]>([])
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const cameraPhotoRef = useRef<HTMLInputElement>(null)
+  const cameraVideoRef = useRef<HTMLInputElement>(null)
+  const [cameraOpen, setCameraOpen] = useState(false)
+  useBackClose(cameraOpen, () => setCameraOpen(false))
   const lastTypingRef = useRef(0)
   const canSend = !isBlankBody(text)
   const chat = useChat()
@@ -76,7 +87,8 @@ export function Composer({ peerName }: { peerName: string }) {
   }
 
   /**
-   * The native picker returned files (camera, library or Files: D-05). Limits are checked before the
+   * The native picker returned files (camera, library or Files: D-05), or the camera button's photo
+   * or video capture input returned a fresh capture. Limits are checked before the
    * drawer opens (UI-SPEC): photos over 100 MB, videos over 200 MB or 3 minutes (D-08) are left out
    * with a toast, at most 10 items are kept, and if nothing is left the drawer does not open.
    */
@@ -158,6 +170,28 @@ export function Composer({ peerName }: { peerName: string }) {
         data-testid="attach-input"
         onChange={(e) => void onPick(e)}
       />
+      {/*
+        Separate photo and video capture inputs: Android Chrome does not reliably offer both camera
+        modes for one combined accept with capture, while one input per mode opens the right one.
+      */}
+      <input
+        ref={cameraPhotoRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        data-testid="camera-photo-input"
+        onChange={(e) => void onPick(e)}
+      />
+      <input
+        ref={cameraVideoRef}
+        type="file"
+        accept="video/*"
+        capture="environment"
+        hidden
+        data-testid="camera-video-input"
+        onChange={(e) => void onPick(e)}
+      />
       <InputGroup className={cn(recording && "h-auto")}>
         {!recording && (
           <InputGroupAddon align="inline-start">
@@ -170,6 +204,31 @@ export function Composer({ peerName }: { peerName: string }) {
             >
               <PlusIcon weight="bold" />
             </InputGroupButton>
+            <DropdownMenu open={cameraOpen} onOpenChange={(next) => setCameraOpen(next)}>
+              <DropdownMenuTrigger
+                render={
+                  <InputGroupButton
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-11 rounded-full"
+                    aria-label="Take photo or video"
+                  />
+                }
+              >
+                <CameraIcon />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="w-auto">
+                {/* The click stays inside the item's tap, so the browser lets it open the camera. */}
+                <DropdownMenuItem onClick={() => cameraPhotoRef.current?.click()}>
+                  <CameraIcon />
+                  Photo
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => cameraVideoRef.current?.click()}>
+                  <VideoCameraIcon />
+                  Video
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </InputGroupAddon>
         )}
         {recorder.phase === "locked" && (

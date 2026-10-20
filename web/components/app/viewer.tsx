@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ImageBrokenIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
+import { toast } from "sonner"
+import { DownloadSimpleIcon, ImageBrokenIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel"
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -9,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner"
 import type { AlbumTile } from "@/components/app/album"
 import { useBackClose } from "@/lib/back-close"
 import { claimPlayback, releasePlayback } from "@/lib/chat/playback"
+import { saveMedia } from "@/lib/chat/save-media"
 
 /** The display copy (long edge 2048, D-09), never the original (assumption: one album at a time). */
 function displaySrc(tile: AlbumTile, attempt: number): string | null {
@@ -129,6 +131,23 @@ export function Viewer({
   useBackClose(open, onClose)
   const [api, setApi] = useState<CarouselApi>()
   const [current, setCurrent] = useState(index ?? 0)
+  const [saving, setSaving] = useState(false)
+  const tile = tiles[current]
+  // Uploading, processing and failed items have no served copy yet.
+  const saveId = tile && tile.status === "ready" ? tile.attachmentId : null
+
+  async function save() {
+    if (!tile || !saveId || saving) return
+    setSaving(true)
+    try {
+      const result = await saveMedia(saveId, tile.kind)
+      if (result === "tap-again") toast("Ready. Tap Save again to save it.")
+    } catch {
+      toast.error("Couldn't save. Try again.")
+    } finally {
+      setSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (!api) return
@@ -171,6 +190,9 @@ export function Viewer({
           <DialogClose render={<Button variant="ghost" size="icon" aria-label="Close viewer" />}>
             <XIcon />
           </DialogClose>
+          <Button variant="ghost" size="icon" aria-label="Save" disabled={saving || !saveId} onClick={() => void save()}>
+            {saving ? <Spinner /> : <DownloadSimpleIcon />}
+          </Button>
           {tiles.length > 1 && (
             <span
               data-testid="viewer-counter"
