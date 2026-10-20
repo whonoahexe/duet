@@ -80,7 +80,11 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 
 ### Pending Todos
 
-None.
+- [2026-10-20] [calls] Add call debug logging (WebRTC + TURN, no personal data) — [todo file](.planning/todos/pending/2026-10-20-call-debug-logging.md)
+- [2026-10-20] [chat] Show calls in chat history and add reminders — [todo file](.planning/todos/pending/2026-10-20-calls-and-reminders-in-chat.md)
+- [2026-10-20] [media] Encrypt media at rest on the server — [todo file](.planning/todos/pending/2026-10-20-encrypt-media-at-rest.md)
+- [2026-10-20] [media] Add shared media gallery and profile photos — [todo file](.planning/todos/pending/2026-10-20-media-gallery-and-profile-photos.md)
+- [2026-10-20] [ui] Add synthesised sound effects — [todo file](.planning/todos/pending/2026-10-20-sound-effects.md)
 
 ### Blockers/Concerns
 

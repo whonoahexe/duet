@@ -1,6 +1,6 @@
 ---
 date: "2026-10-20 03:48"
-promoted: false
+promoted: true
 ---
 
 Reminders. Two types: (1) recurring — e.g. "Drink water" every N minutes/hours within an active window (e.g. 9am–10pm), optional days of week, pause/off without deleting; (2) one-off — e.g. "Meeting at 4pm" at a date/time, optional heads-up before (15 min / 1 h), optional repeat (daily/weekly), otherwise done after firing. Decided: a reminder can target myself, the other person, or both. Decided: reminders show in chat as a small system line ("⏰ Drink water · from Noah") when they involve the other person; your own reminders are notification-only (confirm at triage if own ones should show too). How: reminders table in SQLite (survives restarts); in-process scheduler checks every ~30 s and sends via the existing web-push sender; after downtime, fire late only within a few minutes, else skip (no backlog of stale pings); push is currently suppressed when duet is open on screen, so also show in-app; all times in IST. UI: "Reminders" item in the ⋮ menu → list with on/off toggles + add/edit form (time pickers, repeat rules, active window), preset components only. No Snooze/Done notification buttons at first (iOS web push has no actions). Estimated ~1 day, mostly the form.
