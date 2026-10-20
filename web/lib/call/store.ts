@@ -22,7 +22,7 @@ import { isIos } from "@/lib/platform"
 import { fetchIceServers } from "@/lib/rtc/ice"
 import type { CallSample } from "@/lib/rtc/stats"
 import { flipCamera, getCallMedia, getCamera, getMic, type CallMediaResult, type Facing } from "./media"
-import { callLog, endCallLog, startCallLog } from "./diag-log"
+import { callLog, endCallLog, gumName, startCallLog } from "./diag-log"
 import { CallSession, forceRelayFlag } from "./session"
 import { startRingback, startRingtone, stopTones, unlockAudio, type Tone } from "./tones"
 import { holdWakeLock, releaseWakeLock } from "./wake-lock"
@@ -218,6 +218,16 @@ function idleState(): CallState {
 
 const OFFLINE_TEXT = "You're offline. Calls need a connection."
 
+/** 261020-oj7: the call log's turn event for one ICE-server fetch that started at `t0` (performance.now()). */
+function logTurn(t0: number, result: { iceServers: RTCIceServer[]; ttlSeconds: number } | null): void {
+  const ms = Math.min(120_000, Math.max(0, Math.round(performance.now() - t0)))
+  if (!result) callLog({ k: "turn", ok: false, ms })
+  else {
+    const ttlSeconds = Math.min(172_800, Math.max(1, Math.round(result.ttlSeconds)))
+    callLog({ k: "turn", ok: true, ms, ttlSeconds, servers: Math.min(20, result.iceServers.length) })
+  }
+}
+
 function clearCloseTimer(): void {
   if (closeTimer !== null) clearTimeout(closeTimer)
   closeTimer = null
@@ -239,6 +249,7 @@ function armGuard(): void {
     } else if (phase === "ringing-in") {
       closeNow()
     } else {
+      callLog({ k: "end", cause: "setup_failed" })
       sendFrame({ t: "call.end", callId })
       showFailure()
     }
@@ -388,11 +399,16 @@ function reconnectable(phase: CallPhase): boolean {
 function startReconnecting(): void {
   const callId = state.callId
   if (!callId || !reconnectable(state.phase)) return
-  if (!state.reconnecting) set({ reconnecting: true })
+  if (!state.reconnecting) {
+    callLog({ k: "reconnect", what: "start" })
+    set({ reconnecting: true })
+  }
   if (giveUpTimer !== null) return
   giveUpTimer = setTimeout(() => {
     giveUpTimer = null
     if (state.callId !== callId || !reconnectable(state.phase) || !state.reconnecting) return
+    callLog({ k: "reconnect", what: "give_up" })
+    callLog({ k: "end", cause: "give_up" })
     // The server ends it too (35 s absence) when this side could not tell it.
     sendFrame({ t: "call.end", callId })
     showDropped()
@@ -406,6 +422,7 @@ function startReconnecting(): void {
 function checkRecovered(): void {
   if (!state.reconnecting || rejoinPending) return
   if (!session || session.connectionState !== "connected" || !realtimeLive()) return
+  callLog({ k: "reconnect", what: "recovered" })
   clearGiveUp()
   set({ reconnecting: false })
 }
@@ -491,6 +508,7 @@ function showIosTip(): void {
 function onPeerState(callId: string, pcState: RTCPeerConnectionState): void {
   if (state.callId !== callId) return
   if (pcState === "failed" && state.phase === "connecting" && state.mediaStartedAt === null && !state.reconnecting) {
+    callLog({ k: "end", cause: "ice_failed" })
     sendFrame({ t: "call.end", callId })
     showFailure()
     return
@@ -534,6 +552,7 @@ function startSession(callId: string, role: "caller" | "callee"): boolean {
 /** The callee accepted (call.accepted, or call.state active after a rejoin): the caller's session starts. */
 function startCallerSession(callId: string): boolean {
   if (!startSession(callId, "caller")) {
+    callLog({ k: "end", cause: "setup_failed" })
     sendFrame({ t: "call.end", callId })
     showFailure()
     return false
@@ -624,6 +643,8 @@ async function answer(callId: string, media: CallMediaResult): Promise<void> {
   // WR-08: a technical failure after the Accept tap ends the call as failed (the caller sees "Couldn't
   // connect"). A Decline tap, and a refused microphone (UI-SPEC section 8), send a plain decline.
   if (!media.ok) {
+    callLog({ k: "gum_error", device: state.kind === "video" ? "mic_camera" : "mic", context: "accept", name: gumName(media.errorName) })
+    callLog({ k: "end", cause: media.reason === "denied" ? "mic_denied" : "setup_failed" })
     sendFrame(media.reason === "denied" ? { t: "call.decline", callId } : { t: "call.decline", callId, reason: "failed" })
     if (media.reason === "denied") {
       closeNow()
@@ -633,23 +654,29 @@ async function answer(callId: string, media: CallMediaResult): Promise<void> {
     }
     return
   }
+  if (media.cameraError) callLog({ k: "gum_error", device: "camera", context: "accept", name: gumName(media.cameraError) })
   holdMedia(media)
   holdWakeLock()
+  const turnStart = performance.now()
   try {
-    const { iceServers } = await fetchIceServers()
+    const ice = await fetchIceServers()
     if (state.callId !== callId || state.phase !== "ringing-in") {
       releaseMedia()
       return
     }
-    pendingIce = iceServers
+    logTurn(turnStart, ice)
+    pendingIce = ice.iceServers
   } catch {
     if (state.callId === callId && state.phase === "ringing-in") {
+      logTurn(turnStart, null)
+      callLog({ k: "end", cause: "turn_failed" })
       sendFrame({ t: "call.decline", callId, reason: "failed" })
       showFailure()
     }
     return
   }
   if (!startSession(callId, "callee")) {
+    callLog({ k: "end", cause: "setup_failed" })
     sendFrame({ t: "call.decline", callId, reason: "failed" })
     showFailure()
     return
@@ -709,24 +736,37 @@ export const callStore = {
     clearCloseTimer()
     releaseMedia()
     const callId = crypto.randomUUID()
+    // 261020-oj7: the log starts with the callId, so a refused microphone is logged too.
+    startCallLog(callId, "caller")
     const base = { ...idleState(), callId, kind, role: "caller" as const, peerId: peer.id, peerName: peer.displayName }
     if (!media.ok) {
+      callLog({ k: "gum_error", device: kind === "video" ? "mic_camera" : "mic", context: "start", name: gumName(media.errorName) })
+      callLog({ k: "end", cause: media.reason === "denied" ? "mic_denied" : "setup_failed" })
       // Denied: the call does not start and the drawer explains how to allow it (D-19).
-      if (media.reason === "denied") commit({ ...idleState(), permission: "microphone" })
-      else commit({ ...base, phase: "ended", endState: "couldnt-connect" })
+      if (media.reason === "denied") {
+        commit({ ...idleState(), permission: "microphone" })
+        endCallLog()
+      } else commit({ ...base, phase: "ended", endState: "couldnt-connect" })
       return
     }
+    if (media.cameraError) callLog({ k: "gum_error", device: "camera", context: "start", name: gumName(media.cameraError) })
     deferredRing = null
     commit({ ...base, phase: "ringing-out" })
     holdMedia(media)
     // CALL-08: the screen stays on from the Start tap until the call ends.
     holdWakeLock()
+    const turnStart = performance.now()
     try {
-      const { iceServers } = await fetchIceServers()
+      const ice = await fetchIceServers()
       if (state.callId !== callId || phaseNow() !== "ringing-out") return
-      pendingIce = iceServers
+      logTurn(turnStart, ice)
+      pendingIce = ice.iceServers
     } catch {
-      if (state.callId === callId && phaseNow() === "ringing-out") showFailure()
+      if (state.callId === callId && phaseNow() === "ringing-out") {
+        logTurn(turnStart, null)
+        callLog({ k: "end", cause: "turn_failed" })
+        showFailure()
+      }
       return
     }
     if (sendFrame({ t: "call.invite", callId, kind })) {
@@ -779,8 +819,10 @@ export const callStore = {
    * for its place back (call.rejoin); call.state or call.ended answers.
    */
   onRealtimeLive(): void {
+    callLog({ k: "ws", what: "live" })
     if (!boundHere() || !state.callId) return
     sendFrame({ t: "call.rejoin", callId: state.callId })
+    callLog({ k: "reconnect", what: "rejoin_sent" })
   },
 
   /**
@@ -802,8 +844,9 @@ export const callStore = {
           else {
             mic.track.enabled = !state.muted
             await s.setMic(mic.track)
+            callLog({ k: "media", what: "mic_replaced" })
           }
-        }
+        } else callLog({ k: "gum_error", device: "mic", context: "resume", name: gumName(mic.errorName) })
       }
       const cam = s.cameraTrack
       if (state.camera && cam && cam.readyState === "ended" && session === s && state.callId === callId) {
@@ -813,8 +856,9 @@ export const callStore = {
           else {
             await s.setCamera(result.track)
             set({ localVideo: new MediaStream([result.track]) })
+            callLog({ k: "media", what: "camera_replaced" })
           }
-        }
+        } else callLog({ k: "gum_error", device: "camera", context: "resume", name: gumName(result.errorName) })
       }
     } finally {
       resuming = false
@@ -823,6 +867,7 @@ export const callStore = {
 
   /** CALL-07: the tab's live socket was lost. A connected call shows "Reconnecting…" (D-17). */
   onRealtimeDown(): void {
+    callLog({ k: "ws", what: "down" })
     if (!boundHere()) return
     rejoinPending = true
     startReconnecting()
@@ -839,6 +884,7 @@ export const callStore = {
     const muted = !state.muted
     const mic = session?.micTrack ?? pendingMic
     if (mic) mic.enabled = !muted
+    callLog({ k: "media", what: muted ? "mute" : "unmute" })
     set({ muted })
   },
 
@@ -876,6 +922,7 @@ export const callStore = {
       return
     }
     if (!result.ok) {
+      callLog({ k: "gum_error", device: "camera", context: "flip", name: gumName(result.errorName) })
       // The old camera is already stopped: the call continues without video.
       set({ camera: false, localVideo: null })
       if (session) await session.setCamera(null)
@@ -891,6 +938,7 @@ export const callStore = {
       pendingCamera = result.track
     }
     if (state.callId !== callId || !inCall(phaseNow())) return
+    callLog({ k: "media", what: "camera_flip", facing: result.facing })
     set({ facing: result.facing, localVideo: new MediaStream([result.track]) })
   },
 
@@ -942,6 +990,7 @@ export const callStore = {
     const callId = state.callId
     if (!callId || !inCall(state.phase) || cameraBusy) return
     if (state.camera) {
+      callLog({ k: "media", what: "camera_off" })
       set({ camera: false, localVideo: null })
       // The camera is released (replaceTrack(null), then stop) before the peer hears it is off.
       if (session) await session.setCamera(null)
@@ -964,6 +1013,7 @@ export const callStore = {
       return
     }
     if (!result.ok) {
+      callLog({ k: "gum_error", device: "camera", context: "camera_on", name: gumName(result.errorName) })
       if (result.reason === "denied") cameraDeniedToast()
       else toast("duet can't use the camera.", { id: "camera-denied" })
       return
@@ -974,6 +1024,7 @@ export const callStore = {
       pendingCamera = result.track
     }
     if (state.callId !== callId || !inCall(phaseNow())) return
+    callLog({ k: "media", what: "camera_on" })
     set({ camera: true, localVideo: new MediaStream([result.track]), cameraDenied: false })
     sendMedia()
   },
@@ -983,6 +1034,7 @@ export const callStore = {
     unlockAudio()
     const callId = state.callId
     if (state.phase !== "ringing-in" || !callId) return
+    callLog({ k: "end", cause: "decline" })
     sendFrame({ t: "call.decline", callId })
     closeNow()
   },
@@ -1046,6 +1098,7 @@ export const callStore = {
         // its callee (polite answerer), keeping the microphone captured in our own Start tap.
         if (frame.replaces !== undefined && frame.replaces === state.callId && state.phase === "ringing-out") {
           if (!startSession(frame.callId, "callee")) {
+            callLog({ k: "end", cause: "setup_failed" })
             sendFrame({ t: "call.end", callId: frame.callId })
             showFailure()
             return
@@ -1067,6 +1120,7 @@ export const callStore = {
       case "call.state":
         // The answer to call.rejoin (CALL-07): this connection is bound to the call again.
         if (frame.callId !== state.callId) return
+        callLog({ k: "reconnect", what: "rejoin_state" })
         if (state.phase === "ringing-out") {
           rejoinPending = false
           // Accepted while this socket was away: the call.accepted was lost, so this is it.
@@ -1105,6 +1159,7 @@ export const callStore = {
         // sends stop-ringing to a callee connection it did not bind.
         if (frame.callId !== state.callId || state.role !== "callee") return
         if (state.phase !== "ringing-in" && !(state.phase === "connecting" && state.mediaStartedAt === null)) return
+        callLog({ k: "end", cause: "answered_elsewhere" })
         closeNow()
         toast("Answered on another device")
         return
@@ -1118,6 +1173,7 @@ export const callStore = {
 
   /** WR-06: logout was tapped: end this device's call on the server and close it here (the peer is kept). */
   leave(): void {
+    callLog({ k: "end", cause: "leave" })
     sendLeave()
     deferredRing = null
     if (state.phase !== "idle") closeNow()
@@ -1125,6 +1181,7 @@ export const callStore = {
 
   /** Forget the call and release every media resource (logout, session gone). */
   reset(): void {
+    callLog({ k: "end", cause: "leave" })
     // WR-06: end the call on the server first while the socket may still be open.
     sendLeave()
     clearCloseTimer()

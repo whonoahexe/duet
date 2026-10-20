@@ -1,7 +1,17 @@
 "use client"
 
-import { CALL_DIAG_MAX_EVENTS, CallDiagEnv, CallDiagEvent, type CallDiagBatch } from "@duet/shared"
+import {
+  CALL_DIAG_MAX_EVENTS,
+  CallDiagEnv,
+  CallDiagEvent,
+  CallDiagGumName,
+  CallDiagNetworkType,
+  CandidateType,
+  RelayProtocol,
+  type CallDiagBatch,
+} from "@duet/shared"
 import { isIos, isStandalone } from "@/lib/platform"
+import type { CallSample, VideoStat } from "@/lib/rtc/stats"
 
 /**
  * This phone's log of a call (quick task 261020-oj7). On 2026-10-20 three calls in eight minutes
@@ -342,8 +352,124 @@ function computeEnv(): CallDiagEnv {
   return parsed.success ? parsed.data : FALLBACK_ENV
 }
 
-// --- stats samples (filled in by callLogSample) ----------------------------------------------------
+// --- names and stats samples ----------------------------------------------------------------------
+
+/** A getUserMedia error name as the schema knows it ("other" for anything else, never the message). */
+export function gumName(name: string | undefined): CallDiagGumName {
+  const parsed = CallDiagGumName.safeParse(name)
+  return parsed.success ? parsed.data : "other"
+}
+
+/** Every STATS_EVERY-th 2 s sample (about 6 s) becomes a stats event. */
+const STATS_EVERY = 3
+
+interface SampleWindow {
+  t: number
+  inBytes: number
+  outBytes: number | undefined
+  lost: number
+  received: number
+}
+
+let window0: SampleWindow | null = null
+let samples = 0
+let lastPair: string | null = null
 
 function resetSample(): void {
-  // Task 3 keeps per-call sample state here.
+  window0 = null
+  samples = 0
+  lastPair = null
+}
+
+/** Round and clamp to [min, max]; undefined when the value is missing or not finite. */
+function bounded(value: number | undefined, min: number, max: number): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined
+  return clampInt(value, min, max)
+}
+
+/** Copy only the defined values (the schema's optional fields must be absent, not undefined). */
+function defined<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
+}
+
+function videoFields(prefix: "videoIn" | "videoOut", v: VideoStat | undefined): Record<string, number | undefined> {
+  return {
+    [`${prefix}Fps`]: bounded(v?.fps, 0, 240),
+    [`${prefix}Width`]: bounded(v?.width, 0, 8192),
+    [`${prefix}Height`]: bounded(v?.height, 0, 8192),
+  }
+}
+
+/**
+ * One 2 s getStats sample of the active call: a pair event whenever the selected candidate pair
+ * changes (types and transports only), and every STATS_EVERY-th sample a stats event over the window
+ * since the previous one (RTT, loss %, jitter, in/out kbps, video fps and size).
+ */
+export function callLogSample(sample: CallSample): void {
+  try {
+    if (!active) return
+    const local = CandidateType.safeParse(sample.localType)
+    const remote = CandidateType.safeParse(sample.remoteType)
+    if (local.success && remote.success) {
+      const protocol: "udp" | "tcp" | undefined =
+        sample.protocol === "udp" || sample.protocol === "tcp" ? sample.protocol : undefined
+      const relay = RelayProtocol.safeParse(sample.relayProtocol)
+      const network =
+        sample.networkType === undefined
+          ? undefined
+          : (CallDiagNetworkType.safeParse(sample.networkType).data ?? ("unknown" as const))
+      const pair = defined({
+        k: "pair" as const,
+        local: local.data,
+        remote: remote.data,
+        protocol,
+        relayProtocol: relay.success ? relay.data : undefined,
+        networkType: network,
+      })
+      const signature = JSON.stringify(pair)
+      if (signature !== lastPair) {
+        lastPair = signature
+        callLog(pair)
+      }
+    }
+
+    const now: SampleWindow = {
+      t: performance.now(),
+      inBytes: sample.inboundBytes,
+      outBytes: sample.outboundBytes,
+      lost: sample.packetsLost,
+      received: sample.packetsReceived,
+    }
+    const prev = window0
+    if (!prev) {
+      window0 = now
+      return
+    }
+    samples += 1
+    if (samples % STATS_EVERY !== 0) return
+    window0 = now
+    const elapsed = now.t - prev.t
+    const kbps = (bytes: number | undefined, before: number | undefined) =>
+      bytes === undefined || before === undefined || elapsed <= 0 || bytes < before
+        ? undefined
+        : bounded(((bytes - before) * 8) / elapsed, 0, 1_000_000)
+    const lost = now.lost - prev.lost
+    const received = now.received - prev.received
+    const lossPct = lost >= 0 && received >= 0 && lost + received > 0 ? bounded((lost / (lost + received)) * 100, 0, 100) : undefined
+    callLog(
+      defined({
+        k: "stats" as const,
+        state: sample.state,
+        rttMs: bounded(sample.rttMs, 0, 600_000),
+        lossPct,
+        jitterMs: bounded(sample.jitterMs, 0, 60_000),
+        inKbps: kbps(now.inBytes, prev.inBytes),
+        outKbps: kbps(now.outBytes, prev.outBytes),
+        ...videoFields("videoIn", sample.videoIn),
+        ...videoFields("videoOut", sample.videoOut),
+      }),
+    )
+  } catch {
+    // never break a call
+  }
 }

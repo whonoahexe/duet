@@ -97,7 +97,48 @@ bash scripts/smoke-calls.sh                    # every two-browser call scenario
 bash scripts/smoke-calls.sh voice reconnect    # just the named scenarios; SKIP_BUILD=1 reuses web/out
 ```
 
-The scenarios are: voice, decline, cancel, no-answer, couldnt-connect, multi-device, glare, busy, mic-denied, ring-on-open, stale, video, controls, camera-denied, minimize, reconnect, dropped and relay.
+The scenarios are: voice, decline, cancel, no-answer, couldnt-connect, multi-device, glare, busy, mic-denied, ring-on-open, stale, video, controls, camera-denied, minimize, reconnect, dropped, relay and call-log.
+
+### Reading a call's log
+
+Every call is logged under its `callId`: the server's own lines, plus `call_diag` lines that each phone posts to `POST /api/calls/diag` (batched every 10 s, on hang-up and when the app is hidden). One grep shows the whole call from both sides. The lines exist only after the duet container was rebuilt with this code (`docker compose up -d --build`).
+
+Recent calls (times are UTC; IST is UTC+5:30):
+
+```bash
+docker compose logs --no-log-prefix duet | jq -cR 'fromjson? | select(.evt == "call_invite")
+  | {time: (.time / 1000 | floor | todate), callId, callerId, calleeId, kind}'
+```
+
+One call, as a time-ordered timeline (`at` is the phone's clock, `time` the server's; a batch line's `skewMs` is the difference):
+
+```bash
+docker logs duet-duet-1 2>&1 | grep <callId>
+docker logs duet-duet-1 2>&1 | grep <callId> | jq -cR 'fromjson? | {t: ((.at // .time) / 1000 | strftime("%H:%M:%S")), evt, k, userId}
+  + del(.level, .time, .pid, .hostname, .callId, .evt, .k, .userId, .role, .seq, .at)' | sort -s -t, -k1,1
+```
+
+To map a `userId` to a person, `GET /api/users` lists the two ids with their display names.
+
+Server lines:
+
+- `call_frame`: every `call.*` frame, with the sender's `userId`, `connId` and `party` (caller or callee). `call_refused`: a frame answered `not_allowed` or `stale`.
+- `call_invite` (with `ringTimeoutMs`) and `call_accept` (with `ringMs`, invite to accept).
+- `call_absent_start` / `call_absent_stop`: a party's absence timer (`caller_absent` 10 s while ringing, `absent_grace` 35 s in a call) started, or stopped by an `accept` or `rejoin` (`awayMs`).
+- `call_ws_close` (with the WebSocket close `code`: 1001 = page went away, 1006 = connection lost) and `call_ws_open`: a party's socket during the call.
+- `call_end`: `reason`, `by` (caller, callee or server), `byUserId`/`byConnId` when a person ended it, `cause` (`frame`, `ring_timeout`, `caller_absent`, `absent_grace`, `abandoned`), `ringMs`, `durationMs`, `totalMs`.
+- `turn_mint`: `ms` and `ttlSeconds` of the TURN credential mint. It has no callId: match it by `userId` and time.
+
+Phone lines (`evt` `call_diag`, by `k`): `batch` (browser, OS and versions, mobile, standalone, `dropped` events), `phase` (with `ms` since the call started on that phone), `pc` (connection, ICE, gathering and signaling states), `ice_restart` (with its trigger), `pair` (the selected local and remote candidate types, protocol, relayProtocol, networkType), `stats` (about every 6 s: RTT, loss %, jitter, in/out kbps, video fps and size), `media` (mute, camera on/off, flip with facing only), `gum_error` (the error name only), `page` (visible, hidden, pagehide, freeze, resume, online, offline), `ws` (down, live), `reconnect` (start, rejoin, recovered, give_up), `turn` (fetch `ms`, `ttlSeconds`) and `end` (how the call ended on that phone).
+
+Reading a bad call (like the hang-up and redial calls of 2026-10-20):
+
+- **Who hung up:** `call_end` `by`/`byUserId`, and each phone's `end` `cause` (`hangup` on the phone that tapped it, `remote` on the other).
+- **Peer-to-peer or relay:** the `pair` lines. `relay` on either side means TURN carried the media; `host`/`srflx`/`prflx` on both means direct.
+- **When and why ICE failed:** the `pc` lines (`ice` `disconnected` → `failed`) and the `ice_restart` lines next to them, with the `stats` lines just before (loss, RTT).
+- **The phone went to the background:** `page` `hidden`/`freeze` on that phone, then `call_ws_close` with code 1001 or 1006 and `call_absent_start` on the server.
+
+No line carries an IP address, port, SDP, ICE candidate, TURN URL or credential, message content, name, device label or deviceId: the `call_diag` schema (`shared/src/call-diag.ts`) has only enums, bounded numbers and booleans, so none of these can be expressed. `bash scripts/smoke-calls.sh call-log` checks a real call's lines end to end, including a scan for private data. `scripts/check-call-smoke.sh` (below) is a separate gate: it reads the `call_smoke` lines of the `/debug/call` test page, not `call_diag`.
 
 ### TURN and the call test
 

@@ -960,7 +960,8 @@ const scenarios = {
   /**
    * 261020-oj7: one grep of a callId over the server log shows the whole call from both phones, and
    * nothing private. A real two-browser call; then the server log (SMOKE_SERVER_LOG) must hold both
-   * fixture users' call_diag lines (batch, phase live, end) and the server's call lines (who sent each
+   * fixture users' call_diag lines (batch, phase live, pc states, pair, stats, TURN, Ada's mute and camera
+   * toggles, end) and the server's call lines (who sent each
    * frame, ringMs, who ended the call) under the callId, and no line of the call
    * may carry an IP, candidate, SDP, ICE server URL, credential, device id/label or a display name.
    */
@@ -968,8 +969,20 @@ const scenarios = {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bob = await openApp(ctx, BOB, ADA, opened)
     await connectVoice(ada, bob)
+    const liveAt = Date.now()
     const callId = (await diag(ada)).callId
-    await sleep(3_000)
+    // Toggles land in Ada's log as media events.
+    const button = (name) => callDialog(ada, BOB).getByRole("button", { name, exact: true })
+    await button("Mute").click()
+    await waitPressed(ada, BOB, "Mute", "true", 2_000)
+    await button("Mute").click()
+    await waitPressed(ada, BOB, "Mute", "false", 2_000)
+    await button("Camera").click()
+    await waitPressed(ada, BOB, "Camera", "true", 10_000)
+    await button("Camera").click()
+    await waitPressed(ada, BOB, "Camera", "false", 5_000)
+    // Long enough live for a stats event (every 3rd 2 s sample after the first).
+    await sleep(Math.max(0, 10_000 - (Date.now() - liveAt)))
     await hangUpBoth(ada, BOB, bob)
 
     const adaId = ctx.ids[ADA.username]
@@ -989,6 +1002,20 @@ const scenarios = {
         if (!mine.some((o) => o.k === "phase" && o.phase === "live" && typeof o.ms === "number")) missing.push(`${who} phase live`)
         const end = mine.find((o) => o.k === "end")
         if (!end || end.cause !== cause || (who === "Bob" && end.serverReason !== "hangup")) missing.push(`${who} end ${cause}`)
+        // The peer connection, the selected pair, stats and the TURN fetch.
+        if (!mine.some((o) => o.k === "pc" && o.what === "connection" && o.state === "connected")) missing.push(`${who} pc connected`)
+        for (const what of ["ice", "signaling"]) {
+          if (!mine.some((o) => o.k === "pc" && o.what === what)) missing.push(`${who} pc ${what}`)
+        }
+        const types = ["host", "srflx", "prflx", "relay"]
+        if (!mine.some((o) => o.k === "pair" && types.includes(o.local) && types.includes(o.remote))) missing.push(`${who} pair`)
+        if (!mine.some((o) => o.k === "stats" && o.state === "connected" && typeof o.inKbps === "number")) missing.push(`${who} stats`)
+        if (!mine.some((o) => o.k === "turn" && o.ok === true && typeof o.ms === "number" && typeof o.ttlSeconds === "number")) {
+          missing.push(`${who} turn`)
+        }
+      }
+      for (const what of ["mute", "unmute", "camera_on", "camera_off"]) {
+        if (!diagOf(lines, adaId).some((o) => o.k === "media" && o.what === what)) missing.push(`Ada media ${what}`)
       }
       // The server's side: who sent each frame, the ring time and who ended the call.
       if (!lines.some((o) => o.evt === "call_invite" && o.callerId === adaId)) missing.push("call_invite by Ada")

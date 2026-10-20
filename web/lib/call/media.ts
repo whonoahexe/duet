@@ -9,7 +9,13 @@ import type { CallKind } from "@duet/shared"
  * running); the call session stops them when the call ends.
  */
 
-export type MicResult = { ok: true; track: MediaStreamTrack } | { ok: false; reason: "denied" | "unavailable" }
+/**
+ * A capture that failed. `errorName` (261020-oj7, for the call log) is the DOMException name, or
+ * "unsupported" when this browser cannot capture at all; never the message.
+ */
+export type CaptureFailure = { ok: false; reason: "denied" | "unavailable"; errorName?: string }
+
+export type MicResult = { ok: true; track: MediaStreamTrack } | CaptureFailure
 
 /** Which way the camera looks: "user" is the front camera (mirrored in the self-view), "environment" the back. */
 export type Facing = "user" | "environment"
@@ -19,10 +25,17 @@ export type Facing = "user" | "environment"
  * could not be opened; `cameraDenied` says the person refused it (D-19: the call continues audio-only).
  */
 export type CallMediaResult =
-  | { ok: true; mic: MediaStreamTrack; camera: MediaStreamTrack | null; cameraDenied: boolean }
-  | { ok: false; reason: "denied" | "unavailable" }
+  | {
+      ok: true
+      mic: MediaStreamTrack
+      camera: MediaStreamTrack | null
+      cameraDenied: boolean
+      /** The camera half of a video call fell back to audio-only: its DOMException name (call log). */
+      cameraError?: string
+    }
+  | CaptureFailure
 
-export type CameraResult = { ok: true; track: MediaStreamTrack } | { ok: false; reason: "denied" | "unavailable" }
+export type CameraResult = { ok: true; track: MediaStreamTrack } | CaptureFailure
 
 const AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true }
 
@@ -43,8 +56,14 @@ function canCapture(): boolean {
   return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia)
 }
 
+const UNSUPPORTED: CaptureFailure = { ok: false, reason: "unavailable", errorName: "unsupported" }
+
+function failure(err: unknown): CaptureFailure {
+  return { ok: false, reason: denied(err) ? "denied" : "unavailable", errorName: errorName(err) || undefined }
+}
+
 export async function getMic(): Promise<MicResult> {
-  if (!canCapture()) return { ok: false, reason: "unavailable" }
+  if (!canCapture()) return UNSUPPORTED
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO })
     const track = stream.getAudioTracks()[0]
@@ -54,7 +73,7 @@ export async function getMic(): Promise<MicResult> {
     }
     return { ok: true, track }
   } catch (err) {
-    return { ok: false, reason: denied(err) ? "denied" : "unavailable" }
+    return failure(err)
   }
 }
 
@@ -67,8 +86,9 @@ export async function getCallMedia(kind: CallKind, facing: Facing = "user"): Pro
     const mic = await getMic()
     return mic.ok ? { ok: true, mic: mic.track, camera: null, cameraDenied: false } : mic
   }
-  if (!canCapture()) return { ok: false, reason: "unavailable" }
+  if (!canCapture()) return UNSUPPORTED
   let cameraDenied = false
+  let cameraError: string | undefined
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO, video: videoConstraints(facing) })
     const mic = stream.getAudioTracks()[0]
@@ -77,14 +97,15 @@ export async function getCallMedia(kind: CallKind, facing: Facing = "user"): Pro
     for (const t of stream.getTracks()) t.stop()
   } catch (err) {
     cameraDenied = denied(err)
+    cameraError = errorName(err) || "other"
   }
   const mic = await getMic()
-  return mic.ok ? { ok: true, mic: mic.track, camera: null, cameraDenied } : mic
+  return mic.ok ? { ok: true, mic: mic.track, camera: null, cameraDenied, cameraError } : mic
 }
 
 /** The camera alone, for turning it on during a call (D-03). */
 export async function getCamera(facing: Facing): Promise<CameraResult> {
-  if (!canCapture()) return { ok: false, reason: "unavailable" }
+  if (!canCapture()) return UNSUPPORTED
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(facing) })
     const track = stream.getVideoTracks()[0]
@@ -94,11 +115,11 @@ export async function getCamera(facing: Facing): Promise<CameraResult> {
     }
     return { ok: true, track }
   } catch (err) {
-    return { ok: false, reason: denied(err) ? "denied" : "unavailable" }
+    return failure(err)
   }
 }
 
-export type FlipResult = { ok: true; track: MediaStreamTrack; facing: Facing } | { ok: false; reason: "denied" | "unavailable" }
+export type FlipResult = { ok: true; track: MediaStreamTrack; facing: Facing } | CaptureFailure
 
 function settledFacing(track: MediaStreamTrack, fallback: Facing): Facing {
   const f = track.getSettings().facingMode
@@ -117,7 +138,7 @@ export async function flipCamera(current: MediaStreamTrack, facing: Facing): Pro
   const next: Facing = facing === "user" ? "environment" : "user"
   const currentId = current.getSettings().deviceId
   current.stop()
-  if (!canCapture()) return { ok: false, reason: "unavailable" }
+  if (!canCapture()) return UNSUPPORTED
   const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: next }, ...size } })
@@ -125,7 +146,7 @@ export async function flipCamera(current: MediaStreamTrack, facing: Facing): Pro
     if (track) return { ok: true, track, facing: settledFacing(track, next) }
     for (const t of stream.getTracks()) t.stop()
   } catch (err) {
-    if (errorName(err) !== "OverconstrainedError") return { ok: false, reason: denied(err) ? "denied" : "unavailable" }
+    if (errorName(err) !== "OverconstrainedError") return failure(err)
   }
   try {
     const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput" && d.deviceId)
@@ -142,6 +163,6 @@ export async function flipCamera(current: MediaStreamTrack, facing: Facing): Pro
     const same = target !== undefined && target.deviceId === currentId
     return { ok: true, track, facing: settledFacing(track, same || !target ? facing : next) }
   } catch (err) {
-    return { ok: false, reason: denied(err) ? "denied" : "unavailable" }
+    return failure(err)
   }
 }

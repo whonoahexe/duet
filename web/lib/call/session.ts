@@ -3,6 +3,10 @@
 import { callRoom, type ClientFrame, type ServerFrame, type SignalData } from "@duet/shared"
 import { createPeer, type Peer } from "@/lib/rtc/peer"
 import { sampleCall, type CallSample } from "@/lib/rtc/stats"
+import { callLog, callLogSample } from "./diag-log"
+
+/** Why an ICE restart ran (the call log's ice_restart trigger, 261020-oj7). */
+export type IceRestartTrigger = "failed" | "disconnected" | "retry" | "peer_back"
 
 /** getStats cadence while a call runs (the INFR-04 sample shape, reused for the timer start). */
 const SAMPLE_INTERVAL_MS = 2000
@@ -105,9 +109,23 @@ export class CallSession {
     const pc = this.peer.pc
     pc.addEventListener("connectionstatechange", () => {
       if (this.closed) return
+      callLog({ k: "pc", what: "connection", state: pc.connectionState })
       this.watchIce()
       o.onState?.(pc.connectionState)
       if (pc.connectionState === "connected") void this.sample()
+    })
+    // 261020-oj7: every ICE, gathering and signaling state change goes to the call log.
+    pc.addEventListener("iceconnectionstatechange", () => {
+      if (this.closed) return
+      callLog({ k: "pc", what: "ice", state: pc.iceConnectionState })
+      // peer.ts restarts ICE itself on "failed" (both roles).
+      if (pc.iceConnectionState === "failed") callLog({ k: "ice_restart", trigger: "auto_failed" })
+    })
+    pc.addEventListener("icegatheringstatechange", () => {
+      if (!this.closed) callLog({ k: "pc", what: "gathering", state: pc.iceGatheringState })
+    })
+    pc.addEventListener("signalingstatechange", () => {
+      if (!this.closed) callLog({ k: "pc", what: "signaling", state: pc.signalingState })
     })
     this.sampleTimer = setInterval(() => void this.sample(), SAMPLE_INTERVAL_MS)
   }
@@ -194,19 +212,20 @@ export class CallSession {
     if (this.role !== "caller") return
     if (st === "failed") {
       this.clearRestartTimer()
-      this.restartIce()
+      this.restartIce("failed")
     }
     if (this.restartTimer !== null) return
-    const tick = (ms: number) => {
+    const tick = (ms: number, trigger: IceRestartTrigger) => {
       this.restartTimer = setTimeout(() => {
         this.restartTimer = null
         const now = this.connectionState
         if (now !== "disconnected" && now !== "failed") return
-        this.restartIce()
-        tick(ICE_RESTART_RETRY_MS)
+        this.restartIce(trigger)
+        tick(ICE_RESTART_RETRY_MS, "retry")
       }, ms)
     }
-    tick(st === "failed" ? ICE_RESTART_RETRY_MS : ICE_RESTART_AFTER_MS)
+    if (st === "failed") tick(ICE_RESTART_RETRY_MS, "retry")
+    else tick(ICE_RESTART_AFTER_MS, "disconnected")
   }
 
   private clearRestartTimer(): void {
@@ -215,8 +234,9 @@ export class CallSession {
   }
 
   /** ICE restart from the caller: a lost pending offer is rolled back first (Pitfall 2). */
-  restartIce(): void {
+  restartIce(trigger: IceRestartTrigger): void {
     if (this.closed || this.role !== "caller") return
+    callLog({ k: "ice_restart", trigger })
     this.peer.restart().catch((err: unknown) => console.error("call: ICE restart failed", err))
   }
 
@@ -228,7 +248,7 @@ export class CallSession {
     if (this.closed || this.role !== "caller" || this.peer.pc.connectionState === "connected") return
     // Before the first offer went out there is nothing to recover: negotiationneeded sends it.
     if (this.peer.pc.signalingState === "stable" && !this.peer.pc.remoteDescription) return
-    this.restartIce()
+    this.restartIce("peer_back")
   }
 
   /** rtc.signal frames of this call's room go to the peer connection; anything else is ignored. */
@@ -242,7 +262,10 @@ export class CallSession {
     this.sampling = true
     try {
       const s = await sampleCall(this.peer.pc)
-      if (!this.closed) this.o.onSample(s)
+      if (!this.closed) {
+        this.o.onSample(s)
+        callLogSample(s)
+      }
     } catch {
       // A closing connection can reject getStats; the next tick tries again.
     } finally {
