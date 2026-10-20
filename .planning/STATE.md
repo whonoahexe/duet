@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.0
 status: Awaiting next milestone
 stopped_at: Phase 03 complete — all phases complete
-last_updated: "2026-10-20T16:24:05.800Z"
+last_updated: "2026-10-20T22:40:08.332Z"
 last_activity: 2026-10-20
 last_activity_desc: Milestone v1.0 completed and archived
-state_head: 1b67f466918cd9f58f70eaa9dedce358466be127
+state_head: 65a6056e23eff830455711b6d72a9bf84a73ab7f
 progress:
   total_phases: 3
   completed_phases: 3
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-10-20 - Completed quick task 261020-oj7: Call debug logging: WebRTC and TURN diagnostics, no personal data
+Last activity: 2026-10-21 - Completed quick task 261021-4qu: Encrypt media at rest on the server
 
 ## Performance Metrics
 
@@ -81,12 +81,12 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 ### Pending Todos
 
 - [2026-10-20] [chat] Show calls in chat history and add reminders — [todo file](.planning/todos/pending/2026-10-20-calls-and-reminders-in-chat.md)
-- [2026-10-20] [media] Encrypt media at rest on the server — [todo file](.planning/todos/pending/2026-10-20-encrypt-media-at-rest.md)
 - [2026-10-20] [media] Add shared media gallery and profile photos — [todo file](.planning/todos/pending/2026-10-20-media-gallery-and-profile-photos.md)
 - [2026-10-20] [ui] Add synthesised sound effects — [todo file](.planning/todos/pending/2026-10-20-sound-effects.md)
 
 ### Blockers/Concerns
 
+- Media at rest is encrypted with `~/.config/duet/media.key` (mounted read-only into the container). Back it up off the machine: losing it loses all media, and duet will not boot without it.
 - The Cloudflare API token (`~/.config/duet/cloudflare.ini`) expires 2026-12-08. Rotate it before then, because TURN key and tunnel management depend on it.
 - Password reset is still "re-run the seed script" (AUTH-06 candidate).
 
@@ -98,6 +98,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 | 261020-oj7 | Call debug logging: WebRTC and TURN diagnostics, no personal data | 2026-10-20 | abbc51e | [261020-oj7-call-debug-logging-webrtc-and-turn-diagn](./quick/261020-oj7-call-debug-logging-webrtc-and-turn-diagn/) |
 | 3 | Fold the camera options into the + menu (Gallery, Take photo, Record video) | 2026-10-20 | 91d3b48 | — |
 | 4 | + menu camera items read Photo and Video | 2026-10-20 | 1b67f46 | — |
+| 261021-4qu | Encrypt media at rest on the server | 2026-10-21 | 65a6056 | [261021-4qu-encrypt-media-at-rest-on-the-server](./quick/261021-4qu-encrypt-media-at-rest-on-the-server/) |
 
 ## Deferred Items
 
