@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { mkdtempSync, rmSync } from "node:fs"
 import type { WebSocket } from "ws"
 import { tmpdir } from "node:os"
@@ -10,6 +11,7 @@ import type { WebPushSend } from "../src/push/sender"
 import { loadConfig, type Config } from "../src/config"
 import { users } from "../src/db/schema"
 import { seedUsers, type SeedEntry } from "../src/db/seed"
+import { decryptToFile, readMediaKey } from "../src/media/crypto"
 
 /** Test-only accounts. Passwords are fixtures, never real credentials. */
 export const TEST_USERS = {
@@ -238,4 +240,19 @@ export async function uploadBytes(
   })
   if (done.statusCode !== 200) throw new Error(`complete returned ${done.statusCode}`)
   return { id, attachment: done.json().attachment }
+}
+
+/** The app's media key (QT-4qu): tests read it to decrypt stored media. */
+export function mediaKey(app: FastifyInstance): Promise<Buffer> {
+  return readMediaKey(app.config.MEDIA_KEY_FILE)
+}
+
+/**
+ * Decrypt a stored media file into a uniquely named plaintext copy inside t.dataDir (removed by
+ * close()) and return its path, for ffprobe / sharp / byte checks on what the server stored.
+ */
+export async function decryptedCopy(t: TestApp, file: string): Promise<string> {
+  const out = path.join(t.dataDir, `plain-${randomUUID()}-${path.basename(file)}`)
+  await decryptToFile(await mediaKey(t.app), file, out)
+  return out
 }

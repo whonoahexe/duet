@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url"
+import os from "node:os"
 import path from "node:path"
 import { z } from "zod"
 import { CALL_RING_TIMEOUT_MS } from "@duet/shared"
@@ -63,6 +64,10 @@ const EnvSchema = z
     // T-03-03: ringing invites allowed per person per minute. Unset = the registry's INVITE_LIMIT (10).
     // Only the E2E smoke raises it (it starts more calls per minute than two people ever would).
     CALL_INVITE_LIMIT: z.coerce.number().int().min(1).max(1000).optional(),
+    // QT-4qu-key: the AES-256 key for media at rest. Unset = ~/.config/duet/media.key on the host
+    // (<DATA_DIR>/media.key under NODE_ENV=test, so tests never touch the real key). The deployed image
+    // sets it to /run/duet/media.key, the compose read-only bind mount of the host key.
+    MEDIA_KEY_FILE: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && !env.APP_ORIGIN) {
@@ -92,9 +97,16 @@ const EnvSchema = z
   })
   .transform((env) => {
     const appOrigin = new URL(env.APP_ORIGIN ?? "http://localhost:3000").origin
+    const dataDir = path.resolve(env.DATA_DIR)
+    const mediaKeyFile = env.MEDIA_KEY_FILE
+      ? path.resolve(env.MEDIA_KEY_FILE)
+      : env.NODE_ENV === "test"
+        ? path.join(dataDir, "media.key")
+        : path.join(os.homedir(), ".config", "duet", "media.key")
     return {
       ...env,
-      DATA_DIR: path.resolve(env.DATA_DIR),
+      DATA_DIR: dataDir,
+      MEDIA_KEY_FILE: mediaKeyFile,
       WEB_OUT: path.resolve(env.WEB_OUT),
       APP_ORIGIN: appOrigin,
       COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === "production",
@@ -128,6 +140,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     "VAPID_SUBJECT",
     "CALL_RING_TIMEOUT_MS",
     "CALL_INVITE_LIMIT",
+    "MEDIA_KEY_FILE",
   ] as const
   const picked: Record<string, string | undefined> = {}
   for (const k of keys) {

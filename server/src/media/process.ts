@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs"
-import { readdir, rm, stat } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { and, eq, lt } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 import type { AttachmentKind } from "@duet/shared"
 import type { Db } from "../db/client"
 import { attachments } from "../db/schema"
+import { encryptFile } from "./crypto"
 import { MediaError } from "./exec"
 import { processAudio } from "./audio"
 import { processImage } from "./image"
@@ -25,14 +26,30 @@ export interface JobResult {
   waveform?: number[] | null
 }
 
-/** One processing step for an attachment kind: reads dir/original, writes the variants into dir. */
-export type KindHandler = (dir: string) => Promise<JobResult>
+/** One processing step for an attachment kind: reads the plaintext original, writes variants into outDir. */
+export type KindHandler = (original: string, outDir: string) => Promise<JobResult>
+
+/**
+ * Every variant a job can produce (QT-4qu-write). The job writes them into its scratch dir and only
+ * their encrypted copies reach media/<id>.
+ */
+export const VARIANT_FILES = ["thumb.webp", "display.webp", "poster.jpg", "video.mp4", "audio.m4a"] as const
+
+/**
+ * media/work: per-job and per-complete plaintext scratch dirs (<id>-XXXXXX) for sharp and ffmpeg
+ * (T-4qu-01). Each is removed when its step ends, and the whole dir is wiped at boot.
+ */
+export function workRoot(mediaRoot: string): string {
+  return path.join(mediaRoot, "work")
+}
 
 export interface MediaProcessorOptions {
   db: Db
   /** <DATA_DIR>/media */
   mediaRoot: string
   log: FastifyBaseLogger
+  /** AES-256 media key: variants are stored encrypted (QT-4qu-write). */
+  key: Buffer
   /** Called after an attachment became ready or failed (the app bumps its message and broadcasts). */
   onAttachmentChanged: (id: string) => void
 }
@@ -69,28 +86,42 @@ export function uploadTmpDir(mediaRoot: string, id: string): string {
  * (T-02-25). A job never touches the original (D-09).
  */
 export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcessor {
-  const { db, mediaRoot, log, onAttachmentChanged } = opts
+  const { db, mediaRoot, log, key, onAttachmentChanged } = opts
   const handlers: Partial<Record<AttachmentKind, { lane: Lane; run: KindHandler }>> = {
     image: {
       lane: "fast",
-      run: async (dir) => processImage(path.join(dir, "original"), dir),
+      run: async (original, outDir) => processImage(original, outDir),
     },
     // Voice notes are short jobs and share the fast lane with photos (research Pattern 6).
     audio: {
       lane: "fast",
-      run: async (dir) => {
-        const original = path.join(dir, "original")
-        return processAudio(original, dir, await probeMedia(original))
-      },
+      run: async (original, outDir) => processAudio(original, outDir, await probeMedia(original)),
     },
     // A transcode can take minutes: its own serial lane, so photos never wait behind it (T-02-31).
     video: {
       lane: "slow",
-      run: async (dir) => {
-        const original = path.join(dir, "original")
-        return processVideo(original, dir, await probeMedia(original))
-      },
+      run: async (original, outDir) => processVideo(original, outDir, await probeMedia(original)),
     },
+  }
+
+  /**
+   * Run a handler in a fresh media/work/<id>-XXXXXX scratch dir and store each variant it wrote
+   * encrypted in media/<id> (T-4qu-01). The scratch dir is removed whatever happens.
+   */
+  async function runInScratch(id: string, run: KindHandler): Promise<JobResult> {
+    const dir = attachmentDir(mediaRoot, id)
+    await mkdir(workRoot(mediaRoot), { recursive: true, mode: 0o700 })
+    const scratch = await mkdtemp(path.join(workRoot(mediaRoot), `${id}-`))
+    try {
+      const result = await run(path.join(dir, "original"), scratch)
+      for (const name of VARIANT_FILES) {
+        const produced = path.join(scratch, name)
+        if (existsSync(produced)) await encryptFile(key, produced, path.join(dir, name))
+      }
+      return result
+    } finally {
+      await rm(scratch, { recursive: true, force: true })
+    }
   }
 
   const queues: Record<Lane, string[]> = { fast: [], slow: [] }
@@ -140,7 +171,7 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
       patch = { status: "failed", error: "unsupported_media" }
     } else {
       try {
-        const result = await handler.run(attachmentDir(mediaRoot, id))
+        const result = await runInScratch(id, handler.run)
         patch = {
           status: "ready",
           error: null,
@@ -206,6 +237,8 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
       pump(lane)
     },
     async start() {
+      // Only this process writes media/work, so anything left there is plaintext from a crash.
+      await rm(workRoot(mediaRoot), { recursive: true, force: true })
       await cleanupStale(Date.now())
       const pending = db
         .select({ id: attachments.id })

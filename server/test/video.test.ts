@@ -10,7 +10,7 @@ import { formatDuration } from "@duet/shared"
 import { attachments } from "../src/db/schema"
 import { MediaError } from "../src/media/exec"
 import { VIDEO_FORMATS, inputFormatFor, probeMedia } from "../src/media/probe"
-import { loginCookie, makeTestApp, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
+import { decryptedCopy, loginCookie, makeTestApp, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
 
 let t: TestApp
 let aliceCookie: string
@@ -191,7 +191,7 @@ describe("processVideo through the slow lane (MDIA-03, D-08)", () => {
 
   it("writes an upright H.264 High / AAC faststart MP4 with no rotation side data", async () => {
     expect(row(id)).toMatchObject({ status: "ready", error: null, width: 720, height: 1280 })
-    const file = path.join(mediaDir(id), "video.mp4")
+    const file = await decryptedCopy(t, path.join(mediaDir(id), "video.mp4"))
     const info = ffprobe(file, "stream=codec_type,codec_name,profile,width,height,channels:stream_side_data=rotation")
     const v = info.streams.find((s: any) => s.codec_type === "video")
     const a = info.streams.find((s: any) => s.codec_type === "audio")
@@ -205,7 +205,7 @@ describe("processVideo through the slow lane (MDIA-03, D-08)", () => {
 
   it("records durationMs within 100 ms of the source and writes a poster of at most 640 px", async () => {
     expect(Math.abs(row(id).durationMs! - SOURCE_MS)).toBeLessThan(100)
-    const poster = await sharp(path.join(mediaDir(id), "poster.jpg")).metadata()
+    const poster = await sharp(await decryptedCopy(t, path.join(mediaDir(id), "poster.jpg"))).metadata()
     expect(poster.format).toBe("jpeg")
     expect(Math.max(poster.width!, poster.height!)).toBeLessThanOrEqual(640)
     expect(poster.height!).toBeGreaterThan(poster.width!)
@@ -234,7 +234,7 @@ describe("processVideo through the slow lane (MDIA-03, D-08)", () => {
     const up = await upload(aliceCookie, readFileSync(hlg))
     await t.app.media.idle()
     expect(row(up.id).status).toBe("ready")
-    const v = ffprobe(path.join(mediaDir(up.id), "video.mp4"), "stream=codec_name,color_transfer").streams[0]
+    const v = ffprobe(await decryptedCopy(t, path.join(mediaDir(up.id), "video.mp4")), "stream=codec_name,color_transfer").streams[0]
     expect(v).toMatchObject({ codec_name: "h264", color_transfer: "bt709" })
   })
 

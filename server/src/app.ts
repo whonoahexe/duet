@@ -19,6 +19,7 @@ import { pushRoutes } from "./push/routes"
 import { createPushSender, type PushSender, type WebPushSend } from "./push/sender"
 import { createChatEvents, type ChatEvents } from "./chat/events"
 import { messageChangedForAttachment } from "./chat/service"
+import { loadMediaKey } from "./media/crypto"
 import { createMediaProcessor, type MediaProcessor } from "./media/process"
 import { mediaRoutes } from "./media/routes"
 import { uploadRoutes } from "./media/uploads"
@@ -152,10 +153,32 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   // Media processing (MDIA-01): when an attachment that already belongs to a message becomes ready
   // or failed, its message is bumped and re-broadcast, so the other phone's tile turns into the photo.
   const mediaRoot = path.join(config.DATA_DIR, "media")
+  // QT-4qu-key: media at rest is AES-256-GCM. A MediaKeyError (missing key while encrypted media
+  // exists, malformed key, unreadable path) propagates: buildApp rejects and index.ts exits 1.
+  let loaded: Awaited<ReturnType<typeof loadMediaKey>>
+  try {
+    loaded = await loadMediaKey({ keyFile: config.MEDIA_KEY_FILE, mediaRoot })
+  } catch (err) {
+    sqlite.close()
+    throw err
+  }
+  const { key, created, loosePermissions } = loaded
+  if (created) {
+    app.log.warn(
+      { evt: "media_key", path: config.MEDIA_KEY_FILE, created },
+      "new media key created: back this file up, without it every stored photo, video and voice note is unreadable",
+    )
+  } else {
+    app.log.info({ evt: "media_key", path: config.MEDIA_KEY_FILE, created })
+  }
+  if (loosePermissions) {
+    app.log.warn({ evt: "media_key_permissions", path: config.MEDIA_KEY_FILE }, "media key file is readable by group or others; chmod 600 it")
+  }
   const media = createMediaProcessor({
     db,
     mediaRoot,
     log: app.log,
+    key,
     onAttachmentChanged: (id) => {
       const message = messageChangedForAttachment(db, id)
       if (message) app.hub.broadcast({ t: "msg", message })
@@ -213,13 +236,8 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     })
   }
 
-  if (!hasStatic) {
-    // Tests and server-only runs: still decorate reply.sendFile for /media (no files are served here).
-    await app.register(fastifyStatic, { root: mediaRoot, serve: false })
-  }
-
   await app.register(uploadRoutes, { processor: media, mediaRoot })
-  await app.register(mediaRoutes, { mediaRoot })
+  await app.register(mediaRoutes, { mediaRoot, key })
 
   app.setNotFoundHandler((req, reply) => {
     if (isApiPath(req.url)) {

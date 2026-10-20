@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { eq } from "drizzle-orm"
 import { VOICE_WAVEFORM_BARS } from "@duet/shared"
 import { attachments } from "../src/db/schema"
-import { loginCookie, makeTestApp, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
+import { decryptedCopy, loginCookie, makeTestApp, TEST_ORIGIN, uploadBytes, type TestApp } from "./helpers"
 
 let t: TestApp
 let aliceCookie: string
@@ -94,7 +94,7 @@ describe("processAudio through the fast lane (MDIA-04, D-12)", () => {
     expect(waveform.every((v) => Number.isInteger(v) && v >= 0 && v <= 100)).toBe(true)
     expect(waveform.some((v) => v > 0)).toBe(true)
 
-    const out = ffprobe(path.join(t.dataDir, "media", id, "audio.m4a"), "stream=codec_name,channels")
+    const out = ffprobe(await decryptedCopy(t, path.join(t.dataDir, "media", id, "audio.m4a")), "stream=codec_name,channels")
     expect(out.streams[0]).toMatchObject({ codec_name: "aac", channels: 1 })
   })
 
