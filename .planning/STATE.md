@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.0
 status: Awaiting next milestone
 stopped_at: Phase 03 complete — all phases complete
-last_updated: "2026-10-20T12:41:18.488Z"
+last_updated: "2026-10-20T15:56:59.023Z"
 last_activity: 2026-10-20
 last_activity_desc: Milestone v1.0 completed and archived
-state_head: abbc51e6fabdfe34bfb12a9b44a672a8212d66ba
+state_head: 91d3b486a91c924cc60762c21217a6119cb0221b
 progress:
   total_phases: 3
   completed_phases: 3
@@ -96,6 +96,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 |---|-------------|------|--------|-----------|
 | 261020-lzx | Composer and viewer quick wins: camera button, back button fix, save button | 2026-10-20 | 29ecaee | [261020-lzx-composer-and-viewer-quick-wins-camera-bu](./quick/261020-lzx-composer-and-viewer-quick-wins-camera-bu/) |
 | 261020-oj7 | Call debug logging: WebRTC and TURN diagnostics, no personal data | 2026-10-20 | abbc51e | [261020-oj7-call-debug-logging-webrtc-and-turn-diagn](./quick/261020-oj7-call-debug-logging-webrtc-and-turn-diagn/) |
+| 3 | Fold the camera options into the + menu (Gallery, Take photo, Record video) | 2026-10-20 | 91d3b48 | — |
 
 ## Deferred Items
 
