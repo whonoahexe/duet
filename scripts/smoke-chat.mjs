@@ -83,6 +83,11 @@ async function until(fn, timeout, message) {
   }
 }
 
+/** How many "duet-sound:<name>" marks web/lib/sounds.ts left on this page since it loaded. */
+async function soundCount(page, name) {
+  return page.evaluate((n) => performance.getEntriesByName("duet-sound:" + n, "mark").length, name)
+}
+
 /** Open the long-press menu on a bubble with a right-click (contextmenu) and pick a reaction. */
 async function reactTo(page, text, emoji) {
   await bubbleOf(page, text).click({ button: "right" })
@@ -1110,6 +1115,38 @@ Object.assign(scenarios, {
     if ((await row.getByRole("switch").getAttribute("aria-checked")) !== "false") throw new Error("the fired reminder is still on")
     await ada.getByRole("button", { name: "Back", exact: true }).click()
     await list.waitFor({ state: "hidden", timeout: 3_000 })
+  },
+})
+
+Object.assign(scenarios, {
+  /**
+   * QT-4gf-chat-sounds: after one tap each, Ada's send pops on her phone and chimes once on Bob's. A
+   * second message straight after stays silent on Bob's phone (the 10 s quiet window), and Ada's own
+   * messages never chime on her phone.
+   */
+  async sounds({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    // The unlock gesture: browsers keep the shared AudioContext suspended until a tap.
+    await ada.getByPlaceholder(`Message ${BOB.displayName}`).click()
+    await bob.getByPlaceholder(`Message ${ADA.displayName}`).click()
+    await new Promise((r) => setTimeout(r, 300))
+
+    const one = uniqueText("sound one")
+    await sendFromComposer(ada, BOB.displayName, one)
+    await expectExactlyOnce(bob, one, 5_000)
+    await until(async () => (await soundCount(ada, "sent")) === 1, 3_000, "Ada's send did not play exactly one sent pop")
+    await until(async () => (await soundCount(bob, "received")) === 1, 3_000, "Bob did not hear exactly one received chime")
+
+    const two = uniqueText("sound two")
+    await sendFromComposer(ada, BOB.displayName, two)
+    await expectExactlyOnce(bob, two, 5_000)
+    await new Promise((r) => setTimeout(r, 500))
+    const received = await soundCount(bob, "received")
+    if (received !== 1) throw new Error(`Bob's received chime played ${received} times; the 10 s quiet window should keep it at 1`)
+    const sent = await soundCount(ada, "sent")
+    if (sent !== 2) throw new Error(`Ada's sent pop played ${sent} times, expected 2`)
+    const own = await soundCount(ada, "received")
+    if (own !== 0) throw new Error(`Ada heard ${own} received chimes for her own messages`)
   },
 })
 

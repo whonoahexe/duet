@@ -1,6 +1,7 @@
 "use client"
 
 import { WS_CLOSE_LOGGED_OUT, type ClientFrame, type ServerFrame } from "@duet/shared"
+import { installAudioUnlock } from "@/lib/sounds"
 import { SignalingClient } from "@/lib/ws"
 import { chatStore } from "./store"
 
@@ -204,7 +205,9 @@ class Realtime {
     }
     switch (frame.t) {
       case "msg":
-        // Before applyMessage: announceReminder skips a message that is already loaded.
+        // Before applyMessage: both announce calls read the pre-apply state (a message that is already
+        // loaded is an update, so it never chimes and never re-announces a reminder).
+        chatStore.announceSounds(frame.message)
         chatStore.announceReminder(frame.message)
         chatStore.applyMessage(frame.message)
         return
@@ -297,6 +300,7 @@ let current: Realtime | null = null
 
 /** Open (or keep) the tab's realtime connection. Safe to call twice. */
 export function startRealtime(opts: RealtimeOptions): void {
+  installAudioUnlock()
   if (current) {
     current.setOptions(opts)
     return

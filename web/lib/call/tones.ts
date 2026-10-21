@@ -6,6 +6,7 @@
  * a user gesture, so unlockAudio() runs synchronously inside the Start / Accept / Decline taps. The
  * callee's ringtone starts before any tap: when audio is blocked (iOS) the incoming screen simply
  * shows silently. navigator.vibrate needs an earlier gesture in Chrome and does not exist in Safari.
+ * Sound effects (web/lib/sounds.ts) share this one context through sharedAudioContext().
  */
 
 export type Tone = "ringback" | "ringtone" | "none"
@@ -44,6 +45,15 @@ function context(): AudioContext | null {
 export function unlockAudio(): void {
   const c = context()
   if (c && c.state !== "running") c.resume().catch(() => {})
+}
+
+/**
+ * The shared AudioContext as-is, or null when none exists yet. It never creates one: a context is only
+ * born in unlockAudio (a gesture) or startRingtone (a ring). Sound effects never join `playing`, so
+ * stopTones() cannot cut them.
+ */
+export function sharedAudioContext(): AudioContext | null {
+  return ctx
 }
 
 /** Schedule one tone of `freqs` mixed, starting `at` seconds from now for `dur` seconds. */

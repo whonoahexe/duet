@@ -21,6 +21,7 @@ import {
   type Reaction,
 } from "@duet/shared"
 import { ApiError, apiGet, apiPost, apiPut } from "@/lib/api"
+import { playReceivedChime, playSound } from "@/lib/sounds"
 import { createOutbox, type OutboxEntry } from "./outbox"
 import { uploadFile } from "./upload"
 
@@ -420,6 +421,24 @@ export const chatStore = {
     })
   },
 
+  /**
+   * QT-4gf-chat-sounds: the sound for one live WS msg frame. Called for live frames only and before
+   * applyMessage, so /api/sync catch-up and history never sound, and a message that is already loaded
+   * (an update) is told apart from a new one. Your own messages, from any device, never sound.
+   */
+  announceSounds(dto: MessageDto): void {
+    const me = state.me
+    const peerId = state.peer?.id
+    if (!me || !peerId) return
+    let newest = 0
+    for (const m of state.messages) if (m.seq > newest) newest = m.seq
+    // An update (reactions, an older message) never chimes, so a reaction on an old, unloaded
+    // message cannot ring either.
+    if (dto.senderId === peerId && dto.seq > newest && dto.kind !== "call" && dto.kind !== "reminder") {
+      playReceivedChime()
+    }
+  },
+
   /** One confirmed message (WS msg frame). */
   applyMessage(dto: MessageDto): void {
     chatStore.applyMessages([dto])
@@ -465,6 +484,7 @@ export const chatStore = {
   /** Queue a text message (optionally a reply) and start sending it. */
   sendText(body: string, replyToSeq: number | null = null): void {
     outbox.enqueue(body, replyToSeq)
+    playSound("sent")
     void outbox.flush()
   },
 
@@ -474,6 +494,7 @@ export const chatStore = {
    */
   sendMedia(files: File[], caption: string, replyToSeq: number | null = null): void {
     if (files.length === 0) return
+    playSound("sent")
     const createdAt = Date.now()
     const entry: MediaEntry = {
       id: crypto.randomUUID(),
@@ -503,6 +524,7 @@ export const chatStore = {
    */
   sendVoice(blob: Blob, durationMs: number, replyToSeq: number | null = null): void {
     if (blob.size === 0) return
+    playSound("sent")
     const createdAt = Date.now()
     const ext = blob.type.includes("webm") ? "webm" : blob.type.includes("ogg") ? "ogg" : "m4a"
     const file = new File([blob], `voice-${createdAt}.${ext}`, { type: blob.type || "audio/mp4" })
