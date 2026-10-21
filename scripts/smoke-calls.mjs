@@ -27,6 +27,20 @@ async function until(fn, timeout, message) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** How many "duet-sound:<name>" marks web/lib/sounds.ts left on this page since it loaded. */
+async function soundCount(page, name) {
+  return page.evaluate((n) => performance.getEntriesByName("duet-sound:" + n, "mark").length, name)
+}
+
+/** Wait until every page has played `name` exactly `n` times (QT-4gf-call-sounds). */
+async function expectSound(pages, name, n, timeout) {
+  await Promise.all(
+    pages.map((page, i) =>
+      until(async () => (await soundCount(page, name)) === n, timeout, () => `page ${i} did not play "${name}" ${n} time(s)`),
+    ),
+  )
+}
+
 /** Records every track getUserMedia hands out, so a scenario can prove each one was stopped. */
 function recordTracks() {
   window.__duetTracks = []
@@ -489,6 +503,7 @@ const scenarios = {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bob = await openApp(ctx, BOB, ADA, opened)
     await connectVoice(ada, bob)
+    await expectSound([ada, bob], "call-connected", 1, 3_000)
     await Promise.all([waitStatus(ada, BOB, /^\d+:\d{2}$/, 5_000), waitStatus(bob, ADA, /^\d+:\d{2}$/, 5_000)])
     const before = await Promise.all([diag(ada), diag(bob)])
     await sleep(3_000)
@@ -501,6 +516,7 @@ const scenarios = {
       waitStatus(ada, BOB, /^Call ended · \d+:\d{2}$/, 3_000),
       waitStatus(bob, ADA, /^Call ended · \d+:\d{2}$/, 3_000),
     ])
+    await expectSound([ada, bob], "call-ended", 1, 3_000)
     await Promise.all([
       callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 4_000 }),
       callDialog(bob, ADA).waitFor({ state: "hidden", timeout: 4_000 }),
@@ -557,7 +573,10 @@ const scenarios = {
     if (a.tone !== "ringback") throw new Error(`Ada's tone while ringing is "${a.tone}", expected "ringback"`)
     if (b.tone !== "ringtone") throw new Error(`Bob's tone while ringing is "${b.tone}", expected "ringtone"`)
     await waitStatus(ada, BOB, /^No answer$/, 15_000)
+    await expectSound([ada], "call-ended", 1, 3_000)
     await incoming.waitFor({ state: "hidden", timeout: 2_000 })
+    // The callee's missed-call sound plays with its toast (Bob's context exists: the ringtone made it).
+    await expectSound([bob], "missed-call", 1, 5_000)
     const [a2, b2] = await Promise.all([diag(ada), diag(bob)])
     if (a2.tone !== "none" || b2.tone !== "none") throw new Error(`tones still on after no answer: ${a2.tone}/${b2.tone}`)
     await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 4_000 })
@@ -964,6 +983,7 @@ const scenarios = {
     await bob.context().close()
     const screen = callDialog(ada, BOB)
     await screen.locator("span", { hasText: /^Call dropped$/ }).waitFor({ state: "visible", timeout: 50_000 })
+    await expectSound([ada], "call-dropped", 1, 3_000)
     await screen.getByRole("button", { name: "Call back" }).waitFor({ state: "visible", timeout: 1_000 })
     await screen.getByRole("button", { name: "Close" }).waitFor({ state: "visible", timeout: 1_000 })
     const a = await diag(ada)

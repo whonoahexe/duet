@@ -20,6 +20,7 @@ import { realtimeLive, sendFrame } from "@/lib/chat/realtime"
 import { chatStore } from "@/lib/chat/store"
 import { isIos } from "@/lib/platform"
 import { fetchIceServers } from "@/lib/rtc/ice"
+import { playSound, setCallActive } from "@/lib/sounds"
 import type { CallSample } from "@/lib/rtc/stats"
 import { flipCamera, getCallMedia, getCamera, getMic, type CallMediaResult, type Facing } from "./media"
 import { callLog, endCallLog, gumName, startCallLog } from "./diag-log"
@@ -192,6 +193,8 @@ function commit(next: CallState): void {
     else stopTones()
   }
   state = { ...next, tone }
+  // QT-4gf-call-sounds: chat sounds from the other phone stay quiet while a call is in progress.
+  setCallActive(state.phase !== "idle" && state.phase !== "ended")
   if (state.phase !== prev.phase || state.callId !== prev.callId) {
     armGuard()
     // Pitfall 10: the in-app incoming screen replaces the push heads-up, and a call that ended leaves
@@ -336,6 +339,8 @@ function flushDeferredRing(): void {
 
 /** Show a terminal text on the call screen for `ms`, then return to the chat. */
 function showEnded(text: string, ms: number): void {
+  // First, so a minimized call sounds too: "Call ended" (either side), "Declined", "No answer".
+  playSound("call-ended")
   clearCloseTimer()
   releaseMedia()
   if (state.screen === "minimized") {
@@ -354,6 +359,7 @@ function showEnded(text: string, ms: number): void {
 
 /** "Couldn't connect" with Retry and Close (D-19): stays until a button is tapped. */
 function showFailure(): void {
+  playSound("call-dropped")
   clearCloseTimer()
   releaseMedia()
   if (state.screen === "minimized") {
@@ -371,6 +377,7 @@ function showFailure(): void {
  * While minimized it is a toast with a Call back action instead (the call screen never reopens).
  */
 function showDropped(): void {
+  playSound("call-dropped")
   clearCloseTimer()
   releaseMedia()
   const kind = state.kind
@@ -479,6 +486,7 @@ function onSample(sample: CallSample): void {
   }
   set(patch)
   if (goesLive) {
+    playSound("call-connected")
     holdWakeLock()
     showIosTip()
   }
@@ -561,7 +569,15 @@ function startCallerSession(callId: string): boolean {
   return true
 }
 
+/** The call whose missed-call sound already played (handleEnded and checkCall can both report it). */
+let missedSoundCallId: string | null = null
+
 function missedCallToast(kind: CallKind, callId?: string): void {
+  if (callId === undefined) playSound("missed-call")
+  else if (callId !== missedSoundCallId) {
+    missedSoundCallId = callId
+    playSound("missed-call")
+  }
   toast(`Missed call from ${state.peerName || peer?.displayName || "your person"}`, {
     // One toast per call, however many routes (deep link, SW message, a lost Accept race) report it.
     id: callId ? `missed-${callId}` : undefined,

@@ -1032,6 +1032,8 @@ Object.assign(scenarios, {
    */
   async reminders({ ada, bob }) {
     await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    // Bob's unlock gesture (QT-4gf-reminder-missed): he makes no other tap before the reminder fires.
+    await bob.getByPlaceholder(`Message ${ADA.displayName}`).click()
     await openReminders(ada)
     const list = ada.getByTestId("reminders")
     await list.getByText("No reminders yet", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
@@ -1104,6 +1106,9 @@ Object.assign(scenarios, {
     if ((await ada.locator("[data-sonner-toast]").filter({ hasText: title }).count()) > 0) {
       throw new Error("Ada got a toast for a reminder that was for Bob")
     }
+    await until(async () => (await soundCount(bob, "reminder")) === 1, 3_000, "Bob's reminder toast did not play one reminder chime")
+    const adaReminder = await soundCount(ada, "reminder")
+    if (adaReminder !== 0) throw new Error(`Ada heard ${adaReminder} reminder chimes for a reminder that was for Bob`)
 
     await openReminders(ada)
     await row.waitFor({ state: "visible", timeout: 5_000 })
@@ -1147,6 +1152,22 @@ Object.assign(scenarios, {
     if (sent !== 2) throw new Error(`Ada's sent pop played ${sent} times, expected 2`)
     const own = await soundCount(ada, "received")
     if (own !== 0) throw new Error(`Ada heard ${own} received chimes for her own messages`)
+
+    // QT-4gf-chat-sounds: Bob's reaction ticks on his phone (the tap) and on Ada's (the WS frame).
+    await reactTo(bob, two, "💕")
+    await until(async () => (await soundCount(bob, "reaction")) === 1, 5_000, "Bob's reaction did not tick once on his phone")
+    await until(async () => (await soundCount(ada, "reaction")) === 1, 5_000, "Bob's reaction did not tick once on Ada's phone")
+
+    // QT-4gf-recorder-sounds: a tap starts a locked voice note (start click); Send plays the stop
+    // click and the sent pop.
+    await ada.getByRole("button", { name: "Record voice note" }).click()
+    const sendVoice = ada.getByRole("button", { name: "Send voice note" })
+    await sendVoice.waitFor({ state: "visible", timeout: 5_000 })
+    await until(async () => (await soundCount(ada, "record-start")) === 1, 3_000, "the voice note did not play one start click")
+    await new Promise((r) => setTimeout(r, 1_500))
+    await sendVoice.click()
+    await until(async () => (await soundCount(ada, "record-stop")) === 1, 3_000, "sending the voice note did not play one stop click")
+    await until(async () => (await soundCount(ada, "sent")) === 3, 30_000, "the voice note did not play the sent pop")
   },
 })
 

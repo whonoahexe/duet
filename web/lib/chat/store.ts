@@ -21,7 +21,7 @@ import {
   type Reaction,
 } from "@duet/shared"
 import { ApiError, apiGet, apiPost, apiPut } from "@/lib/api"
-import { playReceivedChime, playSound } from "@/lib/sounds"
+import { chatSoundsAllowed, playReceivedChime, playSound } from "@/lib/sounds"
 import { createOutbox, type OutboxEntry } from "./outbox"
 import { uploadFile } from "./upload"
 
@@ -419,6 +419,7 @@ export const chatStore = {
     toast(`⏰ ${dto.body ?? ""}${lead !== null ? ` · in ${leadLabel(lead)}` : ""}`, {
       description: who.charAt(0).toUpperCase() + who.slice(1),
     })
+    playSound("reminder")
   },
 
   /**
@@ -430,6 +431,15 @@ export const chatStore = {
     const me = state.me
     const peerId = state.peer?.id
     if (!me || !peerId) return
+    // A loaded message is never a new one. The peer usually reacts to MY messages, so this runs
+    // whoever sent it; your own reaction echoing back changes only your entry and never double-ticks.
+    const known = state.messages.find((m) => m.seq === dto.seq)
+    if (known) {
+      const prev = known.reactions.find((r) => r.userId === peerId)?.emoji ?? null
+      const next = dto.reactions.find((r) => r.userId === peerId)?.emoji ?? null
+      if (next !== null && next !== prev && chatSoundsAllowed()) playSound("reaction")
+      return
+    }
     let newest = 0
     for (const m of state.messages) if (m.seq > newest) newest = m.seq
     // An update (reactions, an older message) never chimes, so a reaction on an old, unloaded
@@ -624,6 +634,8 @@ export const chatStore = {
    * message is merged at once; the other phone gets it through the WS msg frame.
    */
   async react(seq: number, emoji: Reaction | null): Promise<void> {
+    // Inside the tap, before the await; removing a reaction is silent.
+    if (emoji !== null) playSound("reaction")
     const gen = generation
     try {
       const res = await apiPut(`/api/messages/${seq}/reaction`, { emoji }, SendMessageResponse)

@@ -6,6 +6,7 @@ import { CaretLeftIcon, CaretUpIcon, LockSimpleIcon, MicrophoneIcon } from "@pho
 import { formatDuration } from "@duet/shared"
 import { InputGroupButton } from "@/components/ui/input-group"
 import { startRecording, type Recording } from "@/lib/chat/recorder"
+import { playSound } from "@/lib/sounds"
 import { cn } from "@/lib/utils"
 
 /** Gesture thresholds (D-10, UI-SPEC section 3). */
@@ -89,6 +90,8 @@ export function useVoiceRecorder({ onSend }: { onSend: (blob: Blob, durationMs: 
   }, [detach, setPhase])
 
   const discard = useCallback(() => {
+    // Slide-to-cancel, too short and the Discard button: the stop click, only for a running recording.
+    if (recordingRef.current !== null) playSound("record-stop")
     recordingRef.current?.cancel()
     reset()
   }, [reset])
@@ -96,6 +99,7 @@ export function useVoiceRecorder({ onSend }: { onSend: (blob: Blob, durationMs: 
   const send = useCallback(() => {
     const rec = recordingRef.current
     if (!rec) return reset()
+    playSound("record-stop")
     const durationMs = Math.round(rec.elapsedMs())
     reset()
     void rec.stop().then((blob) => {
@@ -131,6 +135,7 @@ export function useVoiceRecorder({ onSend }: { onSend: (blob: Blob, durationMs: 
         return
       }
       recordingRef.current = res.recording
+      playSound("record-start")
       // A tap, or a release while the permission prompt was up: carry on hands-free.
       if (locked || pressRef.current === null || pressRef.current.releasedEarly) lock()
       else setPhase("holding")
