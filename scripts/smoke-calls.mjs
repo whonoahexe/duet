@@ -332,6 +332,19 @@ async function systemLineCount(page) {
   return systemLines(page).count()
 }
 
+/**
+ * The chat's first page is on screen (the composer shows while it is still loading): the message
+ * list, or the empty state. Then a short settle so a catch-up sync has landed.
+ */
+async function chatLoaded(page, peer) {
+  await page
+    .locator(`[aria-label="Messages with ${peer.displayName}"]`)
+    .or(page.getByText("No messages yet", { exact: true }))
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 })
+  await sleep(500)
+}
+
 /** The last system line's text and data-missed. */
 async function lastSystemLine(page) {
   const lines = systemLines(page)
@@ -602,6 +615,7 @@ const scenarios = {
   async glare(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bob = await openApp(ctx, BOB, ADA, opened)
+    await Promise.all([chatLoaded(ada, BOB), chatLoaded(bob, ADA)])
     const [adaLines, bobLines] = await Promise.all([systemLineCount(ada), systemLineCount(bob)])
     await Promise.all([
       ada.getByRole("button", { name: "Voice call", exact: true }).click(),
@@ -614,10 +628,15 @@ const scenarios = {
     await expectTracksEnded(ada)
     await expectTracksEnded(bob)
     // QT-nw9-call-lines: the merged call leaves exactly one line on each page.
+    let counts = ""
     await until(
-      async () => (await systemLineCount(ada)) === adaLines + 1 && (await systemLineCount(bob)) === bobLines + 1,
+      async () => {
+        const [na, nb] = await Promise.all([systemLineCount(ada), systemLineCount(bob)])
+        counts = `Ada ${adaLines} -> ${na}, Bob ${bobLines} -> ${nb}`
+        return na === adaLines + 1 && nb === bobLines + 1
+      },
       5_000,
-      "glare did not add exactly one system line on each page",
+      () => `glare did not add exactly one system line on each page (${counts})`,
     )
     await sleep(1_000)
     const [adaAfter, bobAfter] = await Promise.all([systemLineCount(ada), systemLineCount(bob)])
