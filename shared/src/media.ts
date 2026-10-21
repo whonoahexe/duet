@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AttachmentDto, AttachmentKind } from "./chat"
+import { AttachmentDto, AttachmentKind, MAX_ALBUM_ITEMS } from "./chat"
 
 /**
  * Media upload contract (MDIA-01, MDIA-05). Uploads are chunked because the Cloudflare Free plan
@@ -103,3 +103,41 @@ export function formatDuration(ms: number): string {
   const ss = String(s).padStart(2, "0")
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`
 }
+
+/** Shared media gallery page size (QT-5zd-gallery): default and largest accepted ?limit. */
+export const GALLERY_PAGE_DEFAULT = 60
+export const GALLERY_PAGE_MAX = 120
+
+/**
+ * A gallery item's paging key: position is always below MAX_ALBUM_ITEMS, so keys are unique and sort
+ * exactly like (message seq, album position).
+ */
+export function galleryKey(seq: number, position: number): number {
+  return seq * MAX_ALBUM_ITEMS + position
+}
+
+/** GET /api/media query: items with a key below `before` (newest first), at most `limit`. */
+export const GalleryQuery = z.object({
+  before: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(GALLERY_PAGE_MAX).default(GALLERY_PAGE_DEFAULT),
+})
+export type GalleryQuery = z.infer<typeof GalleryQuery>
+
+/** One ready photo or video shared in the chat, with the message it belongs to. */
+export const GalleryItem = z.object({
+  key: z.number().int().positive(),
+  seq: z.number().int().positive(),
+  senderId: z.uuid(),
+  /** The message's time, epoch ms. */
+  createdAt: z.number().int(),
+  attachment: AttachmentDto,
+})
+export type GalleryItem = z.infer<typeof GalleryItem>
+
+/** GET /api/media response: `next` is the `before` for the following page (null on the last page). */
+export const GalleryPage = z.object({
+  items: z.array(GalleryItem),
+  hasMore: z.boolean(),
+  next: z.number().int().positive().nullable(),
+})
+export type GalleryPage = z.infer<typeof GalleryPage>

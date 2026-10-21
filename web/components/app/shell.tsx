@@ -15,6 +15,7 @@ import {
 import { OkResponse, type MeResponse, type Profile } from "@duet/shared"
 import { CallProvider } from "@/components/app/call-provider"
 import { ChatView } from "@/components/app/chat-view"
+import { Gallery } from "@/components/app/gallery"
 import { NotificationsCard } from "@/components/app/notifications-card"
 import { NotificationsDrawer } from "@/components/app/notifications-drawer"
 import { OnCallBar } from "@/components/app/on-call-bar"
@@ -67,18 +68,25 @@ function ConnectionSubline() {
 
 /**
  * The peer's avatar, name and connection subline in the header (QT-5zd-photo-live). The photo comes
- * from the store (live WS profile frames), falling back to the /api/me snapshot before init.
+ * from the store (live WS profile frames), falling back to the /api/me snapshot before init. Tapping
+ * it opens the shared media gallery (QT-5zd-gallery).
  */
-function PeerHeader({ peer: initial }: { peer: Profile }) {
+function PeerHeader({ peer: initial, onOpen }: { peer: Profile; onOpen: () => void }) {
   const peer = usePeer() ?? initial
   return (
-    <>
+    <button
+      type="button"
+      aria-label="Shared media"
+      data-testid="peer-header"
+      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      onClick={onOpen}
+    >
       <PersonAvatar name={peer.displayName} photoId={peer.photoId} data-testid="peer-avatar" />
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate font-heading font-medium">{peer.displayName}</span>
         <ConnectionSubline />
       </div>
-    </>
+    </button>
   )
 }
 
@@ -152,6 +160,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   const [cardState, setCardState] = useState<PushState | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [photoOpen, setPhotoOpen] = useState(false)
+  const [galleryOpen, setGalleryOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   useBackClose(menuOpen, () => setMenuOpen(false))
 
@@ -245,7 +254,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
         <div className="flex h-14 items-center gap-3 px-4">
           {peer ? (
             <>
-              <PeerHeader peer={peer} />
+              <PeerHeader peer={peer} onOpen={() => setGalleryOpen(true)} />
               <CallButtons />
             </>
           ) : (
@@ -298,6 +307,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
         onStateChange={(state) => setCardState((current) => (current ? state : current))}
       />
       {peer && <ProfilePhotoDrawer open={photoOpen} onOpenChange={setPhotoOpen} />}
+      {peer && <Gallery open={galleryOpen} peer={peer} onClose={() => setGalleryOpen(false)} />}
 
       <main className="flex min-h-0 flex-1 flex-col">
         {peer ? (

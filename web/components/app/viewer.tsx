@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { toast } from "sonner"
 import { DownloadSimpleIcon, ImageBrokenIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -110,27 +110,49 @@ function Slide({ tile }: { tile: AlbumTile }) {
   )
 }
 
+/** Slides further than this from the current one render an empty shell (QT-5zd-viewer). */
+const MOUNT_RADIUS = 2
+/** onNearEnd fires once the current slide is this close to the last one. */
+const NEAR_END = 3
+
 /**
- * Full-screen viewer (MDIA-02, UI-SPEC): a full-screen Dialog with a Carousel over one album's items,
- * opened at the tapped item. Swipe, Escape and the arrow keys work; the counter hides for one item;
- * the caption sits at the bottom.
+ * Full-screen viewer (MDIA-02, UI-SPEC): a full-screen Dialog with a Carousel over one album's items
+ * (or the whole shared gallery, QT-5zd-viewer), opened at the tapped item. Swipe, Escape and the arrow
+ * keys work; the counter hides for one item; the caption sits at the bottom. Only the current slide
+ * and its neighbours mount media; the rest are same-size empty slides, so Embla's geometry holds.
  */
 export function Viewer({
   tiles,
   index,
   caption,
   onClose,
+  onNearEnd,
 }: {
   tiles: AlbumTile[]
   /** The item to open at, or null when closed. */
   index: number | null
   caption: string | null
   onClose: () => void
+  /** Called when the current slide nears the end (the gallery loads its next page). */
+  onNearEnd?: () => void
 }) {
   const open = index !== null
   useBackClose(open, onClose)
   const [api, setApi] = useState<CarouselApi>()
   const [current, setCurrent] = useState(index ?? 0)
+  // Each opening starts from the tapped item with no carousel yet (the old one was unmounted).
+  const [openedAt, setOpenedAt] = useState(index)
+  if (index !== openedAt) {
+    setOpenedAt(index)
+    if (index !== null) {
+      setCurrent(index)
+      setApi(undefined)
+    }
+  }
+  const center = api ? current : (index ?? 0)
+  const nearEnd = useEffectEvent((selected: number) => {
+    if (onNearEnd && selected >= tiles.length - NEAR_END) onNearEnd()
+  })
   const [saving, setSaving] = useState(false)
   const tile = tiles[current]
   // Uploading, processing and failed items have no served copy yet.
@@ -152,7 +174,9 @@ export function Viewer({
   useEffect(() => {
     if (!api) return
     const onSelect = () => {
-      setCurrent(api.selectedScrollSnap())
+      const selected = api.selectedScrollSnap()
+      setCurrent(selected)
+      nearEnd(selected)
       // Moving to another item stops a clip that was playing (videos never autoplay).
       for (const v of api.rootNode().querySelectorAll("video")) v.pause()
     }
@@ -209,9 +233,9 @@ export function Viewer({
             className="min-h-0 flex-1 *:data-[slot=carousel-content]:h-full"
           >
             <CarouselContent className="ml-0 h-full">
-              {tiles.map((tile) => (
+              {tiles.map((tile, i) => (
                 <CarouselItem key={tile.key} className="flex h-full items-center justify-center pl-0">
-                  <Slide tile={tile} />
+                  {Math.abs(i - center) <= MOUNT_RADIUS && <Slide tile={tile} />}
                 </CarouselItem>
               ))}
             </CarouselContent>

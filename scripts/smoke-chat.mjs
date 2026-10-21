@@ -930,6 +930,64 @@ Object.assign(scenarios, {
   },
 })
 
+Object.assign(scenarios, {
+  /**
+   * QT-5zd-gallery / QT-5zd-viewer: Ada sends a photo; Bob taps the header, sees the month-grouped
+   * gallery with Ada at the top, opens the newest tile in the viewer (display copy), closes the viewer
+   * with Escape (the gallery stays), then closes the gallery with Back.
+   */
+  async gallery({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const caption = uniqueText("gallery")
+    await pickFiles(ada, [makeJpeg(`gallery-${randomUUID().slice(0, 8)}.jpg`, 1200, 900)])
+    const drawer = previewDrawer(ada)
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send photo", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+    const onBob = albumWithCaption(bob, caption)
+    await onBob.waitFor({ state: "visible", timeout: 20_000 })
+    await until(() => mediaImagesLoaded(onBob, 1), 20_000, "Bob's photo never loaded from /media/")
+
+    await bob.getByTestId("peer-header").click()
+    const gallery = bob.getByTestId("gallery")
+    await gallery.waitFor({ state: "visible", timeout: 5_000 })
+    await gallery.getByText(ADA.displayName, { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
+    await bob.getByTestId("gallery-month").first().waitFor({ state: "visible", timeout: 10_000 })
+    const tile = bob.getByTestId("gallery-tile").first()
+    await tile.waitFor({ state: "visible", timeout: 10_000 })
+    await until(
+      async () => {
+        const img = await tile.locator("img").evaluate((el) => ({ src: el.getAttribute("src") ?? "", w: el.naturalWidth, done: el.complete }))
+        return img.src.includes("/media/") && img.done && img.w > 0
+      },
+      10_000,
+      "the first gallery tile never loaded from /media/",
+    )
+
+    // Neighbouring slides mount too (radius 2): pick the slide of the tapped item by its attachment id.
+    const tileId = /\/media\/([^/]+)\//.exec((await tile.locator("img").getAttribute("src")) ?? "")?.[1]
+    if (!tileId) throw new Error("the gallery tile has no /media/<id>/ src")
+    await tile.click()
+    const image = bob.locator(`[data-testid="viewer-image"][src^="/media/${tileId}/display"]`)
+    await image.waitFor({ state: "visible", timeout: 5_000 })
+    await until(
+      async () => {
+        const img = await image.evaluate((el) => ({ src: el.getAttribute("src") ?? "", w: el.naturalWidth, done: el.complete }))
+        return img.src.includes("/display") && img.done && img.w > 0
+      },
+      10_000,
+      "the viewer never loaded the display copy",
+    )
+    await bob.keyboard.press("Escape")
+    await bob.getByTestId("viewer-image").first().waitFor({ state: "hidden", timeout: 3_000 })
+    if (!(await gallery.isVisible())) throw new Error("Escape on the viewer also closed the gallery")
+
+    await bob.getByRole("button", { name: "Back", exact: true }).click()
+    await gallery.waitFor({ state: "hidden", timeout: 3_000 })
+    await bob.getByPlaceholder(`Message ${ADA.displayName}`).waitFor({ state: "visible", timeout: 5_000 })
+  },
+})
+
 const requested = process.argv.slice(3)
 const names = requested.length > 0 ? requested : Object.keys(scenarios)
 for (const name of names) {

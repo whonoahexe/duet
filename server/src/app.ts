@@ -25,6 +25,7 @@ import { createMediaProcessor, type MediaProcessor } from "./media/process"
 import { mediaRoutes } from "./media/routes"
 import { uploadRoutes } from "./media/uploads"
 import { profileRoutes } from "./media/avatar"
+import { galleryRoutes } from "./media/gallery"
 import { createHub, type Hub } from "./ws/hub"
 import { createCallRegistry, type CallRegistry } from "./calls/registry"
 import { users } from "./db/schema"
@@ -212,6 +213,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   await app.register(rtcRoutes, { fetch: deps.fetch ?? globalThis.fetch, timeoutMs: deps.turnTimeoutMs ?? 5000 })
   await app.register(callsRoutes)
   await app.register(chatRoutes)
+  await app.register(galleryRoutes)
   await app.register(pushRoutes)
   await app.register(wsRoutes)
 
