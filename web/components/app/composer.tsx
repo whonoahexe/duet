@@ -11,7 +11,10 @@ import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group"
@@ -210,18 +213,25 @@ export function Composer({ peerName }: { peerName: string }) {
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-auto">
                 {/* Each click stays inside the item's tap, so the browser lets it open the picker or camera. */}
-                <DropdownMenuItem onClick={() => fileRef.current?.click()}>
-                  <ImagesIcon />
-                  Gallery
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => cameraPhotoRef.current?.click()}>
-                  <CameraIcon />
-                  Photo
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => cameraVideoRef.current?.click()}>
-                  <VideoCameraIcon />
-                  Video
-                </DropdownMenuItem>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Library</DropdownMenuLabel>
+                  <DropdownMenuItem onClick={() => fileRef.current?.click()}>
+                    <ImagesIcon />
+                    Gallery
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Camera</DropdownMenuLabel>
+                  <DropdownMenuItem onClick={() => cameraPhotoRef.current?.click()}>
+                    <CameraIcon />
+                    Photo
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => cameraVideoRef.current?.click()}>
+                    <VideoCameraIcon />
+                    Video
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           </InputGroupAddon>

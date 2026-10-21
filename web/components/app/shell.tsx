@@ -26,7 +26,10 @@ import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
@@ -269,26 +272,35 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
               <DotsThreeVerticalIcon weight="bold" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto">
+              {/* QT-4gf-menu-groups (U-02): "Shared" acts for both people (either photo, both people's
+                  reminders); "This phone" acts on this device only. Each label must sit inside its group. */}
               {peer && (
-                <DropdownMenuItem onClick={() => setPhotoOpen(true)}>
-                  <UserCircleIcon />
-                  Profile photo
-                </DropdownMenuItem>
+                <>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Shared</DropdownMenuLabel>
+                    <DropdownMenuItem onClick={() => setPhotoOpen(true)}>
+                      <UserCircleIcon />
+                      Profile photo
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setRemindersOpen(true)}>
+                      <AlarmIcon />
+                      Reminders
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                </>
               )}
-              {peer && (
-                <DropdownMenuItem onClick={() => setRemindersOpen(true)}>
-                  <AlarmIcon />
-                  Reminders
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>This phone</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => setDrawerOpen(true)}>
+                  <BellIcon />
+                  Notifications
                 </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onClick={() => setDrawerOpen(true)}>
-                <BellIcon />
-                Notifications
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={loggingOut} onClick={() => void handleLogout()}>
-                <SignOutIcon />
-                Log out
-              </DropdownMenuItem>
+                <DropdownMenuItem disabled={loggingOut} onClick={() => void handleLogout()}>
+                  <SignOutIcon />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

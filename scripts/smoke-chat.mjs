@@ -759,7 +759,7 @@ Object.assign(scenarios, {
     const menuButton = bob.getByRole("button", { name: "Menu", exact: true })
     const notifications = bob.getByTestId("notifications-drawer")
     await menuButton.click()
-    await bob.getByRole("menuitem", { name: "Notifications" }).click()
+    await bob.getByRole("group", { name: "This phone", exact: true }).getByRole("menuitem", { name: "Notifications" }).click()
     await notifications.waitFor({ state: "visible", timeout: 3_000 })
     await new Promise((r) => setTimeout(r, 500))
     if (!(await notifications.isVisible())) throw new Error("the Notifications drawer closed along with the menu")
@@ -772,6 +772,18 @@ Object.assign(scenarios, {
     const menu = bob.getByRole("menu")
     await menuButton.click()
     await menu.waitFor({ state: "visible", timeout: 3_000 })
+    // QT-4gf-menu-groups: each item sits in its labelled section (Base UI names a group by its label).
+    const sections = [
+      ["This phone", "Log out"],
+      ["Shared", "Profile photo"],
+      ["Shared", "Reminders"],
+    ]
+    for (const [group, item] of sections) {
+      const found = bob.getByRole("group", { name: group, exact: true }).getByRole("menuitem", { name: item, exact: true })
+      await found.waitFor({ state: "visible", timeout: 3_000 }).catch(() => {
+        throw new Error(`the header menu has no "${item}" in its "${group}" section`)
+      })
+    }
     await backStep(bob)
     await menu.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => {
       throw new Error("a history back step did not close the header menu")
@@ -815,9 +827,14 @@ Object.assign(scenarios, {
     const attachButton = ada.getByRole("button", { name: "Attach photo or video" })
     const chooserFor = async (item) => {
       await attachButton.click()
+      // QT-4gf-menu-groups: Gallery sits under "Library", Photo and Video under "Camera".
+      const group =
+        item === "Gallery"
+          ? ada.getByRole("group", { name: "Library", exact: true })
+          : ada.getByRole("group", { name: "Camera", exact: true })
       const [chooser] = await Promise.all([
         ada.waitForEvent("filechooser", { timeout: 5_000 }),
-        ada.getByRole("menuitem", { name: item, exact: true }).click(),
+        group.getByRole("menuitem", { name: item, exact: true }).click(),
       ])
       return chooser
     }
@@ -869,7 +886,7 @@ function photoDrawer(page) {
 /** Open Menu > Profile photo. */
 async function openPhotoDrawer(page) {
   await page.getByRole("button", { name: "Menu", exact: true }).click()
-  await page.getByRole("menuitem", { name: "Profile photo" }).click()
+  await page.getByRole("group", { name: "Shared", exact: true }).getByRole("menuitem", { name: "Profile photo" }).click()
   await photoDrawer(page).waitFor({ state: "visible", timeout: 5_000 })
 }
 
@@ -991,7 +1008,7 @@ Object.assign(scenarios, {
 /** Open Menu > Reminders and wait for the list. */
 async function openReminders(page) {
   await page.getByRole("button", { name: "Menu", exact: true }).click()
-  await page.getByRole("menuitem", { name: "Reminders" }).click()
+  await page.getByRole("group", { name: "Shared", exact: true }).getByRole("menuitem", { name: "Reminders" }).click()
   await page.getByTestId("reminders").waitFor({ state: "visible", timeout: 5_000 })
 }
 
