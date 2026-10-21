@@ -82,6 +82,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 
 - [2026-10-20] [chat] Show calls in chat history and add reminders — [todo file](.planning/todos/pending/2026-10-20-calls-and-reminders-in-chat.md)
 - [2026-10-20] [ui] Add synthesised sound effects — [todo file](.planning/todos/pending/2026-10-20-sound-effects.md)
+- [2026-10-21] [media] Add crop and round profile photos — [todo file](.planning/todos/pending/2026-10-21-add-crop-and-round-profile-photos.md)
 
 ### Blockers/Concerns
 
