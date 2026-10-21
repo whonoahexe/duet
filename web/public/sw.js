@@ -20,6 +20,7 @@ const ATTACHMENT_ID = /^[A-Za-z0-9_-]{22}$/
 // nothing, Pitfall 3). "Don't notify while viewing" is decided on the server, never here.
 // Call pushes (D-09, D-12): "call" rings, "call-missed" replaces it; both carry the call id so a tap
 // can open /?call=<id> or /?missed=<id>.
+// Reminder pushes (QT-nw9-reminder-fire) get their own fixed tag and the fixed link "/" (T-nw9-10).
 self.addEventListener("push", (event) => {
   let d = {}
   try {
@@ -31,7 +32,8 @@ self.addEventListener("push", (event) => {
   const title = typeof d.title === "string" && d.title ? d.title : "duet"
   const body = typeof d.body === "string" && d.body ? d.body : "New message"
   const isCall = d.t === "call" || d.t === "call-missed"
-  const tag = isCall ? "duet-call" : d.t === "test" ? "duet-test" : "duet-chat"
+  const isReminder = d.t === "reminder"
+  const tag = isCall ? "duet-call" : isReminder ? "duet-reminder" : d.t === "test" ? "duet-test" : "duet-chat"
   const icon =
     typeof d.avatar === "string" && ATTACHMENT_ID.test(d.avatar) ? "/media/" + d.avatar + "/avatar-sm" : "/icons/icon-192.png"
   let data = { url: "/" }
@@ -41,11 +43,15 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     (async () => {
       // D-14: one notification per kind. iOS ignores tag/renotify, so close what is showing first, but
-      // only the same kind (WR-07): a chat push never removes "Incoming call" or "Missed call", and a
-      // call push never removes the chat notification.
+      // only the same kind (WR-07): a chat push never removes "Incoming call", "Missed call" or a
+      // reminder, and a call push never removes the chat notification. A reminder closes nothing: each
+      // fired reminder stays on screen until it is seen.
       try {
         const open = await self.registration.getNotifications()
-        for (const n of open) if (isCall ? n.tag === "duet-call" : n.tag !== "duet-call") n.close()
+        for (const n of open) {
+          if (isReminder) continue
+          if (isCall ? n.tag === "duet-call" : n.tag !== "duet-call" && n.tag !== "duet-reminder") n.close()
+        }
       } catch {
         // keep going: the notification below must still show
       }

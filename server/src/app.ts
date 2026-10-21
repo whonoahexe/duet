@@ -5,7 +5,7 @@ import fastifyCookie from "@fastify/cookie"
 import fastifyRateLimit from "@fastify/rate-limit"
 import fastifyStatic from "@fastify/static"
 import fastifyWebsocket from "@fastify/websocket"
-import { WS_MAX_PAYLOAD } from "@duet/shared"
+import { WS_MAX_PAYLOAD, reminderPushText } from "@duet/shared"
 import type { Config } from "./config"
 import { openDb, type Db } from "./db/client"
 import { authRoutes } from "./auth/routes"
@@ -18,7 +18,9 @@ import { chatRoutes } from "./chat/routes"
 import { pushRoutes } from "./push/routes"
 import { createPushSender, type PushSender, type WebPushSend } from "./push/sender"
 import { createChatEvents, type ChatEvents } from "./chat/events"
-import { insertCallMessage, messageChangedForAttachment, toDtos } from "./chat/service"
+import { insertCallMessage, insertReminderMessage, messageChangedForAttachment, toDtos } from "./chat/service"
+import { reminderRoutes } from "./reminders/routes"
+import { createReminderScheduler, type ReminderScheduler } from "./reminders/scheduler"
 import { loadMediaKey } from "./media/crypto"
 import { encryptMediaAtRest } from "./media/migrate"
 import { createMediaProcessor, type MediaProcessor } from "./media/process"
@@ -46,6 +48,8 @@ declare module "fastify" {
     calls: CallRegistry
     /** The one Web Push sender: chat pushes (pushRoutes) and call pushes (the call registry). */
     push: PushSender
+    /** The in-process reminder scheduler (QT-nw9-reminder-fire); tests call tick() with a moved clock. */
+    reminders: ReminderScheduler
   }
 }
 
@@ -63,6 +67,8 @@ export interface AppDeps {
   webPushSend?: WebPushSend
   /** Call registry timers (tests shorten them). Defaults: config.CALL_RING_TIMEOUT_MS, 10 s, 35 s. */
   callTimers?: { ringTimeoutMs?: number; callerAbsentMs?: number; absentGraceMs?: number }
+  /** Clock for the reminder routes and scheduler; tests inject one. Default Date.now. */
+  now?: () => number
 }
 
 export async function buildApp(config: Config, deps: AppDeps = {}): Promise<FastifyInstance> {
@@ -167,6 +173,44 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
 
   app.decorate("chatEvents", createChatEvents(app.log))
 
+  // QT-nw9-reminder-fire: a due reminder inserts one line both people see and pushes only to its
+  // target(s), except a target viewing duet right now (the in-app toast stands in for the push).
+  // Never chatEvents: a reminder line is not a chat message push.
+  const now = deps.now ?? Date.now
+  const reminderScheduler = createReminderScheduler({
+    db,
+    log: app.log,
+    now,
+    tickMs: config.REMINDER_TICK_MS,
+    fire(row, event) {
+      const line = insertReminderMessage(db, {
+        creatorId: row.creatorId,
+        title: row.title,
+        forUserId: row.forUserId,
+        leadMinutes: event.leadMinutes,
+      })
+      app.hub.broadcast({ t: "msg", message: toDtos(db, [line])[0] })
+      const recipients =
+        row.forUserId !== null ? [row.forUserId] : db.select({ id: users.id }).from(users).all().map((u) => u.id)
+      const creatorName = personOf(row.creatorId).name
+      for (const userId of recipients) {
+        if (app.hub.isViewing(userId)) {
+          app.log.info({ evt: "push_suppressed", userId, reminderId: row.id })
+          continue
+        }
+        const text = reminderPushText(
+          { title: row.title, leadMinutes: event.leadMinutes },
+          { recipientIsCreator: userId === row.creatorId, creatorName },
+        )
+        void push
+          .notifyReminder(userId, text.title, text.body)
+          .catch(() => app.log.warn({ evt: "push_reminder_failed", reminderId: row.id }))
+      }
+      app.log.info({ evt: "reminder_fired", id: row.id, leadMinutes: event.leadMinutes, recipients })
+    },
+  })
+  app.decorate("reminders", reminderScheduler)
+
   // Media processing (MDIA-01): when an attachment that already belongs to a message becomes ready
   // or failed, its message is bumped and re-broadcast, so the other phone's tile turns into the photo.
   const mediaRoot = path.join(config.DATA_DIR, "media")
@@ -207,9 +251,11 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   app.addHook("onReady", async () => {
     await encryptMediaAtRest({ key, mediaRoot, log: app.log })
     await media.start()
+    reminderScheduler.start()
   })
   // Before onClose closes the database: let a running job finish its write.
   app.addHook("preClose", async () => {
+    reminderScheduler.close()
     await media.close()
   })
 
@@ -221,6 +267,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   await app.register(callsRoutes)
   await app.register(chatRoutes)
   await app.register(galleryRoutes)
+  await app.register(reminderRoutes, { now })
   await app.register(pushRoutes)
   await app.register(wsRoutes)
 

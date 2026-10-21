@@ -40,8 +40,12 @@ export type PushTestResponse = z.infer<typeof PushTestResponse>
 
 /** What the service worker receives (JSON push payload). */
 export interface PushPayload {
-  /** "call" rings a closed app (D-09); "call-missed" replaces that ring when nobody answered (D-12). */
-  t: "chat" | "test" | "call" | "call-missed"
+  /**
+   * "call" rings a closed app (D-09); "call-missed" replaces that ring when nobody answered (D-12);
+   * "reminder" is a fired reminder (QT-nw9-reminder-fire), its own notification that never replaces
+   * the chat one.
+   */
+  t: "chat" | "test" | "call" | "call-missed" | "reminder"
   title: string
   body: string
   /** Call pushes only: the call's id (the tap opens /?call=<id> or /?missed=<id>). */

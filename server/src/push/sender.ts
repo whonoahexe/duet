@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { and, count, eq, gt, inArray, or } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 import webpush from "web-push"
-import { messageTypeLabel, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
+import { REMINDER_PUSH_TTL_SECONDS, messageTypeLabel, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
 import type { Config } from "../config"
 import type { Db } from "../db/client"
 import { messages, pushSubscriptions, readState } from "../db/schema"
@@ -154,6 +154,12 @@ export interface PushSender {
     skipSession: (sessionId: string) => boolean,
     callerPhotoId?: string | null,
   ): Promise<number>
+  /**
+   * QT-nw9-reminder-fire: a fired reminder ("⏰ <title>", "Reminder · from Alice") to every
+   * subscription of the recipient, TTL REMINDER_PUSH_TTL_SECONDS. The title is never logged (T-nw9-03).
+   * Returns successes.
+   */
+  notifyReminder(recipientId: string, title: string, body: string): Promise<number>
   /** SHEL-03: push the test notification to this session's subscriptions only. Returns successes. */
   sendTest(sessionId: string): Promise<number>
   /** Upsert a subscription by endpoint, re-binding it to this user and session. */
@@ -313,6 +319,14 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
         ...avatarField(callerPhotoId),
       })
       return sendCallPush("push_call_missed", recipientId, call, payload, PUSH_TTL_SECONDS, skipSession)
+    },
+
+    async notifyReminder(recipientId, title, body) {
+      if (!configured) return 0
+      const subs = db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, recipientId)).all()
+      const ok = subs.length === 0 ? 0 : await sendAll(subs, buildPayload("reminder", title, body), REMINDER_PUSH_TTL_SECONDS)
+      log.info({ evt: "push_reminder", userId: recipientId, subs: subs.length, ok })
+      return ok
     },
 
     async sendTest(sessionId) {

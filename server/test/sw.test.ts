@@ -192,6 +192,51 @@ describe("service worker call pushes (D-09, D-12)", () => {
   })
 })
 
+describe("service worker reminder pushes (QT-nw9-reminder-fire, T-nw9-10)", () => {
+  it("shows a reminder tagged duet-reminder with the fixed link and closes no open notification", async () => {
+    const call = { tag: "duet-call", close: vi.fn() }
+    const chat = { tag: "duet-chat", close: vi.fn() }
+    const older = { tag: "duet-reminder", close: vi.fn() }
+    const { self, listeners } = loadSw({ open: [call, chat, older] })
+    await dispatch(listeners, "push", {
+      data: pushData({ t: "reminder", title: "⏰ Drink water", body: "Reminder · from Ada", url: "https://evil.test/" }),
+    })
+    expect(call.close).not.toHaveBeenCalled()
+    expect(chat.close).not.toHaveBeenCalled()
+    expect(older.close).not.toHaveBeenCalled()
+    expect(self.registration.showNotification).toHaveBeenCalledWith("⏰ Drink water", {
+      body: "Reminder · from Ada",
+      tag: "duet-reminder",
+      renotify: true,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/badge-96.png",
+      data: { url: "/" },
+    })
+  })
+
+  it("a chat push leaves an open reminder alone and still closes the other non-call notifications", async () => {
+    const reminder = { tag: "duet-reminder", close: vi.fn() }
+    const call = { tag: "duet-call", close: vi.fn() }
+    const chat = { tag: "duet-chat", close: vi.fn() }
+    const test = { tag: "duet-test", close: vi.fn() }
+    const { listeners } = loadSw({ open: [reminder, call, chat, test] })
+    await dispatch(listeners, "push", { data: pushData({ t: "chat", title: "Ada", body: "Message" }) })
+    expect(reminder.close).not.toHaveBeenCalled()
+    expect(call.close).not.toHaveBeenCalled()
+    expect(chat.close).toHaveBeenCalledTimes(1)
+    expect(test.close).toHaveBeenCalledTimes(1)
+  })
+
+  it("a call push leaves an open reminder alone", async () => {
+    const reminder = { tag: "duet-reminder", close: vi.fn() }
+    const { listeners } = loadSw({ open: [reminder] })
+    await dispatch(listeners, "push", {
+      data: pushData({ t: "call", title: "Ada", body: "📞 Incoming voice call", callId: "0b6f4a8e-1d2c-4b3a-9f8e-7d6c5b4a3921" }),
+    })
+    expect(reminder.close).not.toHaveBeenCalled()
+  })
+})
+
 describe("service worker notificationclick (NOTF-02)", () => {
   it("focuses an open window and posts open-chat", async () => {
     const win: FakeWindow = { focus: vi.fn(async () => undefined), postMessage: vi.fn() }

@@ -68,6 +68,9 @@ const EnvSchema = z
     // (<DATA_DIR>/media.key under NODE_ENV=test, so tests never touch the real key). The deployed image
     // sets it to /run/duet/media.key, the compose read-only bind mount of the host key.
     MEDIA_KEY_FILE: z.string().min(1).optional(),
+    // QT-nw9-reminder-fire: how often the reminder scheduler checks for due reminders. The chat smoke
+    // shortens it so a one-time reminder fires within a second of its minute.
+    REMINDER_TICK_MS: z.coerce.number().int().min(200).max(300000).default(30000),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && !env.APP_ORIGIN) {
@@ -141,6 +144,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     "CALL_RING_TIMEOUT_MS",
     "CALL_INVITE_LIMIT",
     "MEDIA_KEY_FILE",
+    "REMINDER_TICK_MS",
   ] as const
   const picked: Record<string, string | undefined> = {}
   for (const k of keys) {

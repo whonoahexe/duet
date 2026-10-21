@@ -69,6 +69,8 @@ export interface MakeTestAppOptions {
   heartbeatMs?: number
   webPushSend?: WebPushSend
   callTimers?: { ringTimeoutMs?: number; callerAbsentMs?: number; absentGraceMs?: number }
+  /** Clock for the reminder routes and scheduler (QT-nw9-reminder-fire). */
+  now?: () => number
 }
 
 export async function makeTestApp({
@@ -81,9 +83,18 @@ export async function makeTestApp({
   heartbeatMs,
   webPushSend,
   callTimers,
+  now,
 }: MakeTestAppOptions = {}): Promise<TestApp> {
   const dir = dataDir ?? makeDataDir()
-  const app = await buildApp(testConfig(dir, env), { fetch, turnTimeoutMs, logStream, heartbeatMs, webPushSend, callTimers })
+  const app = await buildApp(testConfig(dir, env), {
+    fetch,
+    turnTimeoutMs,
+    logStream,
+    heartbeatMs,
+    webPushSend,
+    callTimers,
+    now,
+  })
   if (seed) {
     await seedUsers(app.db, [TEST_USERS.alice, TEST_USERS.bob])
   }
