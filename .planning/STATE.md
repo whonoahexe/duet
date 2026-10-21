@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.0
 status: Awaiting next milestone
 stopped_at: Phase 03 complete — all phases complete
-last_updated: "2026-10-21T07:50:25.566Z"
+last_updated: "2026-10-21T17:02:11.332Z"
 last_activity: 2026-10-21
 last_activity_desc: Milestone v1.0 completed and archived
-state_head: 1710eadf5cdc371763ba2d86f5aa657a74ebd804
+state_head: ad938445aa95e3d567ed6f48b74947b2282e7758
 progress:
   total_phases: 3
   completed_phases: 3
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-10-21 - Completed quick task 261021-5zd: Add shared media gallery and profile photos
+Last activity: 2026-10-21 - Completed quick task 261021-nw9: Show calls in chat history and add reminders
 
 ## Performance Metrics
 
@@ -80,7 +80,6 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 
 ### Pending Todos
 
-- [2026-10-20] [chat] Show calls in chat history and add reminders — [todo file](.planning/todos/pending/2026-10-20-calls-and-reminders-in-chat.md)
 - [2026-10-20] [ui] Add synthesised sound effects — [todo file](.planning/todos/pending/2026-10-20-sound-effects.md)
 - [2026-10-21] [media] Add crop and round profile photos — [todo file](.planning/todos/pending/2026-10-21-add-crop-and-round-profile-photos.md)
 
@@ -101,6 +100,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 | 261021-4qu | Encrypt media at rest on the server | 2026-10-21 | 65a6056 | [261021-4qu-encrypt-media-at-rest-on-the-server](./quick/261021-4qu-encrypt-media-at-rest-on-the-server/) |
 | 261021-5zd | Add shared media gallery and profile photos | 2026-10-21 | 1f2977e | [261021-5zd-add-shared-media-gallery-and-profile-pho](./quick/261021-5zd-add-shared-media-gallery-and-profile-pho/) |
 | 7 | Remove Call test from the header menu | 2026-10-21 | 1710ead | — |
+| 261021-nw9 | Show calls in chat history and add reminders | 2026-10-21 | ad93844 | [261021-nw9-show-calls-in-chat-history-and-add-remin](./quick/261021-nw9-show-calls-in-chat-history-and-add-remin/) |
 
 ## Deferred Items
 
