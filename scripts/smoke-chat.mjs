@@ -688,8 +688,7 @@ Object.assign(scenarios, {
    * QT-lzx-back: Android's system back closes the top overlay instead of leaving the app. A history
    * back step closes the viewer without a reload; open/Escape cycles leave no stray entries; header
    * menu -> Notifications keeps the drawer open and back closes it; back closes the menu itself, Ada's
-   * preview drawer (nothing sent) and Bob's long-press message menu; the Call test item still leaves
-   * for /debug/call/.
+   * preview drawer (nothing sent) and Bob's long-press message menu.
    */
   async back({ ada, bob }) {
     // A fresh URL, not openChat's "/": a same-URL goto replaces the current entry and keeps the forward
@@ -798,10 +797,6 @@ Object.assign(scenarios, {
     await until(async () => (await historyLength(bob)) === bobBase + 1, 3_000, `history did not settle at base + 1 for Bob (base ${bobBase})`)
     await until(async () => (await historyLength(ada)) === adaBase + 1, 3_000, `history did not settle at base + 1 for Ada (base ${adaBase})`)
 
-    await menuButton.click()
-    await bob.getByRole("menuitem", { name: "Call test" }).click()
-    await until(() => bob.url().includes("/debug/call/"), 10_000, "Call test did not reach /debug/call/")
-    await openChat(bob, ADA.displayName)
   },
 
   /**

@@ -6,7 +6,6 @@ import {
   BellIcon,
   ChatCircleIcon,
   DotsThreeVerticalIcon,
-  PhoneCallIcon,
   PhoneIcon,
   SignOutIcon,
   UserCircleIcon,
@@ -31,7 +30,7 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Toaster } from "@/components/ui/sonner"
 import { ApiError, apiPost } from "@/lib/api"
-import { leaveTo, useBackClose } from "@/lib/back-close"
+import { useBackClose } from "@/lib/back-close"
 import { startRealtime, stopRealtime } from "@/lib/chat/realtime"
 import {
   bridgeServiceWorkerMessages,
@@ -276,11 +275,6 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
               <DropdownMenuItem onClick={() => setDrawerOpen(true)}>
                 <BellIcon />
                 Notifications
-              </DropdownMenuItem>
-              {/* The installed app has no URL bar, so the hidden call test is reached from here (Pitfall M6). */}
-              <DropdownMenuItem onClick={() => leaveTo("/debug/call/")}>
-                <PhoneCallIcon />
-                Call test
               </DropdownMenuItem>
               <DropdownMenuItem disabled={loggingOut} onClick={() => void handleLogout()}>
                 <SignOutIcon />
