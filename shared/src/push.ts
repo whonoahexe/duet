@@ -48,4 +48,10 @@ export interface PushPayload {
   callId?: string
   /** Call pushes only: voice or video. */
   kind?: "voice" | "video"
+  /**
+   * The sender's or caller's profile photo attachment id (QT-5zd-push-icon), absent without a photo.
+   * The service worker turns it into /media/<id>/avatar-sm itself (T-5zd-05); Android shows it as the
+   * notification icon, iOS always shows the app icon.
+   */
+  avatar?: string
 }

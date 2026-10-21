@@ -113,9 +113,10 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   const push = createPushSender({ db, config, log: app.log, send: deps.webPushSend })
   app.decorate("push", push)
 
-  /** The display name in a call push title ("duet" when the account is gone). */
-  function displayNameOf(userId: string): string {
-    return db.select({ name: users.displayName }).from(users).where(eq(users.id, userId)).get()?.name ?? "duet"
+  /** The caller in a call push: title name ("duet" when the account is gone) and photo (QT-5zd-push-icon). */
+  function personOf(userId: string): { name: string; photoId: string | null } {
+    const row = db.select({ name: users.displayName, photoId: users.photoId }).from(users).where(eq(users.id, userId)).get()
+    return { name: row?.name ?? "duet", photoId: row?.photoId ?? null }
   }
 
   // Phase 3: call.* frames go to the registry, which answers through the hub. Two accounts only: the
@@ -128,12 +129,18 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     push: {
       notifyCall(call) {
         void Promise.resolve()
-          .then(() => push.notifyCall(call.calleeId, call, displayNameOf(call.callerId), (sid) => hub.isSessionViewing(sid)))
+          .then(() => {
+            const caller = personOf(call.callerId)
+            return push.notifyCall(call.calleeId, call, caller.name, (sid) => hub.isSessionViewing(sid), caller.photoId)
+          })
           .catch(() => app.log.warn({ evt: "push_call_failed", callId: call.id }))
       },
       notifyMissed(call) {
         void Promise.resolve()
-          .then(() => push.notifyMissedCall(call.calleeId, call, displayNameOf(call.callerId), (sid) => hub.isSessionViewing(sid)))
+          .then(() => {
+            const caller = personOf(call.callerId)
+            return push.notifyMissedCall(call.calleeId, call, caller.name, (sid) => hub.isSessionViewing(sid), caller.photoId)
+          })
           .catch(() => app.log.warn({ evt: "push_call_missed_failed", callId: call.id }))
       },
     },

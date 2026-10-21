@@ -76,8 +76,9 @@ export async function pushRoutes(app: FastifyInstance) {
 
   app.chatEvents.onMessageCreated(async ({ message, senderId }) => {
     if (!sender.configured) return
-    const people = app.db.select({ id: users.id, displayName: users.displayName }).from(users).all()
-    const senderName = people.find((p) => p.id === senderId)?.displayName ?? "duet"
+    const people = app.db.select({ id: users.id, displayName: users.displayName, photoId: users.photoId }).from(users).all()
+    const author = people.find((p) => p.id === senderId)
+    const senderName = author?.displayName ?? "duet"
     const recipients = app.db.select({ id: users.id }).from(users).where(ne(users.id, senderId)).all()
     await Promise.all(
       recipients.map(async ({ id }) => {
@@ -85,7 +86,7 @@ export async function pushRoutes(app: FastifyInstance) {
           app.log.info({ evt: "push_suppressed", userId: id, seq: message.seq })
           return
         }
-        await sender.notifyMessage(id, message, senderName)
+        await sender.notifyMessage(id, message, senderName, author?.photoId ?? null)
       }),
     )
   })

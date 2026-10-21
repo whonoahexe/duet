@@ -312,6 +312,24 @@ describe("missed-call push only for cancelled or unanswered rings (D-12)", () =>
     expect(payloadOf(env, 1)).toEqual({ t: "call-missed", title: "Alice Test", body: "🎥 Missed video call", callId, kind: "video" })
   })
 
+  it("carries the caller's photo id as avatar on the incoming and missed pushes (QT-5zd-push-icon)", async () => {
+    const photoId = "AbCdEfGhIjKlMnOpQrStUv"
+    env.t.app.db.update(users).set({ photoId }).where(eq(users.id, env.aliceId)).run()
+    try {
+      const alice = await connect(env, env.aliceCookie)
+      const callId = randomUUID()
+      alice.send({ t: "call.invite", callId, kind: "voice" })
+      await settle(alice)
+      alice.send({ t: "call.end", callId })
+      await nextOf(alice, "call.ended")
+      await vi.waitFor(() => expect(env.send).toHaveBeenCalledTimes(2))
+      expect(payloadOf(env, 0)).toEqual({ t: "call", title: "Alice Test", body: "📞 Incoming voice call", callId, kind: "voice", avatar: photoId })
+      expect(payloadOf(env, 1)).toMatchObject({ t: "call-missed", avatar: photoId })
+    } finally {
+      env.t.app.db.update(users).set({ photoId: null }).where(eq(users.id, env.aliceId)).run()
+    }
+  })
+
   it("sends no missed push for a decline", async () => {
     const alice = await connect(env, env.aliceCookie)
     const bob = await connect(env, env.bobA)

@@ -126,20 +126,34 @@ export interface PushSender {
   publicKey: string | null
   /**
    * Push the sender's name as the title and the type-only label (messageTypeLabel) as the body,
-   * never the text or a caption, to every saved subscription of the recipient. Returns successes.
+   * never the text or a caption, to every saved subscription of the recipient. A sender photo id
+   * becomes the payload's `avatar` (QT-5zd-push-icon). Returns successes.
    */
-  notifyMessage(recipientId: string, message: MessageDto, senderName: string): Promise<number>
+  notifyMessage(recipientId: string, message: MessageDto, senderName: string, senderPhotoId?: string | null): Promise<number>
   /**
    * D-09 / D-11: "Incoming voice call" (or video) to every subscription of the callee except those of
    * sessions for which `skipSession` is true (they show the in-app incoming screen already). TTL
-   * CALL_PUSH_TTL_SECONDS. Returns successes.
+   * CALL_PUSH_TTL_SECONDS. A caller photo id becomes the payload's `avatar`. Returns successes.
    */
-  notifyCall(recipientId: string, call: CallPushInfo, callerName: string, skipSession: (sessionId: string) => boolean): Promise<number>
+  notifyCall(
+    recipientId: string,
+    call: CallPushInfo,
+    callerName: string,
+    skipSession: (sessionId: string) => boolean,
+    callerPhotoId?: string | null,
+  ): Promise<number>
   /**
    * D-12: "Missed voice call" (or video) after a ring that was cancelled or not answered, to the same
    * subscriptions as notifyCall; it replaces the incoming notification on the phone. Default TTL.
+   * A caller photo id becomes the payload's `avatar`.
    */
-  notifyMissedCall(recipientId: string, call: CallPushInfo, callerName: string, skipSession: (sessionId: string) => boolean): Promise<number>
+  notifyMissedCall(
+    recipientId: string,
+    call: CallPushInfo,
+    callerName: string,
+    skipSession: (sessionId: string) => boolean,
+    callerPhotoId?: string | null,
+  ): Promise<number>
   /** SHEL-03: push the test notification to this session's subscriptions only. Returns successes. */
   sendTest(sessionId: string): Promise<number>
   /** Upsert a subscription by endpoint, re-binding it to this user and session. */
@@ -164,7 +178,7 @@ export function buildPayload(
   t: PushPayload["t"],
   title: string,
   fullBody: string,
-  extra?: Pick<PushPayload, "callId" | "kind">,
+  extra?: Pick<PushPayload, "callId" | "kind" | "avatar">,
 ): string {
   const safeTitle = truncateGraphemes(title, 60)
   let max = PUSH_BODY_MAX_GRAPHEMES
@@ -174,6 +188,11 @@ export function buildPayload(
     if (Buffer.byteLength(json, "utf8") <= PUSH_PAYLOAD_MAX_BYTES || max <= 10) return json
     max = Math.floor(max / 2)
   }
+}
+
+/** `{ avatar }` only for a real photo id, so a payload without a photo is byte-identical to before. */
+function avatarField(photoId: string | null | undefined): Pick<PushPayload, "avatar"> {
+  return typeof photoId === "string" ? { avatar: photoId } : {}
 }
 
 export function createPushSender({ db, config, log, send }: PushSenderDeps): PushSender {
@@ -246,7 +265,7 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
     configured,
     publicKey: configured ? config.VAPID_PUBLIC_KEY! : null,
 
-    async notifyMessage(recipientId, message, senderName) {
+    async notifyMessage(recipientId, message, senderName, senderPhotoId) {
       if (!configured) return 0
       const subs = db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, recipientId)).all()
       if (subs.length === 0) return 0
@@ -261,19 +280,27 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
           .where(and(eq(messages.senderId, message.senderId), gt(messages.seq, lastRead)))
           .get()?.n ?? 1
       const title = unread >= 2 ? `${senderName} · ${unread} new messages` : senderName
-      const payload = buildPayload("chat", title, messageTypeLabel(message))
+      const payload = buildPayload("chat", title, messageTypeLabel(message), avatarField(senderPhotoId))
       const ok = await sendAll(subs, payload)
       log.info({ evt: "push_sent", userId: recipientId, seq: message.seq, subs: subs.length, ok })
       return ok
     },
 
-    notifyCall(recipientId, call, callerName, skipSession) {
-      const payload = buildPayload("call", callerName, callPushBody(call.kind, "incoming"), { callId: call.id, kind: call.kind })
+    notifyCall(recipientId, call, callerName, skipSession, callerPhotoId) {
+      const payload = buildPayload("call", callerName, callPushBody(call.kind, "incoming"), {
+        callId: call.id,
+        kind: call.kind,
+        ...avatarField(callerPhotoId),
+      })
       return sendCallPush("push_call", recipientId, call, payload, CALL_PUSH_TTL_SECONDS, skipSession)
     },
 
-    notifyMissedCall(recipientId, call, callerName, skipSession) {
-      const payload = buildPayload("call-missed", callerName, callPushBody(call.kind, "missed"), { callId: call.id, kind: call.kind })
+    notifyMissedCall(recipientId, call, callerName, skipSession, callerPhotoId) {
+      const payload = buildPayload("call-missed", callerName, callPushBody(call.kind, "missed"), {
+        callId: call.id,
+        kind: call.kind,
+        ...avatarField(callerPhotoId),
+      })
       return sendCallPush("push_call_missed", recipientId, call, payload, PUSH_TTL_SECONDS, skipSession)
     },
 

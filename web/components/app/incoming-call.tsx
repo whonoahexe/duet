@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { callStore, useCall } from "@/lib/call/store"
+import { usePeer } from "@/lib/chat/store"
 
 /**
  * Incoming-call screen (UI-SPEC section 3): Mode A identity with Decline and Accept. There is no
@@ -14,6 +15,8 @@ import { callStore, useCall } from "@/lib/call/store"
  */
 export function IncomingCall() {
   const call = useCall()
+  // The caller's shared photo (QT-5zd-photo-calls), through the narrow hook (no re-render per message).
+  const peerPhotoId = usePeer()?.photoId ?? null
   const open = call.phase === "ringing-in"
   const AcceptIcon = call.kind === "video" ? VideoCameraIcon : PhoneIcon
 
@@ -23,6 +26,7 @@ export function IncomingCall() {
         <DialogTitle className="sr-only">Incoming call from {call.peerName}</DialogTitle>
         <CallIdentity
           name={call.peerName}
+          photoId={peerPhotoId}
           status={call.kind === "video" ? "Incoming video call" : "Incoming voice call"}
         />
         <div className="flex-1" />

@@ -106,6 +106,27 @@ describe("service worker push (NOTF-01, D-14, Pitfall 3)", () => {
   })
 })
 
+describe("service worker push icon (QT-5zd-push-icon, T-5zd-05)", () => {
+  it("shows the sender's avatar-sm crop as the icon for a valid 22-character id", async () => {
+    const { self, listeners } = loadSw()
+    await dispatch(listeners, "push", { data: pushData({ t: "chat", title: "A", body: "b", avatar: "AbCdEfGhIjKlMnOpQrStUv" }) })
+    expect(self.registration.showNotification).toHaveBeenCalledWith(
+      "A",
+      expect.objectContaining({ icon: "/media/AbCdEfGhIjKlMnOpQrStUv/avatar-sm", badge: "/icons/badge-96.png" }),
+    )
+  })
+
+  it.each([
+    ["a traversal string", "../../api/logout"],
+    ["a 23-character id", "AbCdEfGhIjKlMnOpQrStUvW"],
+    ["a number", 12345],
+  ])("keeps the app icon for %s", async (_name, avatar) => {
+    const { self, listeners } = loadSw()
+    await dispatch(listeners, "push", { data: pushData({ t: "call", title: "A", body: "b", avatar }) })
+    expect(self.registration.showNotification).toHaveBeenCalledWith("A", expect.objectContaining({ icon: "/icons/icon-192.png" }))
+  })
+})
+
 describe("service worker call pushes (D-09, D-12)", () => {
   const callId = "0b9d3c4e-6f1a-4c2b-9d8e-7a6b5c4d3e2f"
 

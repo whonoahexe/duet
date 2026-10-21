@@ -11,6 +11,10 @@ self.addEventListener("activate", (event) => {
 
 // A call id as the server sends it (lowercase uuid). Anything else never reaches a URL (T-03-10).
 const CALL_ID = /^[0-9a-f-]{36}$/
+// A profile photo attachment id (22 base64url characters, QT-5zd-push-icon). Like T-03-10, the SW
+// builds the icon URL itself from a validated id and never takes a URL from the payload (T-5zd-05).
+// Chrome fetches the icon same-origin with the session cookie; a failed fetch only drops the icon.
+const ATTACHMENT_ID = /^[A-Za-z0-9_-]{22}$/
 
 // Every push shows a notification on every path (iOS revokes push permission for pushes that show
 // nothing, Pitfall 3). "Don't notify while viewing" is decided on the server, never here.
@@ -28,6 +32,8 @@ self.addEventListener("push", (event) => {
   const body = typeof d.body === "string" && d.body ? d.body : "New message"
   const isCall = d.t === "call" || d.t === "call-missed"
   const tag = isCall ? "duet-call" : d.t === "test" ? "duet-test" : "duet-chat"
+  const icon =
+    typeof d.avatar === "string" && ATTACHMENT_ID.test(d.avatar) ? "/media/" + d.avatar + "/avatar-sm" : "/icons/icon-192.png"
   let data = { url: "/" }
   if (isCall && typeof d.callId === "string" && CALL_ID.test(d.callId)) {
     data = { url: (d.t === "call" ? "/?call=" : "/?missed=") + d.callId, callId: d.callId }
@@ -47,7 +53,7 @@ self.addEventListener("push", (event) => {
         body,
         tag,
         renotify: true,
-        icon: "/icons/icon-192.png",
+        icon,
         // Android status-bar glyph: white duet heart on transparent (iOS ignores it).
         badge: "/icons/badge-96.png",
         data,

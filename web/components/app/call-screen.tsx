@@ -10,14 +10,15 @@ import {
   WarningCircleIcon,
   WifiLowIcon,
 } from "@phosphor-icons/react"
-import { formatCallDuration } from "@duet/shared"
+import { avatarUrl, formatCallDuration } from "@duet/shared"
 import { initials } from "@/components/app/login-tiles"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { PersonAvatar } from "@/components/app/person-avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { useBackClose } from "@/lib/back-close"
 import { callStore, useCall, type CallState, type PipCorner } from "@/lib/call/store"
+import { usePeer } from "@/lib/chat/store"
 import { cn } from "@/lib/utils"
 
 /** Full-screen dialog layout shared by the call and incoming screens (the Phase 2 viewer's classes). */
@@ -27,13 +28,14 @@ export const FULL_SCREEN_DIALOG =
 /** Solid destructive (Hang up / Decline): the glyph is text-background for contrast (UI-SPEC Color). */
 export const SOLID_DESTRUCTIVE = "bg-destructive text-background hover:bg-destructive/80 dark:bg-destructive dark:hover:bg-destructive/80"
 
-/** Mode A identity block (D-04): 96px initials avatar, 20px name, 14px status line. */
-export function CallIdentity({ name, status }: { name: string; status: ReactNode }) {
+/**
+ * Mode A identity block (D-04): 96px avatar (the shared profile photo, initials without one,
+ * QT-5zd-photo-calls), 20px name, 14px status line.
+ */
+export function CallIdentity({ name, photoId, status }: { name: string; photoId: string | null; status: ReactNode }) {
   return (
     <div className="flex flex-col items-center px-6 pt-[calc(4rem+env(safe-area-inset-top))]">
-      <Avatar className="size-24">
-        <AvatarFallback className="text-xl font-medium">{initials(name)}</AvatarFallback>
-      </Avatar>
+      <PersonAvatar name={name} photoId={photoId} size="lg" className="size-24" fallbackClassName="text-xl font-medium" />
       <span className="mt-6 max-w-full truncate text-xl font-medium tracking-tight">{name}</span>
       {/* The timer is not live (it would be read every second); the screen's own region announces changes. */}
       <span data-testid="call-status" aria-live="off" className="mt-1 text-sm text-muted-foreground tabular-nums">
@@ -358,6 +360,8 @@ function useFocusInside(): [boolean, { onFocus: (e: React.FocusEvent) => void; o
  */
 export function CallScreen() {
   const call = useCall()
+  // The narrow hook: this always-mounted screen must not re-render on every chat message.
+  const peerPhotoId = usePeer()?.photoId ?? null
   const elapsed = useElapsed(call.phase === "live" ? call.mediaStartedAt : null)
   const [remoteFrame, onRemoteFrame] = useRemoteFrame(call.peerCamera)
   const ended = call.phase === "ended"
@@ -455,7 +459,7 @@ export function CallScreen() {
               </div>
             )}
             <div data-testid="call-avatar" className="relative z-10">
-              <CallIdentity name={call.peerName} status={status} />
+              <CallIdentity name={call.peerName} photoId={peerPhotoId} status={status} />
             </div>
             <div className="flex-1" />
           </>
@@ -466,6 +470,9 @@ export function CallScreen() {
               <StreamVideo stream={call.localVideo} className={cn("size-full object-cover", mirrored)} />
             ) : modeB ? (
               remoteVideo
+            ) : peerPhotoId ? (
+              // eslint-disable-next-line @next/next/no-img-element -- static export; media is auth-gated
+              <img src={avatarUrl(peerPhotoId, "lg")} alt="" className="size-full object-cover" data-testid="pip-peer-photo" />
             ) : (
               <span className="flex size-full items-center justify-center text-xl font-medium">{initials(call.peerName)}</span>
             )}

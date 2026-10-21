@@ -175,6 +175,25 @@ describe("push on a new message (NOTF-01, D-13)", () => {
   })
 })
 
+describe("push icon (QT-5zd-push-icon)", () => {
+  it("carries the sender's photo id as avatar, and no avatar key without a photo", async () => {
+    await subscribe(aliceCookie)
+    const photoId = "AbCdEfGhIjKlMnOpQrStUv"
+    t.app.db.update(users).set({ photoId }).where(eq(users.username, "bob")).run()
+    try {
+      await message(bobCookie, "with photo")
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+      expect(payloadOf(0)).toEqual({ t: "chat", title: "Bob Test", body: "Message", avatar: photoId })
+    } finally {
+      t.app.db.update(users).set({ photoId: null }).where(eq(users.username, "bob")).run()
+    }
+    await aliceReadsAll()
+    await message(bobCookie, "without photo")
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+    expect(payloadOf(1)).not.toHaveProperty("avatar")
+  })
+})
+
 describe("buildPayload (D-13 truncation, 4 KB cap)", () => {
   it("cuts a long body to 120 graphemes + …", () => {
     const p = JSON.parse(buildPayload("chat", "T", "x".repeat(300))) as { body: string }
