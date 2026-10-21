@@ -11,7 +11,7 @@ import { ApiError, apiGet } from "@/lib/api"
 
 type State = { kind: "loading" } | { kind: "unauth" } | { kind: "error" } | { kind: "ready"; me: MeResponse }
 
-/** Hidden, login-gated call test (D-12 adapted by D-16). Reached via the header menu's "Call test". */
+/** Hidden, login-gated call test (D-12 adapted by D-16). Reached by typing /debug/call/ directly. */
 export default function CallTestPage() {
   const [state, setState] = useState<State>({ kind: "loading" })
 
