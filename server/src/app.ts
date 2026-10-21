@@ -18,7 +18,7 @@ import { chatRoutes } from "./chat/routes"
 import { pushRoutes } from "./push/routes"
 import { createPushSender, type PushSender, type WebPushSend } from "./push/sender"
 import { createChatEvents, type ChatEvents } from "./chat/events"
-import { messageChangedForAttachment } from "./chat/service"
+import { insertCallMessage, messageChangedForAttachment, toDtos } from "./chat/service"
 import { loadMediaKey } from "./media/crypto"
 import { encryptMediaAtRest } from "./media/migrate"
 import { createMediaProcessor, type MediaProcessor } from "./media/process"
@@ -150,6 +150,13 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
     inviteLimit: config.CALL_INVITE_LIMIT,
     callerAbsentMs: deps.callTimers?.callerAbsentMs,
     absentGraceMs: deps.callTimers?.absentGraceMs,
+    // QT-nw9-call-lines: every chat-worthy call end becomes one stored "call" line on both phones.
+    // Never chatEvents (T-nw9-04): a missed ring already has its own call-missed push.
+    onEnded(ended) {
+      const row = insertCallMessage(db, ended)
+      app.hub.broadcast({ t: "msg", message: toDtos(db, [row])[0] })
+      app.log.info({ evt: "call_line", callId: ended.id, outcome: ended.outcome })
+    },
   })
   hub.setCallHooks(calls)
   app.decorate("calls", calls)

@@ -17,6 +17,36 @@ export type CallKind = z.infer<typeof CallKind>
 export const CallEndReason = z.enum(["declined", "no-answer", "cancelled", "hangup", "dropped", "busy", "failed"])
 export type CallEndReason = z.infer<typeof CallEndReason>
 
+/**
+ * How a call ended, as the chat line tells it (QT-nw9-call-lines): completed (answered, then hung
+ * up), missed (rang out or the caller cancelled), declined, dropped (answered, then lost), failed (the
+ * callee's Accept failed, WR-08).
+ */
+export const CallOutcome = z.enum(["completed", "missed", "declined", "dropped", "failed"])
+export type CallOutcome = z.infer<typeof CallOutcome>
+
+/**
+ * The chat-worthy outcome of a call that ended for `reason`, or null when it leaves no line.
+ * An answered call is completed after a hangup and dropped after anything else. A ring is missed when
+ * it was cancelled or timed out, declined or failed (WR-08: the callee's Accept failed) as such; a ring
+ * that ended dropped (WR-09: the caller reloaded, the replacing invite gets its own line) or busy
+ * leaves nothing.
+ */
+export function callOutcome(answered: boolean, reason: CallEndReason): CallOutcome | null {
+  if (answered) return reason === "hangup" ? "completed" : "dropped"
+  switch (reason) {
+    case "cancelled":
+    case "no-answer":
+      return "missed"
+    case "declined":
+      return "declined"
+    case "failed":
+      return "failed"
+    default:
+      return null
+  }
+}
+
 /** Why one ringing device stops (D-11): another device of the same person answered first. */
 export const StopRingingReason = z.enum(["answered-elsewhere"])
 export type StopRingingReason = z.infer<typeof StopRingingReason>

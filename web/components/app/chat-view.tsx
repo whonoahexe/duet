@@ -2,12 +2,21 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { ArrowDownIcon, ChatCircleIcon, CloudSlashIcon } from "@phosphor-icons/react"
-import { messageLabel, type MessageDto, type ReactionDto, type ReplyPreview, type UserSummary } from "@duet/shared"
+import {
+  callLineText,
+  countsAsUnread,
+  messageLabel,
+  type MessageDto,
+  type ReactionDto,
+  type ReplyPreview,
+  type UserSummary,
+} from "@duet/shared"
 import type { AlbumTile } from "@/components/app/album"
 import type { VoiceNoteProps } from "@/components/app/voice-note"
 import { Composer } from "@/components/app/composer"
 import { MessageGroupRow, type GroupItem, type RowStatus } from "@/components/app/message-row"
 import { localReplyPreview } from "@/components/app/quote-block"
+import { SystemLine } from "@/components/app/system-line"
 import { TypingIndicator } from "@/components/app/typing-indicator"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -53,12 +62,15 @@ interface DisplayMessage {
   voice: VoiceNoteProps | null
   /** Retry of a failed send (text outbox or album). */
   retry: (() => void) | null
+  /** A confirmed call or reminder line (QT-nw9-call-lines): rendered as a centred SystemLine. */
+  line: MessageDto | null
 }
 
 type ListItem =
   | { kind: "day"; key: string; label: string }
   | { kind: "time"; key: string; label: string }
   | { kind: "group"; key: string; senderId: string; messages: DisplayMessage[] }
+  | { kind: "system"; key: string; message: MessageDto }
 
 function startOfDay(ts: number): number {
   const d = new Date(ts)
@@ -85,7 +97,10 @@ function timeLabel(ts: number): string {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(ts)
 }
 
-/** Day markers, 15-minute time markers and 2-minute sender groups, in display order. */
+/**
+ * Day markers, 15-minute time markers and 2-minute sender groups, in display order. A call or
+ * reminder line is its own item and never joins a bubble group.
+ */
 function buildItems(messages: DisplayMessage[], now: number): ListItem[] {
   const items: ListItem[] = []
   let prev: DisplayMessage | null = null
@@ -98,6 +113,12 @@ function buildItems(messages: DisplayMessage[], now: number): ListItem[] {
     } else if (m.createdAt - prev.createdAt > TIME_MARKER_GAP_MS) {
       items.push({ kind: "time", key: `time-${m.id}`, label: timeLabel(m.createdAt) })
       marker = true
+    }
+    if (m.line) {
+      items.push({ kind: "system", key: `system-${m.id}`, message: m.line })
+      group = null
+      prev = m
+      continue
     }
     if (!marker && group && prev && group.senderId === m.senderId && m.createdAt - prev.createdAt < GROUP_GAP_MS) {
       group.messages.push(m)
@@ -180,7 +201,8 @@ function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) 
 
   useEffect(() => {
     if (chat.initial !== "ready") return
-    const incoming = chat.messages.filter((m) => m.senderId === peer.id)
+    // QT-nw9-call-unread: the peer's messages and missed calls count; other system lines never do.
+    const incoming = chat.messages.filter((m) => countsAsUnread(m, chat.me?.id))
     const maxSeq = incoming.length > 0 ? incoming[incoming.length - 1].seq : 0
     if (lastSeenRef.current === null) {
       lastSeenRef.current = maxSeq
@@ -189,9 +211,11 @@ function ScrollFollower({ chat, peer }: { chat: ChatState; peer: UserSummary }) 
     const fresh: MessageDto[] = incoming.filter((m) => m.seq > (lastSeenRef.current ?? 0))
     if (fresh.length === 0) return
     lastSeenRef.current = maxSeq
-    if (liveRef.current) liveRef.current.textContent = `${peer.displayName}: ${messageLabel(fresh[fresh.length - 1])}`
+    const last = fresh[fresh.length - 1]
+    const label = last.kind === "call" && last.call ? callLineText(last.call, last.senderId, chat.me?.id).text : messageLabel(last)
+    if (liveRef.current) liveRef.current.textContent = `${peer.displayName}: ${label}`
     if (awayRef.current) chatStore.bumpNewWhileAway(fresh.length)
-  }, [chat.initial, chat.messages, peer.id, peer.displayName])
+  }, [chat.initial, chat.messages, chat.me?.id, peer.displayName])
 
   // Back at the bottom: nothing new is unseen.
   useEffect(() => {
@@ -326,8 +350,9 @@ function ReadTracker({
         for (const itemId of latest.current.visibleMessageIds) {
           for (const m of latest.current.peerSeqsByItemId.get(itemId) ?? []) {
             if (m.seq <= max) continue
-            // The bubble itself (the scroller item that wraps a group also carries data-message-id).
-            const el = vp.querySelector<HTMLElement>(`[data-slot="bubble"][data-seq="${m.seq}"]`)
+            // The bubble or system line itself (the scroller item that wraps a group also carries
+            // data-message-id, but never data-seq).
+            const el = vp.querySelector<HTMLElement>(`[data-seq="${m.seq}"]`)
             if (!el) continue
             const r = el.getBoundingClientRect()
             if (r.height > 0 && r.bottom > box.top && r.top < box.bottom) max = m.seq
@@ -443,6 +468,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
       media: null,
       voice: null,
       retry: () => chatStore.retry(p.id),
+      line: null,
     })),
     ...chat.media.map((e) => ({
       id: e.id,
@@ -474,6 +500,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
         }),
       ),
       retry: () => chatStore.retryMedia(e.id),
+      line: null,
     })),
   ].sort((a, b) => a.createdAt - b.createdAt)
   const display: DisplayMessage[] = [
@@ -514,6 +541,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
             )
           : null,
       retry: null,
+      line: m.kind === "call" || m.kind === "reminder" ? m : null,
     })),
     ...pendingDisplay,
   ]
@@ -521,7 +549,7 @@ export function ChatView({ peer }: { peer: UserSummary }) {
   // Your most recent message carries the status line (D-03): no seq -> "Sending…", seq -> "Sent".
   let latestMine: DisplayMessage | null = null
   for (let i = display.length - 1; i >= 0; i--) {
-    if (display[i].senderId === meId) {
+    if (display[i].senderId === meId && !display[i].line) {
       latestMine = display[i]
       break
     }
@@ -559,6 +587,16 @@ export function ChatView({ peer }: { peer: UserSummary }) {
   const peerSeqsByItemId = new Map<string, { seq: number }[]>()
   let latestPeerSeq = 0
   for (const item of items) {
+    if (item.kind === "system") {
+      // A missed call counts as unread, so it is marked read once it is on screen.
+      const m = item.message
+      itemIdBySeq.set(m.seq, m.id)
+      if (m.senderId === peer.id) {
+        peerSeqsByItemId.set(m.id, [{ seq: m.seq }])
+        latestPeerSeq = Math.max(latestPeerSeq, m.seq)
+      }
+      continue
+    }
     if (item.kind !== "group") continue
     const itemId = item.messages[0].id
     for (const m of item.messages) {
@@ -573,6 +611,8 @@ export function ChatView({ peer }: { peer: UserSummary }) {
     }
   }
   const typing = chat.typingUntil !== null
+  const names: Record<string, string> = { [peer.id]: peer.displayName }
+  if (chat.me) names[chat.me.id] = chat.me.displayName
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -616,6 +656,10 @@ export function ChatView({ peer }: { peer: UserSummary }) {
                         meId={meId ?? null}
                         peerName={peer.displayName}
                       />
+                    </MessageScrollerItem>
+                  ) : item.kind === "system" ? (
+                    <MessageScrollerItem key={item.key} messageId={item.message.id}>
+                      <SystemLine message={item.message} meId={meId ?? null} names={names} />
                     </MessageScrollerItem>
                   ) : (
                     <MessageScrollerItem key={item.key}>

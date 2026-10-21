@@ -40,6 +40,8 @@ function msg(seq: number, patch: Partial<MessageDto> = {}): MessageDto {
     replyTo: null,
     attachments: [],
     reactions: [],
+    call: null,
+    reminder: null,
     ...patch,
   }
 }

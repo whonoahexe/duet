@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm"
 import {
   REPLY_SNIPPET_MAX_GRAPHEMES,
@@ -11,6 +12,7 @@ import {
   type ReplyPreview,
   type SendMessageBody,
 } from "@duet/shared"
+import type { EndedCall } from "../calls/registry"
 import type { Db } from "../db/client"
 import { attachments, messages, reactions, readState, users } from "../db/schema"
 
@@ -48,6 +50,61 @@ export function nextUpdatedSeq(tx: DbOrTx): number {
   return currentCursor(tx) + 1
 }
 
+/** Server-written system lines (QT-nw9-call-lines, QT-nw9-reminder-fire). */
+function isSystemKind(kind: MessageRow["kind"]): boolean {
+  return kind === "call" || kind === "reminder"
+}
+
+/**
+ * Store the chat line of a call that just ended (QT-nw9-call-lines). Server-internal only: no client
+ * body can produce kind "call" (T-nw9-01). The sender is the caller and createdAt is the end time.
+ */
+export function insertCallMessage(db: Db, ended: EndedCall): MessageRow {
+  return db.transaction((tx) =>
+    tx
+      .insert(messages)
+      .values({
+        id: randomUUID(),
+        senderId: ended.callerId,
+        kind: "call",
+        body: null,
+        callKind: ended.kind,
+        callOutcome: ended.outcome,
+        callDurationMs: ended.durationMs,
+        createdAt: new Date(),
+        updatedSeq: nextUpdatedSeq(tx),
+      })
+      .returning()
+      .get(),
+  )
+}
+
+/**
+ * Store the chat line of a reminder that just fired (QT-nw9-reminder-fire). Server-internal only
+ * (T-nw9-01). The sender is the reminder's creator and the body is its title.
+ */
+export function insertReminderMessage(
+  db: Db,
+  r: { creatorId: string; title: string; forUserId: string | null; leadMinutes: number | null },
+): MessageRow {
+  return db.transaction((tx) =>
+    tx
+      .insert(messages)
+      .values({
+        id: randomUUID(),
+        senderId: r.creatorId,
+        kind: "reminder",
+        body: r.title,
+        reminderForUserId: r.forUserId,
+        reminderLeadMin: r.leadMinutes,
+        createdAt: new Date(),
+        updatedSeq: nextUpdatedSeq(tx),
+      })
+      .returning()
+      .get(),
+  )
+}
+
 /**
  * Idempotent send (CHAT-01, CHAT-04). One synchronous transaction: a replayed id from the same
  * sender returns the stored row unchanged (created false); an id owned by the other person is a 409
@@ -75,8 +132,13 @@ export function sendMessage(
     }
     const replyToSeq = input.replyToSeq ?? null
     if (replyToSeq !== null) {
-      const parent = tx.select({ seq: messages.seq }).from(messages).where(eq(messages.seq, replyToSeq)).get()
-      if (!parent) throw new ChatError("bad_reply", 400)
+      const parent = tx
+        .select({ seq: messages.seq, kind: messages.kind })
+        .from(messages)
+        .where(eq(messages.seq, replyToSeq))
+        .get()
+      // T-nw9-02: a call or reminder line is never replied to.
+      if (!parent || isSystemKind(parent.kind)) throw new ChatError("bad_reply", 400)
     }
     const attachmentIds = input.attachmentIds ?? []
     let voice = false
@@ -193,7 +255,8 @@ export function setReaction(
 ): { row: MessageRow; changed: boolean } {
   return db.transaction((tx) => {
     const msg = tx.select().from(messages).where(eq(messages.seq, seq)).get()
-    if (!msg) throw new ChatError("not_found", 404)
+    // T-nw9-02: a call or reminder line takes no reactions.
+    if (!msg || isSystemKind(msg.kind)) throw new ChatError("not_found", 404)
     const mine = and(eq(reactions.messageSeq, seq), eq(reactions.userId, userId))
     const existing = tx.select({ emoji: reactions.emoji }).from(reactions).where(mine).get()
 
@@ -338,6 +401,11 @@ export function toDtos(db: DbOrTx, rows: MessageRow[]): MessageDto[] {
     replyTo: r.replyToSeq !== null ? (previews.get(r.replyToSeq) ?? null) : null,
     attachments: attsBySeq.get(r.seq) ?? [],
     reactions: reactsBySeq.get(r.seq) ?? [],
+    call:
+      r.kind === "call" && r.callKind !== null && r.callOutcome !== null
+        ? { kind: r.callKind, outcome: r.callOutcome, durationMs: r.callDurationMs ?? 0 }
+        : null,
+    reminder: r.kind === "reminder" ? { forUserId: r.reminderForUserId, leadMinutes: r.reminderLeadMin } : null,
   }))
 }
 

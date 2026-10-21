@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { CallKind, CallOutcome } from "./call"
 import { codePointLength, isBlankBody } from "./chat-logic"
 
 /**
@@ -18,7 +19,11 @@ export const PAGE_SIZE_MAX = 200
 /** Most changes one GET /api/sync returns; more sets hasMore and the client reloads instead. */
 export const SYNC_MAX = 500
 
-export const MessageKind = z.enum(["text", "media", "voice"])
+/**
+ * "call" and "reminder" are system lines written only by the server (QT-nw9-call-lines,
+ * QT-nw9-reminder-fire): a centred line in the chat, never a bubble, and never replied or reacted to.
+ */
+export const MessageKind = z.enum(["text", "media", "voice", "call", "reminder"])
 export type MessageKind = z.infer<typeof MessageKind>
 
 export const AttachmentKind = z.enum(["image", "video", "audio"])
@@ -87,6 +92,27 @@ export const ReplyPreview = z.object({
 })
 export type ReplyPreview = z.infer<typeof ReplyPreview>
 
+/** A call line's call (QT-nw9-call-lines). Its sender is the caller; createdAt is when it ended. */
+export const CallLine = z.object({
+  kind: CallKind,
+  outcome: CallOutcome,
+  /** Connected time; 0 when the call was never answered. */
+  durationMs: z.number().int().min(0),
+})
+export type CallLine = z.infer<typeof CallLine>
+
+/**
+ * A reminder line (QT-nw9-reminder-fire). The title is the message's `body` and its sender is the
+ * reminder's creator.
+ */
+export const ReminderLine = z.object({
+  /** Who it was for; null means both people. */
+  forUserId: z.uuid().nullable(),
+  /** The heads-up minutes of this firing, null for the reminder itself. */
+  leadMinutes: z.number().int().positive().nullable(),
+})
+export type ReminderLine = z.infer<typeof ReminderLine>
+
 export const MessageDto = z.object({
   /** Total order and history paging key. */
   seq: z.number().int().positive(),
@@ -103,6 +129,10 @@ export const MessageDto = z.object({
   replyTo: ReplyPreview.nullable(),
   attachments: z.array(AttachmentDto),
   reactions: z.array(ReactionDto),
+  /** Set for kind "call" only. */
+  call: CallLine.nullable(),
+  /** Set for kind "reminder" only (the title is `body`, the sender is the creator). */
+  reminder: ReminderLine.nullable(),
 })
 export type MessageDto = z.infer<typeof MessageDto>
 

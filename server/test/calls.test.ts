@@ -46,11 +46,25 @@ async function nextOf(c: WsTestClient, t: string, timeoutMs = 1000): Promise<WsF
   }
 }
 
+/**
+ * The next frame that is not a chat { t: "msg" }: every call end now also broadcasts its stored call
+ * line (QT-nw9-call-lines), which may still be queued when the next call starts.
+ */
+async function nextCallFrame(c: WsTestClient, timeoutMs = 1000): Promise<WsFrame> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const left = deadline - Date.now()
+    if (left <= 0) throw new Error(`no non-msg frame within ${timeoutMs} ms`)
+    const f = await c.next(left)
+    if (f.t !== "msg") return f
+  }
+}
+
 /** Alice invites, Bob's socket rings. */
 async function ring(alice: Client, bob: Client, kind: "voice" | "video" = "voice"): Promise<string> {
   const callId = randomUUID()
   alice.send({ t: "call.invite", callId, kind })
-  const f = await bob.next()
+  const f = await nextCallFrame(bob)
   expect(f).toEqual({ t: "call.ring", callId, kind, from: alice.userId })
   return callId
 }

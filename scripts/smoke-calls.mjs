@@ -292,7 +292,7 @@ async function expectTracksEnded(page) {
 
 /** Ada calls Bob, Bob accepts, both go live with the same call id. */
 async function connectVoice(ada, bob) {
-  await ada.getByRole("button", { name: "Voice call" }).click()
+  await ada.getByRole("button", { name: "Voice call", exact: true }).click()
   await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
   const incoming = incomingDialog(bob, ADA)
   await incoming.waitFor({ state: "visible", timeout: 10_000 })
@@ -310,7 +310,7 @@ function toasts(page) {
 
 /** Ada starts a voice call and Bob's incoming dialog shows; returns Bob's incoming dialog. */
 async function ringBob(ada, bob) {
-  await ada.getByRole("button", { name: "Voice call" }).click()
+  await ada.getByRole("button", { name: "Voice call", exact: true }).click()
   await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
   const incoming = incomingDialog(bob, ADA)
   await incoming.waitFor({ state: "visible", timeout: 10_000 })
@@ -321,6 +321,37 @@ async function ringBob(ada, bob) {
 async function hangUpBoth(page, peer, other) {
   await callDialog(page, peer).getByRole("button", { name: "Hang up" }).click()
   await Promise.all([waitPhase(page, "idle", 5_000), waitPhase(other, "idle", 5_000)])
+}
+
+/** The chat's call/reminder system lines (QT-nw9-call-lines). Lines accumulate across scenarios. */
+function systemLines(page) {
+  return page.locator('[data-testid="system-line"]')
+}
+
+async function systemLineCount(page) {
+  return systemLines(page).count()
+}
+
+/** The last system line's text and data-missed. */
+async function lastSystemLine(page) {
+  const lines = systemLines(page)
+  const n = await lines.count()
+  if (n === 0) return { text: "", missed: null }
+  const last = lines.nth(n - 1)
+  return { text: ((await last.textContent()) ?? "").trim(), missed: await last.getAttribute("data-missed") }
+}
+
+/** Wait until `page`'s last system line text matches `re` (and data-missed, when given). */
+async function waitLastLine(page, re, timeout, missed) {
+  let last = { text: "", missed: null }
+  await until(
+    async () => {
+      last = await lastSystemLine(page)
+      return re.test(last.text) && (missed === undefined || last.missed === missed)
+    },
+    timeout,
+    () => `${page.__name}'s last system line is "${last.text}" (missed ${last.missed}), expected ${re}`,
+  )
 }
 
 /** No incoming dialog appears on `page` within `ms`. */
@@ -397,7 +428,7 @@ const scenarios = {
   async video(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bob = await openApp(ctx, BOB, ADA, opened)
-    await ada.getByRole("button", { name: "Video call" }).click()
+    await ada.getByRole("button", { name: "Video call", exact: true }).click()
     const incoming = incomingDialog(bob, ADA)
     await incoming.waitFor({ state: "visible", timeout: 10_000 })
     await incoming.getByText("Incoming video call", { exact: true }).waitFor({ state: "visible", timeout: 2_000 })
@@ -477,6 +508,17 @@ const scenarios = {
     await callDialog(ada, BOB).waitFor({ state: "hidden", timeout: 4_000 })
     await Promise.all([waitPhase(ada, "idle", 1_000), waitPhase(bob, "idle", 1_000)])
     await expectTracksEnded(ada)
+    // QT-nw9-call-lines: both chats show the call as a centred line.
+    await Promise.all([waitLastLine(ada, /^Declined/, 5_000), waitLastLine(bob, /^Declined/, 5_000)])
+    // Tapping the line calls back with the same kind: Bob rings Ada, then gives up.
+    await systemLines(bob).last().click()
+    await waitStatus(bob, ADA, /^Ringing…$/, 10_000)
+    await callDialog(bob, ADA).getByRole("button", { name: "Cancel call" }).click()
+    await Promise.all([
+      waitLastLine(ada, /^Missed voice call/, 5_000, "true"),
+      waitLastLine(bob, /^No answer/, 5_000, null),
+    ])
+    await Promise.all([waitPhase(ada, "idle", 5_000), waitPhase(bob, "idle", 5_000)])
   },
 
   /** CALL-04: Ada cancels while ringing; every incoming screen of Bob closes, with no toast. */
@@ -517,7 +559,7 @@ const scenarios = {
     await ada.route(route, (r) =>
       r.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "turn_unconfigured" }) }),
     )
-    await ada.getByRole("button", { name: "Voice call" }).click()
+    await ada.getByRole("button", { name: "Voice call", exact: true }).click()
     const screen = callDialog(ada, BOB)
     // The title span (the sr-only aria-live region carries the same words).
     await screen.locator("span", { hasText: /^Couldn't connect$/ }).waitFor({ state: "visible", timeout: 5_000 })
@@ -540,7 +582,7 @@ const scenarios = {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bob1 = await openApp(ctx, BOB, ADA, opened)
     const bob2 = await openApp(ctx, BOB, ADA, opened, { slot: 1 })
-    await ada.getByRole("button", { name: "Voice call" }).click()
+    await ada.getByRole("button", { name: "Voice call", exact: true }).click()
     const in1 = incomingDialog(bob1, ADA)
     const in2 = incomingDialog(bob2, ADA)
     await Promise.all([in1.waitFor({ state: "visible", timeout: 10_000 }), in2.waitFor({ state: "visible", timeout: 10_000 })])
@@ -560,9 +602,10 @@ const scenarios = {
   async glare(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bob = await openApp(ctx, BOB, ADA, opened)
+    const [adaLines, bobLines] = await Promise.all([systemLineCount(ada), systemLineCount(bob)])
     await Promise.all([
-      ada.getByRole("button", { name: "Voice call" }).click(),
-      bob.getByRole("button", { name: "Voice call" }).click(),
+      ada.getByRole("button", { name: "Voice call", exact: true }).click(),
+      bob.getByRole("button", { name: "Voice call", exact: true }).click(),
     ])
     await Promise.all([waitPhase(ada, "live", 30_000), waitPhase(bob, "live", 30_000)])
     const [a, b] = await Promise.all([diag(ada), diag(bob)])
@@ -570,6 +613,18 @@ const scenarios = {
     await hangUpBoth(ada, BOB, bob)
     await expectTracksEnded(ada)
     await expectTracksEnded(bob)
+    // QT-nw9-call-lines: the merged call leaves exactly one line on each page.
+    await until(
+      async () => (await systemLineCount(ada)) === adaLines + 1 && (await systemLineCount(bob)) === bobLines + 1,
+      5_000,
+      "glare did not add exactly one system line on each page",
+    )
+    await sleep(1_000)
+    const [adaAfter, bobAfter] = await Promise.all([systemLineCount(ada), systemLineCount(bob)])
+    if (adaAfter !== adaLines + 1 || bobAfter !== bobLines + 1) {
+      throw new Error(`glare added ${adaAfter - adaLines} / ${bobAfter - bobLines} system lines, expected 1 / 1`)
+    }
+    await Promise.all([waitLastLine(ada, /^Voice call · \d+:\d\d/, 1_000), waitLastLine(bob, /^Voice call · \d+:\d\d/, 1_000)])
   },
 
   /** Busy: Ada is in a call on one device; her second device's call is refused and Bob is not rung again. */
@@ -578,7 +633,7 @@ const scenarios = {
     const bob = await openApp(ctx, BOB, ADA, opened)
     const ada2 = await openApp(ctx, ADA, BOB, opened, { slot: 1 })
     await connectVoice(ada, bob)
-    await ada2.getByRole("button", { name: "Voice call" }).click()
+    await ada2.getByRole("button", { name: "Voice call", exact: true }).click()
     await toasts(ada2)
       .getByText("You're already in a call on another device.", { exact: true })
       .waitFor({ state: "visible", timeout: 10_000 })
@@ -598,7 +653,7 @@ const scenarios = {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bobContext = await loggedInContext(ctx, BOB)
     try {
-      await ada.getByRole("button", { name: "Voice call" }).click()
+      await ada.getByRole("button", { name: "Voice call", exact: true }).click()
       await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
       await sleep(1_000)
       const bob = await newAppPage(bobContext, BOB, opened)
@@ -626,7 +681,7 @@ const scenarios = {
     const ada = await openApp(ctx, ADA, BOB, opened)
     const bobContext = await loggedInContext(ctx, BOB)
     try {
-      await ada.getByRole("button", { name: "Voice call" }).click()
+      await ada.getByRole("button", { name: "Voice call", exact: true }).click()
       await waitStatus(ada, BOB, /^Ringing…$/, 10_000)
       const { callId } = await diag(ada)
       if (!callId) throw new Error("Ada's ringing call has no call id")
@@ -738,7 +793,7 @@ const scenarios = {
   async "camera-denied"(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened, { denyCamera: true })
     const bob = await openApp(ctx, BOB, ADA, opened)
-    await ada.getByRole("button", { name: "Video call" }).click()
+    await ada.getByRole("button", { name: "Video call", exact: true }).click()
     const toast = toasts(ada).filter({ hasText: "duet can't use the camera." })
     await toast.waitFor({ state: "visible", timeout: 5_000 })
     const incoming = incomingDialog(bob, ADA)
@@ -948,7 +1003,7 @@ const scenarios = {
   async "mic-denied"(ctx, opened) {
     const ada = await openApp(ctx, ADA, BOB, opened, { denyMic: true })
     const bob = await openApp(ctx, BOB, ADA, opened)
-    await ada.getByRole("button", { name: "Voice call" }).click()
+    await ada.getByRole("button", { name: "Voice call", exact: true }).click()
     const drawer = ada.getByTestId("permission-drawer")
     await drawer.getByText("Allow the microphone", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
     await drawer.getByRole("button", { name: "Close" }).waitFor({ state: "visible", timeout: 1_000 })

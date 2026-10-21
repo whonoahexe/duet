@@ -22,6 +22,13 @@
       "when": 1792537505136,
       "tag": "0002_profile_photo",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792584599095,
+      "tag": "0003_calls_reminders",
+      "breakpoints": true
     }
   ]
 }

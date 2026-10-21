@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ServerFrame } from "@duet/shared"
-import { createCallRegistry, RECENT_CALL_MAX, type CallRegistryOptions, type CallTransport } from "../src/calls/registry"
+import { createCallRegistry, RECENT_CALL_MAX, type CallRegistryOptions, type CallTransport, type EndedCall } from "../src/calls/registry"
 import { ConfigError, loadConfig } from "../src/config"
 
 const ALICE = "0b6f4a8e-1d2c-4b3a-9f8e-7d6c5b4a3921"
@@ -688,6 +688,130 @@ describe("call logs: who, when, why (261020-oj7)", () => {
     h.close(y, 1000)
     expect(of("call_ws_close")).toEqual([])
     expect(of("call_ws_open")).toEqual([])
+    h.registry.close()
+  })
+})
+
+describe("onEnded: one chat line per call (QT-nw9-call-lines)", () => {
+  function withLines(opts: Partial<CallRegistryOptions> = {}) {
+    let clock = 1_000_000
+    const ended: EndedCall[] = []
+    const h = harness({ now: () => clock, onEnded: (e) => ended.push(e), ...opts })
+    return {
+      h,
+      ended,
+      tick(ms: number) {
+        clock += ms
+        vi.advanceTimersByTime(ms)
+      },
+    }
+  }
+
+  it("decline: declined with duration 0", () => {
+    const { h, ended } = withLines()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a, "video")
+    h.frame(b, { t: "call.decline", callId })
+    expect(ended).toEqual([{ id: callId, kind: "video", callerId: ALICE, calleeId: BOB, outcome: "declined", durationMs: 0 }])
+    h.registry.close()
+  })
+
+  it("ring timeout and caller cancel: missed", () => {
+    const { h, ended, tick } = withLines({ ringTimeoutMs: 3000 })
+    const a = h.attach(ALICE)
+    h.attach(BOB)
+    const x = h.invite(a)
+    tick(3000)
+    const y = h.invite(a)
+    h.frame(a, { t: "call.end", callId: y })
+    expect(ended.map((e) => [e.id, e.outcome, e.durationMs])).toEqual([
+      [x, "missed", 0],
+      [y, "missed", 0],
+    ])
+    h.registry.close()
+  })
+
+  it("accept, 224 s, hangup: completed with 224000", () => {
+    const { h, ended, tick } = withLines()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    tick(2000)
+    h.frame(b, { t: "call.accept", callId })
+    tick(224_000)
+    h.frame(b, { t: "call.end", callId })
+    expect(ended).toEqual([{ id: callId, kind: "voice", callerId: ALICE, calleeId: BOB, outcome: "completed", durationMs: 224_000 }])
+    h.registry.close()
+  })
+
+  it("accept, then the absence grace: dropped with the active duration", () => {
+    const { h, ended, tick } = withLines({ absentGraceMs: 35_000 })
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.frame(b, { t: "call.accept", callId })
+    tick(10_000)
+    h.close(b)
+    tick(35_000)
+    expect(ended).toEqual([{ id: callId, kind: "voice", callerId: ALICE, calleeId: BOB, outcome: "dropped", durationMs: 45_000 }])
+    h.registry.close()
+  })
+
+  it("WR-08 failed decline: failed", () => {
+    const { h, ended } = withLines()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    h.frame(b, { t: "call.decline", callId, reason: "failed" })
+    expect(ended.map((e) => e.outcome)).toEqual(["failed"])
+    h.registry.close()
+  })
+
+  it("glare, then hangup: one call with the ringing call's id", () => {
+    const { h, ended, tick } = withLines()
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const x = h.invite(a, "voice")
+    h.invite(b, "video")
+    tick(5000)
+    h.frame(a, { t: "call.end", callId: x })
+    expect(ended).toEqual([{ id: x, kind: "voice", callerId: ALICE, calleeId: BOB, outcome: "completed", durationMs: 5000 }])
+    h.registry.close()
+  })
+
+  it("WR-09: a ring abandoned by a caller reload leaves no line; busy leaves none either", () => {
+    const { h, ended } = withLines()
+    const a = h.attach(ALICE, "session-alice")
+    const b = h.attach(BOB)
+    const x = h.invite(a)
+    h.close(a)
+    const a2 = h.attach(ALICE, "session-alice")
+    const y = h.invite(a2)
+    const a3 = h.attach(ALICE)
+    h.invite(a3)
+    expect(ended).toEqual([])
+    h.frame(b, { t: "call.decline", callId: y })
+    expect(ended.map((e) => e.id)).toEqual([y])
+    expect(ended.some((e) => e.id === x)).toBe(false)
+    h.registry.close()
+  })
+
+  it("an onEnded that throws is logged as call_line_failed and the call.ended frames were still sent", () => {
+    const lines: Array<Record<string, unknown>> = []
+    const h = harness({
+      log: { info: (o) => lines.push(o as Record<string, unknown>) },
+      onEnded: () => {
+        throw new Error("db gone")
+      },
+    })
+    const a = h.attach(ALICE)
+    const b = h.attach(BOB)
+    const callId = h.invite(a)
+    expect(() => h.frame(b, { t: "call.decline", callId })).not.toThrow()
+    expect(h.to(a, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "declined" }])
+    expect(h.to(b, "call.ended")).toEqual([{ t: "call.ended", callId, reason: "declined" }])
+    expect(lines.filter((l) => l.evt === "call_line_failed")).toEqual([{ evt: "call_line_failed", callId }])
     h.registry.close()
   })
 })

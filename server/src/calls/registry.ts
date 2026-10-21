@@ -1,9 +1,11 @@
 import {
+  callOutcome,
   callRoom,
   CALL_RING_TIMEOUT_MS,
   type CallClientFrame,
   type CallEndReason,
   type CallKind,
+  type CallOutcome,
   type CallStatusResponse,
   type ServerFrame,
 } from "@duet/shared"
@@ -47,6 +49,17 @@ export interface CallPush {
   notifyMissed(call: CallPushCall): void
 }
 
+/** A call that ended with a chat-worthy outcome (QT-nw9-call-lines): what its chat line records. */
+export interface EndedCall {
+  id: string
+  kind: CallKind
+  callerId: string
+  calleeId: string
+  outcome: CallOutcome
+  /** Connected time, 0 when the call was never answered. */
+  durationMs: number
+}
+
 export interface CallRegistry {
   /** One call.* frame from an authenticated connection. */
   onFrame(connId: string, userId: string, frame: CallClientFrame): void
@@ -85,6 +98,11 @@ export interface CallRegistryOptions {
   absentGraceMs?: number
   /** T-03-03: ringing invites per person per INVITE_WINDOW_MS. Default INVITE_LIMIT. */
   inviteLimit?: number
+  /**
+   * QT-nw9-call-lines: a call ended with a chat-worthy outcome; called once per call from end(), after
+   * the call.ended frames. Must never throw (a throw is logged as call_line_failed and swallowed).
+   */
+  onEnded?: (ended: EndedCall) => void
 }
 
 interface Call {
@@ -156,6 +174,7 @@ export function createCallRegistry({
   callerAbsentMs = CALLER_ABSENT_MS,
   absentGraceMs = ABSENT_GRACE_MS,
   inviteLimit = INVITE_LIMIT,
+  onEnded,
 }: CallRegistryOptions): CallRegistry {
   let current: Call | null = null
   const recent = new Map<string, RecentCall>()
@@ -263,6 +282,16 @@ export function createCallRegistry({
     // D-12: only a ring nobody answered leaves a missed call (never declined, busy, failed or answered).
     if (call.status === "ringing" && (reason === "cancelled" || reason === "no-answer")) {
       push?.notifyMissed({ id: call.id, kind: call.kind, callerId: call.callerId, calleeId: call.calleeId })
+    }
+    // QT-nw9-call-lines / T-nw9-08: one chat line per call; a failing writer never breaks call handling.
+    const outcome = callOutcome(call.status === "active", reason)
+    if (outcome !== null && onEnded) {
+      const durationMs = call.activeAt !== undefined ? at - call.activeAt : 0
+      try {
+        onEnded({ id: call.id, kind: call.kind, callerId: call.callerId, calleeId: call.calleeId, outcome, durationMs })
+      } catch {
+        log.info({ evt: "call_line_failed", callId: call.id })
+      }
     }
     log.info({
       evt: "call_end",

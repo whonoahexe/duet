@@ -52,6 +52,8 @@ export function mediaLabel(kinds: AttachmentKind[], { emoji }: { emoji: boolean 
 export function messageTypeLabel(m: Pick<MessageDto, "kind" | "attachments">): string {
   if (m.kind === "text") return "Message"
   if (m.kind === "voice") return "Voice note"
+  if (m.kind === "call") return "Call"
+  if (m.kind === "reminder") return "Reminder"
   return (
     mediaLabel(
       m.attachments.map((a) => a.kind),
@@ -67,6 +69,8 @@ export function messageTypeLabel(m: Pick<MessageDto, "kind" | "attachments">): s
 export function messageLabel(m: Pick<MessageDto, "kind" | "body" | "attachments">): string {
   if (m.kind === "text") return m.body ?? ""
   if (m.kind === "voice") return "🎤 Voice note"
+  if (m.kind === "call") return "Call"
+  if (m.kind === "reminder") return "Reminder"
   const label = mediaLabel(
     m.attachments.map((a) => a.kind),
     { emoji: true },

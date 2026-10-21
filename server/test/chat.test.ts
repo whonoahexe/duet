@@ -75,6 +75,8 @@ describe("POST /api/messages (CHAT-01, CHAT-04)", () => {
       replyTo: null,
       attachments: [],
       reactions: [],
+      call: null,
+      reminder: null,
     })
   })
 

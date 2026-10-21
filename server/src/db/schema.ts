@@ -38,12 +38,26 @@ export const messages = sqliteTable(
     senderId: text("sender_id")
       .notNull()
       .references(() => users.id),
-    kind: text("kind", { enum: ["text", "media", "voice"] }).notNull(),
+    /** "call" and "reminder" are server-written system lines (QT-nw9-call-lines, QT-nw9-reminder-fire). */
+    kind: text("kind", { enum: ["text", "media", "voice", "call", "reminder"] }).notNull(),
     /** Message text or album caption, stored exactly as sent (no trim, no normalization). */
     body: text("body"),
     replyToSeq: integer("reply_to_seq").references((): AnySQLiteColumn => messages.seq),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedSeq: integer("updated_seq").notNull(),
+    /** Call lines only (QT-nw9-call-lines): voice or video, as the caller started it. */
+    callKind: text("call_kind", { enum: ["voice", "video"] }),
+    /** Call lines only: how the call ended (shared callOutcome). */
+    callOutcome: text("call_outcome", { enum: ["completed", "missed", "declined", "dropped", "failed"] }),
+    /** Call lines only: how long the call was connected, 0 when it never was. */
+    callDurationMs: integer("call_duration_ms"),
+    /**
+     * Reminder lines only (QT-nw9-reminder-fire): who the reminder was for; null means both people.
+     * No FK, for the same reason as users.photo_id: the server only writes validated user ids.
+     */
+    reminderForUserId: text("reminder_for_user_id"),
+    /** Reminder lines only: the heads-up minutes of this firing, null for the reminder itself. */
+    reminderLeadMin: integer("reminder_lead_min"),
   },
   (t) => [index("messages_updated_seq_idx").on(t.updatedSeq)],
 )
@@ -112,3 +126,35 @@ export const pushSubscriptions = sqliteTable("push_subscriptions", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   lastOkAt: integer("last_ok_at", { mode: "timestamp_ms" }),
 })
+
+/**
+ * Reminders (QT-nw9-reminder-store). Shared like profile photos: both people see and may manage every
+ * reminder; the creator stays the "from" person. The in-process scheduler fires rows whose
+ * next_fire_at is due (server/src/reminders/scheduler.ts).
+ */
+export const reminders = sqliteTable(
+  "reminders",
+  {
+    /** uuid */
+    id: text("id").primaryKey(),
+    /** Who created it (the "from" person on the line and in the push). */
+    creatorId: text("creator_id")
+      .notNull()
+      .references(() => users.id),
+    /** Who it is for; null means both people. */
+    forUserId: text("for_user_id").references(() => users.id),
+    /** The reminder text (never logged, T-nw9-03). */
+    title: text("title").notNull(),
+    /** JSON of the shared ReminderRule (recurring or once). */
+    rule: text("rule").notNull(),
+    /** Off = paused, or a one-time reminder that is done. */
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** Epoch ms of the next firing; null means nothing is scheduled. */
+    nextFireAt: integer("next_fire_at"),
+    /** Heads-up minutes of the next firing, null when it is the reminder itself. */
+    nextLeadMin: integer("next_lead_min"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [index("reminders_due_idx").on(t.enabled, t.nextFireAt)],
+)

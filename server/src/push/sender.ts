@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { and, count, eq, gt } from "drizzle-orm"
+import { and, count, eq, gt, inArray, or } from "drizzle-orm"
 import type { FastifyBaseLogger } from "fastify"
 import webpush from "web-push"
 import { messageTypeLabel, truncateGraphemes, type MessageDto, type PushPayload } from "@duet/shared"
@@ -271,13 +271,24 @@ export function createPushSender({ db, config, log, send }: PushSenderDeps): Pus
       if (subs.length === 0) return 0
 
       // D-13: "{name} · {n} new messages" once 2+ of the sender's messages are unread by the recipient.
+      // QT-nw9-call-unread: only real messages and missed calls count; other call lines and reminder
+      // lines never do (shared countsAsUnread).
       const lastRead =
         db.select({ seq: readState.lastReadSeq }).from(readState).where(eq(readState.userId, recipientId)).get()?.seq ?? 0
       const unread =
         db
           .select({ n: count() })
           .from(messages)
-          .where(and(eq(messages.senderId, message.senderId), gt(messages.seq, lastRead)))
+          .where(
+            and(
+              eq(messages.senderId, message.senderId),
+              gt(messages.seq, lastRead),
+              or(
+                inArray(messages.kind, ["text", "media", "voice"]),
+                and(eq(messages.kind, "call"), eq(messages.callOutcome, "missed")),
+              ),
+            ),
+          )
           .get()?.n ?? 1
       const title = unread >= 2 ? `${senderName} · ${unread} new messages` : senderName
       const payload = buildPayload("chat", title, messageTypeLabel(message), avatarField(senderPhotoId))
