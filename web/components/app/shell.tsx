@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
+  AlarmIcon,
   BellIcon,
   ChatCircleIcon,
   DotsThreeVerticalIcon,
@@ -20,6 +21,7 @@ import { NotificationsDrawer } from "@/components/app/notifications-drawer"
 import { OnCallBar } from "@/components/app/on-call-bar"
 import { PersonAvatar } from "@/components/app/person-avatar"
 import { ProfilePhotoDrawer } from "@/components/app/profile-photo-drawer"
+import { Reminders } from "@/components/app/reminders"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -160,6 +162,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [photoOpen, setPhotoOpen] = useState(false)
   const [galleryOpen, setGalleryOpen] = useState(false)
+  const [remindersOpen, setRemindersOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   useBackClose(menuOpen, () => setMenuOpen(false))
 
@@ -272,6 +275,12 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
                   Profile photo
                 </DropdownMenuItem>
               )}
+              {peer && (
+                <DropdownMenuItem onClick={() => setRemindersOpen(true)}>
+                  <AlarmIcon />
+                  Reminders
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setDrawerOpen(true)}>
                 <BellIcon />
                 Notifications
@@ -302,6 +311,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
       />
       {peer && <ProfilePhotoDrawer open={photoOpen} onOpenChange={setPhotoOpen} />}
       {peer && <Gallery open={galleryOpen} peer={peer} onClose={() => setGalleryOpen(false)} />}
+      {peer && <Reminders open={remindersOpen} onClose={() => setRemindersOpen(false)} />}
 
       <main className="flex min-h-0 flex-1 flex-col">
         {peer ? (

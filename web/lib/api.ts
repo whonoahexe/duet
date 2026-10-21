@@ -56,3 +56,12 @@ export function apiPost<S extends z.ZodType>(path: string, body: unknown, schema
 export function apiPut<S extends z.ZodType>(path: string, body: unknown, schema: S): Promise<z.output<S>> {
   return request(path, { method: "PUT", body: JSON.stringify(body ?? {}) }, schema)
 }
+
+export function apiPatch<S extends z.ZodType>(path: string, body: unknown, schema: S): Promise<z.output<S>> {
+  return request(path, { method: "PATCH", body: JSON.stringify(body ?? {}) }, schema)
+}
+
+/** DELETE sends no body, so no Content-Type header. */
+export function apiDelete<S extends z.ZodType>(path: string, schema: S): Promise<z.output<S>> {
+  return request(path, { method: "DELETE" }, schema)
+}

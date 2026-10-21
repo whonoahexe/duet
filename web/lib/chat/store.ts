@@ -9,7 +9,9 @@ import {
   ReadResponse,
   SendMessageResponse,
   SyncResponse,
+  leadLabel,
   mergeMessages,
+  reminderWho,
   type AttachmentKind,
   type MeResponse,
   MeResponse as MeResponseSchema,
@@ -394,6 +396,28 @@ export const chatStore = {
     const cursor = Math.max(state.cursor, ...incoming.map((m) => m.updatedSeq))
     if (messages === state.messages && cursor === state.cursor) return
     set({ messages, cursor, oldestSeq: state.oldestSeq ?? messages[0]?.seq ?? null })
+  },
+
+  /**
+   * QT-nw9-reminder-inapp: a reminder that just fired for you while duet is on screen. The server
+   * skips the push exactly when you are viewing, so this toast stands in for it. Called for live WS
+   * frames only, before applyMessage, so history and sync never toast and a repeat frame (already
+   * loaded) does not either.
+   */
+  announceReminder(dto: MessageDto): void {
+    if (dto.kind !== "reminder" || !dto.reminder) return
+    if (state.messages.some((m) => m.seq === dto.seq)) return
+    const me = state.me
+    if (!me) return
+    if (dto.reminder.forUserId !== null && dto.reminder.forUserId !== me.id) return
+    if (typeof document === "undefined" || document.visibilityState !== "visible") return
+    const names: Record<string, string> = { [me.id]: me.displayName }
+    if (state.peer) names[state.peer.id] = state.peer.displayName
+    const who = reminderWho(dto.senderId, dto.reminder.forUserId, me.id, names)
+    const lead = dto.reminder.leadMinutes
+    toast(`⏰ ${dto.body ?? ""}${lead !== null ? ` · in ${leadLabel(lead)}` : ""}`, {
+      description: who.charAt(0).toUpperCase() + who.slice(1),
+    })
   },
 
   /** One confirmed message (WS msg frame). */

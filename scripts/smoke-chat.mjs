@@ -983,6 +983,136 @@ Object.assign(scenarios, {
   },
 })
 
+/** Open Menu > Reminders and wait for the list. */
+async function openReminders(page) {
+  await page.getByRole("button", { name: "Menu", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Reminders" }).click()
+  await page.getByTestId("reminders").waitFor({ state: "visible", timeout: 5_000 })
+}
+
+/** Press one option of a labelled ToggleGroup in the reminder form. */
+async function pick(page, group, option) {
+  await page.getByRole("group", { name: group, exact: true }).getByRole("button", { name: option, exact: true }).click()
+}
+
+function reminderRow(page, title) {
+  return page.getByTestId("reminder-row").filter({ hasText: title })
+}
+
+/** The last call/reminder system line's text (QT-nw9). */
+async function lastSystemLineText(page) {
+  const lines = page.locator('[data-testid="system-line"]')
+  const n = await lines.count()
+  return n === 0 ? "" : ((await lines.nth(n - 1).textContent()) ?? "").trim()
+}
+
+/** The IST date and time of the next whole minute (two minutes ahead from second 40 on). */
+function nextIstMinute() {
+  const ist = new Date(Date.now() + 330 * 60_000)
+  const ahead = ist.getUTCSeconds() >= 40 ? 2 : 1
+  const at = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate(), ist.getUTCHours(), ist.getUTCMinutes() + ahead))
+  const pad = (n) => String(n).padStart(2, "0")
+  return {
+    date: `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`,
+    time: `${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`,
+  }
+}
+
+Object.assign(scenarios, {
+  /**
+   * QT-nw9-reminder-ui / reminder-fire / reminder-inapp: Ada adds a repeating reminder (every 2 hours,
+   * Mon-Fri), switches it off (it stays off after reopening) and deletes it. She then adds a one-time
+   * reminder for Bob at the next IST minute; when it fires both chats show its system line, Bob (viewing,
+   * so no push) gets a toast, Ada does not, and the row reads Done with its switch off.
+   */
+  async reminders({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    await openReminders(ada)
+    const list = ada.getByTestId("reminders")
+    await list.getByText("No reminders yet", { exact: true }).waitFor({ state: "visible", timeout: 5_000 })
+
+    const water = uniqueText("Smoke water")
+    await ada.getByRole("button", { name: "Add reminder", exact: true }).first().click()
+    await ada.getByTestId("reminder-form").waitFor({ state: "visible", timeout: 5_000 })
+    await ada.getByLabel("Reminder", { exact: true }).fill(water)
+    await pick(ada, "For", "Me")
+    await pick(ada, "Type", "Repeating")
+    await ada.getByLabel("Every", { exact: true }).fill("2")
+    await pick(ada, "Unit", "Hours")
+    await pick(ada, "Days", "Su")
+    await pick(ada, "Days", "Sa")
+    await ada.getByRole("button", { name: "Save", exact: true }).click()
+    const waterRow = reminderRow(ada, water)
+    await waterRow.waitFor({ state: "visible", timeout: 5_000 })
+    const meta = (await waterRow.getByTestId("reminder-meta").textContent()) ?? ""
+    if (!/^Every 2 hours · .+ · Mon Tue Wed Thu Fri · For you · Next /.test(meta)) {
+      throw new Error(`the repeating reminder row reads "${meta}"`)
+    }
+    const waterSwitch = waterRow.getByRole("switch")
+    if ((await waterSwitch.getAttribute("aria-checked")) !== "true") throw new Error("a new reminder is not switched on")
+    await waterSwitch.click()
+    await until(async () => (await waterSwitch.getAttribute("aria-checked")) === "false", 5_000, "the switch did not turn off")
+    await until(
+      async () => ((await waterRow.getByTestId("reminder-status").textContent()) ?? "") === "Off",
+      5_000,
+      "the paused reminder does not read Off",
+    )
+    await ada.getByRole("button", { name: "Back", exact: true }).click()
+    await list.waitFor({ state: "hidden", timeout: 3_000 })
+    await openReminders(ada)
+    await waterRow.waitFor({ state: "visible", timeout: 5_000 })
+    if ((await waterRow.getByRole("switch").getAttribute("aria-checked")) !== "false") {
+      throw new Error("the paused reminder is on again after reopening")
+    }
+    await waterRow.locator("button").first().click()
+    await ada.getByText("Edit reminder", { exact: true }).waitFor({ state: "visible", timeout: 3_000 })
+    await ada.getByRole("button", { name: "Delete reminder", exact: true }).click()
+    await list.waitFor({ state: "visible", timeout: 5_000 })
+    await until(async () => (await waterRow.count()) === 0, 5_000, "the deleted reminder is still listed")
+
+    const title = uniqueText("Smoke reminder")
+    const when = nextIstMinute()
+    await ada.getByRole("button", { name: "Add reminder", exact: true }).first().click()
+    await ada.getByLabel("Reminder", { exact: true }).fill(title)
+    await pick(ada, "For", BOB.displayName)
+    await pick(ada, "Type", "One time")
+    await ada.getByLabel("Date", { exact: true }).fill(when.date)
+    await ada.getByLabel("Time", { exact: true }).fill(when.time)
+    await pick(ada, "Heads-up", "None")
+    await pick(ada, "Repeat", "Never")
+    await ada.getByRole("button", { name: "Save", exact: true }).click()
+    const row = reminderRow(ada, title)
+    await row.waitFor({ state: "visible", timeout: 5_000 })
+    const status = (await row.getByTestId("reminder-status").textContent()) ?? ""
+    if (!status.startsWith("Next ")) throw new Error(`the one-time reminder row status reads "${status}"`)
+    await ada.getByRole("button", { name: "Back", exact: true }).click()
+    await list.waitFor({ state: "hidden", timeout: 3_000 })
+
+    await until(
+      async () =>
+        (await lastSystemLineText(bob)).includes(`${title} · from ${ADA.displayName}`) &&
+        (await lastSystemLineText(ada)).includes(`${title} · for ${BOB.displayName}`),
+      150_000,
+      `the reminder line "${title}" never showed on both pages`,
+    )
+    await bob.locator("[data-sonner-toast]").filter({ hasText: title }).first().waitFor({ state: "visible", timeout: 5_000 })
+    if ((await ada.locator("[data-sonner-toast]").filter({ hasText: title }).count()) > 0) {
+      throw new Error("Ada got a toast for a reminder that was for Bob")
+    }
+
+    await openReminders(ada)
+    await row.waitFor({ state: "visible", timeout: 5_000 })
+    await until(
+      async () => ((await row.getByTestId("reminder-status").textContent()) ?? "") === "Done",
+      5_000,
+      "the fired one-time reminder does not read Done",
+    )
+    if ((await row.getByRole("switch").getAttribute("aria-checked")) !== "false") throw new Error("the fired reminder is still on")
+    await ada.getByRole("button", { name: "Back", exact: true }).click()
+    await list.waitFor({ state: "hidden", timeout: 3_000 })
+  },
+})
+
 const requested = process.argv.slice(3)
 const names = requested.length > 0 ? requested : Object.keys(scenarios)
 for (const name of names) {

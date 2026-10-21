@@ -204,6 +204,8 @@ class Realtime {
     }
     switch (frame.t) {
       case "msg":
+        // Before applyMessage: announceReminder skips a message that is already loaded.
+        chatStore.announceReminder(frame.message)
         chatStore.applyMessage(frame.message)
         return
       case "typing":

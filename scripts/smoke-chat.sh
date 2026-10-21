@@ -39,7 +39,7 @@ printf '%s' '[{"username":"smoke-ada","displayName":"Ada Smoke","password":"smok
   cd server
   exec env -u CF_TURN_KEY_ID -u CF_TURN_KEY_API_TOKEN \
     DATA_DIR="$tmp" PORT="$PORT" HOST=127.0.0.1 NODE_ENV=production \
-    APP_ORIGIN="$BASE" COOKIE_SECURE=false LOG_LEVEL=warn \
+    APP_ORIGIN="$BASE" COOKIE_SECURE=false LOG_LEVEL=warn REMINDER_TICK_MS="${REMINDER_TICK_MS:-1000}" \
     node --import tsx src/index.ts
 ) >"$tmp/server.log" 2>&1 &
 server_pid=$!
