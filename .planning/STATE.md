@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.0
 status: Awaiting next milestone
 stopped_at: Phase 03 complete — all phases complete
-last_updated: "2026-10-20T22:40:08.332Z"
-last_activity: 2026-10-20
+last_updated: "2026-10-21T06:47:53.070Z"
+last_activity: 2026-10-21
 last_activity_desc: Milestone v1.0 completed and archived
-state_head: 65a6056e23eff830455711b6d72a9bf84a73ab7f
+state_head: 1f2977ec2913ca0d7956f935ae1ec890533263b9
 progress:
   total_phases: 3
   completed_phases: 3
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-10-21 - Completed quick task 261021-4qu: Encrypt media at rest on the server
+Last activity: 2026-10-21 - Completed quick task 261021-5zd: Add shared media gallery and profile photos
 
 ## Performance Metrics
 
@@ -81,7 +81,6 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 ### Pending Todos
 
 - [2026-10-20] [chat] Show calls in chat history and add reminders — [todo file](.planning/todos/pending/2026-10-20-calls-and-reminders-in-chat.md)
-- [2026-10-20] [media] Add shared media gallery and profile photos — [todo file](.planning/todos/pending/2026-10-20-media-gallery-and-profile-photos.md)
 - [2026-10-20] [ui] Add synthesised sound effects — [todo file](.planning/todos/pending/2026-10-20-sound-effects.md)
 
 ### Blockers/Concerns
@@ -99,6 +98,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 | 3 | Fold the camera options into the + menu (Gallery, Take photo, Record video) | 2026-10-20 | 91d3b48 | — |
 | 4 | + menu camera items read Photo and Video | 2026-10-20 | 1b67f46 | — |
 | 261021-4qu | Encrypt media at rest on the server | 2026-10-21 | 65a6056 | [261021-4qu-encrypt-media-at-rest-on-the-server](./quick/261021-4qu-encrypt-media-at-rest-on-the-server/) |
+| 261021-5zd | Add shared media gallery and profile photos | 2026-10-21 | 1f2977e | [261021-5zd-add-shared-media-gallery-and-profile-pho](./quick/261021-5zd-add-shared-media-gallery-and-profile-pho/) |
 
 ## Deferred Items
 
