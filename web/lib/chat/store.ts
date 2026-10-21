@@ -12,10 +12,11 @@ import {
   mergeMessages,
   type AttachmentKind,
   type MeResponse,
+  MeResponse as MeResponseSchema,
   type MessageDto,
+  type Profile,
   type ReadCursor,
   type Reaction,
-  type UserSummary,
 } from "@duet/shared"
 import { ApiError, apiGet, apiPost, apiPut } from "@/lib/api"
 import { createOutbox, type OutboxEntry } from "./outbox"
@@ -57,8 +58,9 @@ export interface MediaEntry {
 }
 
 export interface ChatState {
-  me: UserSummary | null
-  peer: UserSummary | null
+  /** You and your person, with the shared profile photo ids (QT-5zd-photo-live). */
+  me: Profile | null
+  peer: Profile | null
   /** Confirmed messages, ascending by seq. */
   messages: MessageDto[]
   /** Unconfirmed text sends (the outbox), rendered after `messages` in createdAt order. */
@@ -295,6 +297,33 @@ export const chatStore = {
     for (const url of Object.values(state.localPreviews)) URL.revokeObjectURL(url)
     mediaRunning.clear()
     set(EMPTY)
+  },
+
+  /**
+   * A person's shared profile photo changed (QT-5zd-photo-live): the WS profile frame, the drawer's own
+   * PUT response, or a refetch. Replaces me/peer with a new object only when the id really changed,
+   * so useMe()/usePeer() consumers re-render only then.
+   */
+  applyProfile(userId: string, photoId: string | null): void {
+    if (state.me?.id === userId && state.me.photoId !== photoId) set({ me: { ...state.me, photoId } })
+    else if (state.peer?.id === userId && state.peer.photoId !== photoId) set({ peer: { ...state.peer, photoId } })
+  },
+
+  /**
+   * GET /api/me on every hello: a photo changed while the socket was down is not replayed by
+   * /api/sync. Errors are ignored (the next hello tries again).
+   */
+  async refreshProfiles(): Promise<void> {
+    if (!state.me) return
+    const gen = generation
+    try {
+      const me = await apiGet("/api/me", MeResponseSchema)
+      if (gen !== generation) return
+      chatStore.applyProfile(me.user.id, me.user.photoId)
+      if (me.peer) chatStore.applyProfile(me.peer.id, me.peer.photoId)
+    } catch {
+      // Best effort.
+    }
   },
 
   /** GET /api/messages: replace the cache with the newest page. */
@@ -614,4 +643,18 @@ export const chatStore = {
 /** React binding for the chat store. */
 export function useChat(): ChatState {
   return useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getServerSnapshot)
+}
+
+const getMe = () => state.me
+const getPeer = () => state.peer
+const getNull = () => null
+
+/** You, with your photo id. Re-renders only on init, logout or a profile change (not on messages). */
+export function useMe(): Profile | null {
+  return useSyncExternalStore(chatStore.subscribe, getMe, getNull)
+}
+
+/** Your person, with their photo id. Re-renders only on init, logout or a profile change. */
+export function usePeer(): Profile | null {
+  return useSyncExternalStore(chatStore.subscribe, getPeer, getNull)
 }

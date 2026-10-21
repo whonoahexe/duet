@@ -188,6 +188,8 @@ class Realtime {
     this.sendPresence()
     this.startPresenceTimer()
     void chatStore.syncNow()
+    // A photo changed while the socket was down is not replayed by /api/sync (QT-5zd-photo-live).
+    void chatStore.refreshProfiles()
     chatStore.flushOutbox()
     emit(liveListeners, "live")
   }
@@ -209,6 +211,9 @@ class Realtime {
         return
       case "read":
         chatStore.applyRead({ userId: frame.userId, seq: frame.seq, at: frame.at })
+        return
+      case "profile":
+        chatStore.applyProfile(frame.userId, frame.photoId)
         return
       case "pong":
         this.clearPong()

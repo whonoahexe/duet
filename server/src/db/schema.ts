@@ -6,6 +6,12 @@ export const users = sqliteTable("users", {
   displayName: text("display_name").notNull(),
   passwordHash: text("password_hash").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  /**
+   * The profile photo attachment (QT-5zd-photo-store). Shared: either person may change either
+   * photo. No FK on purpose: users and attachments would reference each other and SQLite would need
+   * a table rebuild; the server only ever writes ids it has validated (T-5zd-02).
+   */
+  photoId: text("photo_id"),
 })
 
 export const sessions = sqliteTable("sessions", {

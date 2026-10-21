@@ -66,6 +66,11 @@ export interface MediaProcessor {
   idle(): Promise<void>
   /** Stop starting jobs and wait for the running ones (app shutdown). */
   close(): Promise<void>
+  /**
+   * Resolves once the attachment is no longer processing (ready, failed or gone), or when the
+   * processor closes (QT-5zd-photo-store: PUT /api/users/:id/photo waits for a fresh upload).
+   */
+  settled(id: string): Promise<void>
   /** Kinds this server can process (POST /api/uploads rejects the rest with 422 unsupported_media). */
   supports(kind: AttachmentKind): boolean
 }
@@ -133,6 +138,15 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
   let paused = false
   let closed = false
   let idleWaiters: Array<() => void> = []
+  /** settled() waiters per attachment id, resolved after that id's job wrote its row. */
+  const settledWaiters = new Map<string, Array<() => void>>()
+
+  function notifySettled(id: string): void {
+    const waiters = settledWaiters.get(id)
+    if (!waiters) return
+    settledWaiters.delete(id)
+    for (const w of waiters) w()
+  }
 
   function isIdle(): boolean {
     return queues.fast.length === 0 && queues.slow.length === 0 && !running.fast && !running.slow
@@ -159,6 +173,7 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
       })
       .finally(() => {
         running[lane] = null
+        notifySettled(id)
         pump(lane)
         notifyIdle()
       })
@@ -270,7 +285,17 @@ export function createMediaProcessor(opts: MediaProcessorOptions): MediaProcesso
       queues.slow.length = 0
       queued.clear()
       await Promise.all([running.fast, running.slow])
+      for (const id of [...settledWaiters.keys()]) notifySettled(id)
       notifyIdle()
+    },
+    settled(id) {
+      const row = db.select({ status: attachments.status }).from(attachments).where(eq(attachments.id, id)).get()
+      if (closed || !row || row.status !== "processing") return Promise.resolve()
+      return new Promise((resolve) => {
+        const list = settledWaiters.get(id) ?? []
+        list.push(resolve)
+        settledWaiters.set(id, list)
+      })
     },
     supports(kind) {
       return handlers[kind] !== undefined

@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { CallEndReason, CallId, CallKind, StopRingingReason } from "./call"
-import { MessageDto } from "./chat"
+import { AttachmentId, MessageDto } from "./chat"
 
 /**
  * /ws signaling protocol (D-16: offer/answer/ICE ride duet's own WebSocket).
@@ -110,6 +110,11 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("typing"), userId: z.uuid() }),
   /** A person's read cursor moved forward to seq at `at` (epoch ms) (CHAT-07). */
   z.object({ t: z.literal("read"), userId: z.uuid(), seq: z.number().int().nonnegative(), at: z.number().int() }),
+  /**
+   * A person's shared profile photo changed (QT-5zd-photo-live): photoId is the new attachment, or
+   * null when it was removed. Sent to every connection of both people.
+   */
+  z.object({ t: z.literal("profile"), userId: z.uuid(), photoId: AttachmentId.nullable() }),
   /** A call to this person is ringing (sent to every open connection of the callee). */
   z.object({ t: z.literal("call.ring"), callId: CallId, kind: CallKind, from: z.uuid() }),
   /**

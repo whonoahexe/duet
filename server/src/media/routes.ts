@@ -11,7 +11,8 @@ import { ATTACHMENT_ID_RE } from "./uploads"
 /**
  * The only files GET /media can serve: regenerated variants with a fixed Content-Type (T-02-22).
  * The original is deliberately absent, and the URL has no extension, so the Cloudflare edge never
- * treats media as a cacheable static asset (T-02-27).
+ * treats media as a cacheable static asset (T-02-27). avatar-sm / avatar-lg are the square crops of a
+ * profile photo attachment (QT-5zd-photo-store): same session gate, ready check and decrypting path.
  */
 const VARIANTS = {
   thumb: ["thumb.webp", "image/webp"],
@@ -19,6 +20,8 @@ const VARIANTS = {
   poster: ["poster.jpg", "image/jpeg"],
   video: ["video.mp4", "video/mp4"],
   audio: ["audio.m4a", "audio/mp4"],
+  "avatar-sm": ["avatar-sm.webp", "image/webp"],
+  "avatar-lg": ["avatar-lg.webp", "image/webp"],
 } as const satisfies Record<string, readonly [string, string]>
 
 type VariantName = keyof typeof VARIANTS

@@ -7,7 +7,8 @@ import { sessions, users } from "../db/schema"
 import { hashPassword, verifyPassword } from "./password"
 import { clearSessionCookie, issueSession, requireUser } from "./session"
 
-const summary = { id: users.id, username: users.username, displayName: users.displayName }
+/** /api/me's view of a person: the public summary plus the shared photo (never on GET /api/users, T-5zd-04). */
+const profile = { id: users.id, username: users.username, displayName: users.displayName, photoId: users.photoId }
 
 /**
  * Verified against when the userId is unknown, so an unknown id costs the same argon2 work as a
@@ -133,9 +134,13 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.get("/api/me", { preHandler: requireUser }, async (request): Promise<MeResponse> => {
     const me = request.user!
+    const self = app.db.select(profile).from(users).where(eq(users.id, me.id)).get()
     const peer =
-      app.db.select(summary).from(users).where(ne(users.id, me.id)).orderBy(asc(users.createdAt)).get() ?? null
-    return { user: { id: me.id, username: me.username, displayName: me.displayName }, peer }
+      app.db.select(profile).from(users).where(ne(users.id, me.id)).orderBy(asc(users.createdAt)).get() ?? null
+    return {
+      user: self ?? { id: me.id, username: me.username, displayName: me.displayName, photoId: null },
+      peer,
+    }
   })
 
   /** D-06: logout revokes this device's session server-side and clears the cookie. */

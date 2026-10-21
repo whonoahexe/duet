@@ -861,6 +861,75 @@ Object.assign(scenarios, {
   },
 })
 
+/** The open Profile photo drawer (QT-5zd-photo-ui). */
+function photoDrawer(page) {
+  return page.getByTestId("profile-photo-drawer")
+}
+
+/** Open Menu > Profile photo. */
+async function openPhotoDrawer(page) {
+  await page.getByRole("button", { name: "Menu", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Profile photo" }).click()
+  await photoDrawer(page).waitFor({ state: "visible", timeout: 5_000 })
+}
+
+/** src and naturalWidth of the img inside a test id (null when there is none). */
+async function avatarImg(page, testId) {
+  const imgs = await page.getByTestId(testId).locator("img").evaluateAll((list) =>
+    list.map((img) => ({ src: img.getAttribute("src") ?? "", w: img.naturalWidth, done: img.complete })),
+  )
+  return imgs[0] ?? null
+}
+
+Object.assign(scenarios, {
+  /**
+   * QT-5zd-photo-ui / photo-live: Ada sets her own photo from Menu > Profile photo; Bob's header shows
+   * the 192 px crop without a reload. Bob then removes Ada's photo (photos are shared) and his header
+   * falls back to her initials.
+   */
+  async profile({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    await openPhotoDrawer(ada)
+    const drawer = photoDrawer(ada)
+    const adaButton = drawer.getByRole("button", { name: /Ada Smoke/ })
+    if ((await adaButton.getAttribute("aria-pressed")) !== "true") throw new Error("the drawer did not open on Ada herself")
+    const capture = await ada.getByTestId("profile-camera-input").getAttribute("capture")
+    if (capture !== "user") throw new Error(`Take photo input has capture="${capture}", expected "user"`)
+    await ada.getByTestId("profile-photo-input").setInputFiles(makeJpeg(`avatar-${randomUUID().slice(0, 8)}.jpg`, 900, 600))
+
+    await until(
+      async () => {
+        const img = await avatarImg(bob, "peer-avatar")
+        return Boolean(img && img.src.includes("/avatar-sm") && img.done && img.w === 192)
+      },
+      20_000,
+      "Bob's header never showed Ada's 192 px photo",
+    )
+    await until(
+      async () => {
+        const img = await avatarImg(ada, "profile-current")
+        return Boolean(img && img.src.includes("/avatar-lg"))
+      },
+      10_000,
+      "Ada's drawer never showed her new photo",
+    )
+    await ada.keyboard.press("Escape")
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+
+    await openPhotoDrawer(bob)
+    const bobDrawer = photoDrawer(bob)
+    await bobDrawer.getByRole("button", { name: /Ada Smoke/ }).click()
+    await bobDrawer.getByRole("button", { name: "Remove photo" }).click()
+    await until(
+      async () => (await avatarImg(bob, "peer-avatar")) === null && (await bob.getByTestId("peer-avatar").innerText()).trim() === "AS",
+      10_000,
+      "Bob's header still shows Ada's photo after Remove photo",
+    )
+    await bob.keyboard.press("Escape")
+    await bobDrawer.waitFor({ state: "hidden", timeout: 5_000 })
+  },
+})
+
 const requested = process.argv.slice(3)
 const names = requested.length > 0 ? requested : Object.keys(scenarios)
 for (const name of names) {

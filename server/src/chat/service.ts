@@ -12,7 +12,7 @@ import {
   type SendMessageBody,
 } from "@duet/shared"
 import type { Db } from "../db/client"
-import { attachments, messages, reactions, readState } from "../db/schema"
+import { attachments, messages, reactions, readState, users } from "../db/schema"
 
 /** A synchronous better-sqlite3 transaction handle (same query API as Db). */
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
@@ -103,6 +103,11 @@ export function sendMessage(
         ) {
           throw new ChatError("bad_attachment", 400)
         }
+      }
+      // A profile photo is never message media (T-5zd-02): it would land in the gallery and be
+      // shared with the album's lifetime.
+      if (tx.select({ id: users.id }).from(users).where(inArray(users.photoId, attachmentIds)).get()) {
+        throw new ChatError("bad_attachment", 400)
       }
       if (found.some((a) => a.kind === "audio")) {
         if (attachmentIds.length !== 1 || input.body !== undefined) throw new ChatError("bad_attachment", 400)

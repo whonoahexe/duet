@@ -42,8 +42,16 @@ export type CompleteUploadResponse = z.infer<typeof CompleteUploadResponse>
  * The regenerated files GET /media/:id/:variant may serve. The original is never one of them
  * (T-02-22): it may be HEIC with GPS EXIF or a mislabeled file.
  */
-export const MediaVariant = z.enum(["thumb", "display", "poster", "video", "audio"])
+export const MediaVariant = z.enum(["thumb", "display", "poster", "video", "audio", "avatar-sm", "avatar-lg"])
 export type MediaVariant = z.infer<typeof MediaVariant>
+
+/**
+ * A profile photo's square crop (QT-5zd-photo-ui): "sm" is 192x192, "lg" is 640x640. A new photo is
+ * a new attachment id, so the URL changes with the photo and immutable caching stays correct.
+ */
+export function avatarUrl(photoId: string, size: "sm" | "lg"): string {
+  return `/media/${encodeURIComponent(photoId)}/avatar-${size}`
+}
 
 /** Number of chunks an upload of `size` bytes is split into. */
 export function chunkCount(size: number, chunkSize: number = UPLOAD_CHUNK_SIZE): number {

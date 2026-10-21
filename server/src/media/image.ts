@@ -11,6 +11,10 @@ const DISPLAY_QUALITY = 82
 /** Album tile / quote thumbnail: long edge at most 640 px, WebP quality 70. */
 export const THUMB_EDGE = 640
 const THUMB_QUALITY = 70
+/** Profile photo crops (QT-5zd-photo-store): exact squares, centre-cropped. */
+export const AVATAR_SMALL_EDGE = 192
+export const AVATAR_LARGE_EDGE = 640
+const AVATAR_QUALITY = 80
 /** heif-convert on a 48 MP HEIC takes a few seconds; anything near this is a hostile file. */
 const HEIF_CONVERT_TIMEOUT_MS = 120_000
 
@@ -63,19 +67,36 @@ export async function processImage(originalPath: string, outDir: string): Promis
   }
 }
 
-async function writeVariant(source: string, target: string, edge: number, quality: number): Promise<ImageResult> {
+/**
+ * A profile photo's display.webp -> avatar-sm.webp (192x192) + avatar-lg.webp (640x640) in outDir
+ * (QT-5zd-photo-store). Always exactly NxN: centre-cropped and enlarged when the source is smaller.
+ * The source is already autorotated and has no metadata, and sharp writes none (T-5zd-07). A failure
+ * is MediaError("processing_failed").
+ */
+export async function processAvatar(sourcePath: string, outDir: string): Promise<void> {
+  const square = { fit: "cover", position: "centre" } as const
+  await writeVariant(sourcePath, path.join(outDir, "avatar-sm.webp"), AVATAR_SMALL_EDGE, AVATAR_QUALITY, square, "processing_failed")
+  await writeVariant(sourcePath, path.join(outDir, "avatar-lg.webp"), AVATAR_LARGE_EDGE, AVATAR_QUALITY, square, "processing_failed")
+}
+
+type ResizeFit = { fit: "inside"; withoutEnlargement: true } | { fit: "cover"; position: "centre" }
+
+async function writeVariant(
+  source: string,
+  target: string,
+  edge: number,
+  quality: number,
+  resize: ResizeFit = { fit: "inside", withoutEnlargement: true },
+  failCode = "unsupported_media",
+): Promise<ImageResult> {
   const tmp = `${target}.tmp`
   try {
-    const info = await sharp(source)
-      .rotate()
-      .resize(edge, edge, { fit: "inside", withoutEnlargement: true })
-      .webp({ quality })
-      .toFile(tmp)
+    const info = await sharp(source).rotate().resize(edge, edge, resize).webp({ quality }).toFile(tmp)
     await rename(tmp, target)
     return { width: info.width, height: info.height }
   } catch (err) {
     await rm(tmp, { force: true })
     if (err instanceof MediaError) throw err
-    throw new MediaError("unsupported_media", err instanceof Error ? err.message : String(err))
+    throw new MediaError(failCode, err instanceof Error ? err.message : String(err))
   }
 }

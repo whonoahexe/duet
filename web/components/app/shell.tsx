@@ -9,16 +9,17 @@ import {
   PhoneCallIcon,
   PhoneIcon,
   SignOutIcon,
+  UserCircleIcon,
   VideoCameraIcon,
 } from "@phosphor-icons/react"
-import { OkResponse, type MeResponse } from "@duet/shared"
+import { OkResponse, type MeResponse, type Profile } from "@duet/shared"
 import { CallProvider } from "@/components/app/call-provider"
 import { ChatView } from "@/components/app/chat-view"
 import { NotificationsCard } from "@/components/app/notifications-card"
 import { NotificationsDrawer } from "@/components/app/notifications-drawer"
 import { OnCallBar } from "@/components/app/on-call-bar"
-import { initials } from "@/components/app/login-tiles"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { PersonAvatar } from "@/components/app/person-avatar"
+import { ProfilePhotoDrawer } from "@/components/app/profile-photo-drawer"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -40,7 +41,7 @@ import {
   type PushState,
 } from "@/lib/chat/push"
 import { callStore, useCall } from "@/lib/call/store"
-import { chatStore, useChat } from "@/lib/chat/store"
+import { chatStore, useChat, usePeer } from "@/lib/chat/store"
 import { isStandalone } from "@/lib/platform"
 
 /** Connection subline under the peer name: hidden when live, "Offline", or "Connecting…" after 2 s. */
@@ -61,6 +62,23 @@ function ConnectionSubline() {
     <span className="truncate text-xs text-muted-foreground" data-testid="connection-subline">
       {text}
     </span>
+  )
+}
+
+/**
+ * The peer's avatar, name and connection subline in the header (QT-5zd-photo-live). The photo comes
+ * from the store (live WS profile frames), falling back to the /api/me snapshot before init.
+ */
+function PeerHeader({ peer: initial }: { peer: Profile }) {
+  const peer = usePeer() ?? initial
+  return (
+    <>
+      <PersonAvatar name={peer.displayName} photoId={peer.photoId} data-testid="peer-avatar" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate font-heading font-medium">{peer.displayName}</span>
+        <ConnectionSubline />
+      </div>
+    </>
   )
 }
 
@@ -133,6 +151,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
   // D-16: the installed app shows the notifications card until push is on (null = not shown).
   const [cardState, setCardState] = useState<PushState | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [photoOpen, setPhotoOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   useBackClose(menuOpen, () => setMenuOpen(false))
 
@@ -226,13 +245,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
         <div className="flex h-14 items-center gap-3 px-4">
           {peer ? (
             <>
-              <Avatar>
-                <AvatarFallback>{initials(peer.displayName)}</AvatarFallback>
-              </Avatar>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate font-heading font-medium">{peer.displayName}</span>
-                <ConnectionSubline />
-              </div>
+              <PeerHeader peer={peer} />
               <CallButtons />
             </>
           ) : (
@@ -245,6 +258,12 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
               <DotsThreeVerticalIcon weight="bold" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto">
+              {peer && (
+                <DropdownMenuItem onClick={() => setPhotoOpen(true)}>
+                  <UserCircleIcon />
+                  Profile photo
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setDrawerOpen(true)}>
                 <BellIcon />
                 Notifications
@@ -278,6 +297,7 @@ export function Shell({ me, onLoggedOut }: { me: MeResponse; onLoggedOut: () => 
         onOpenChange={setDrawerOpen}
         onStateChange={(state) => setCardState((current) => (current ? state : current))}
       />
+      {peer && <ProfilePhotoDrawer open={photoOpen} onOpenChange={setPhotoOpen} />}
 
       <main className="flex min-h-0 flex-1 flex-col">
         {peer ? (

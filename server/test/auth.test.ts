@@ -89,8 +89,8 @@ describe("login happy path", () => {
     const me = await t.app.inject({ method: "GET", url: "/api/me", headers: { cookie: sessionCookie(res) } })
     expect(me.statusCode).toBe(200)
     const body = me.json() as { user: Record<string, unknown>; peer: Record<string, unknown> | null }
-    expect(body.user).toEqual({ id: userId(t.app, "alice"), username: "alice", displayName: "Alice Test" })
-    expect(body.peer).toEqual({ id: userId(t.app, "bob"), username: "bob", displayName: "Bob Test" })
+    expect(body.user).toEqual({ id: userId(t.app, "alice"), username: "alice", displayName: "Alice Test", photoId: null })
+    expect(body.peer).toEqual({ id: userId(t.app, "bob"), username: "bob", displayName: "Bob Test", photoId: null })
     expect(me.body).not.toMatch(/argon2|password/i)
   })
 

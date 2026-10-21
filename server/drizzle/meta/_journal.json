@@ -15,6 +15,13 @@
       "when": 1791653766701,
       "tag": "0001_chat_media_push",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792537505136,
+      "tag": "0002_profile_photo",
+      "breakpoints": true
     }
   ]
 }

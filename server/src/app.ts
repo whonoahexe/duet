@@ -24,6 +24,7 @@ import { encryptMediaAtRest } from "./media/migrate"
 import { createMediaProcessor, type MediaProcessor } from "./media/process"
 import { mediaRoutes } from "./media/routes"
 import { uploadRoutes } from "./media/uploads"
+import { profileRoutes } from "./media/avatar"
 import { createHub, type Hub } from "./ws/hub"
 import { createCallRegistry, type CallRegistry } from "./calls/registry"
 import { users } from "./db/schema"
@@ -240,6 +241,7 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
   }
 
   await app.register(uploadRoutes, { processor: media, mediaRoot, key })
+  await app.register(profileRoutes, { processor: media, mediaRoot, key })
   await app.register(mediaRoutes, { mediaRoot, key })
 
   app.setNotFoundHandler((req, reply) => {
