@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.0
 status: Awaiting next milestone
 stopped_at: Phase 03 complete — all phases complete
-last_updated: "2026-10-21T06:47:53.070Z"
+last_updated: "2026-10-21T07:50:25.566Z"
 last_activity: 2026-10-21
 last_activity_desc: Milestone v1.0 completed and archived
-state_head: 1f2977ec2913ca0d7956f935ae1ec890533263b9
+state_head: 1710eadf5cdc371763ba2d86f5aa657a74ebd804
 progress:
   total_phases: 3
   completed_phases: 3
@@ -99,6 +99,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 | 4 | + menu camera items read Photo and Video | 2026-10-20 | 1b67f46 | — |
 | 261021-4qu | Encrypt media at rest on the server | 2026-10-21 | 65a6056 | [261021-4qu-encrypt-media-at-rest-on-the-server](./quick/261021-4qu-encrypt-media-at-rest-on-the-server/) |
 | 261021-5zd | Add shared media gallery and profile photos | 2026-10-21 | 1f2977e | [261021-5zd-add-shared-media-gallery-and-profile-pho](./quick/261021-5zd-add-shared-media-gallery-and-profile-pho/) |
+| 7 | Remove Call test from the header menu | 2026-10-21 | 1710ead | — |
 
 ## Deferred Items
 
