@@ -3,7 +3,8 @@
 import { useRef, useState } from "react"
 import { toast } from "sonner"
 import { CameraIcon, ImageIcon, TrashIcon } from "@phosphor-icons/react"
-import { ProfilePhotoResponse, UPLOAD_LIMITS } from "@duet/shared"
+import { ProfilePhotoResponse, UPLOAD_LIMITS, type CropRect } from "@duet/shared"
+import { CropDialog } from "@/components/app/cropper"
 import { PersonAvatar } from "@/components/app/person-avatar"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
@@ -15,16 +16,26 @@ import { uploadFile } from "@/lib/chat/upload"
 
 type Busy = { stage: "uploading"; percent: number } | { stage: "processing" } | { stage: "removing" } | null
 
+/** A picked photo waiting in the circle cropper: whose photo it becomes and its object URL. */
+interface Framing {
+  file: File
+  url: string
+  target: string
+}
+
 /**
  * Profile photo drawer from the header menu (QT-5zd-photo-ui): pick whose photo (photos are shared,
  * so either of you can change either one), then choose one from the library, take one with the front
- * camera, or remove it. The drawer stays open so the result is visible.
+ * camera, or remove it. The drawer stays open so the result is visible. A picked photo is framed in
+ * a fixed circle first (QT-m25-profile-crop, N-03); Save uploads the original with that crop, Cancel
+ * uploads nothing.
  */
 export function ProfilePhotoDrawer({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const me = useMe()
   const peer = usePeer()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [busy, setBusy] = useState<Busy>(null)
+  const [framing, setFraming] = useState<Framing | null>(null)
   const libraryRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   useBackClose(open, () => onOpenChange(false))
@@ -39,18 +50,35 @@ export function ProfilePhotoDrawer({ open, onOpenChange }: { open: boolean; onOp
   const people = [me, peer].filter((p) => p !== null)
   const selected = people.find((p) => p.id === selectedId) ?? me
 
-  async function handlePick(input: HTMLInputElement) {
+  function handlePick(input: HTMLInputElement) {
     const file = input.files?.[0]
     input.value = ""
-    if (!file || !selected || busy) return
+    if (!file || !selected || busy || framing) return
     if (file.size > UPLOAD_LIMITS.image) {
       toast.error("Photos can be up to 100 MB.")
       return
     }
-    const target = selected.id
+    setFraming({ file, url: URL.createObjectURL(file), target: selected.id })
+  }
+
+  /** Close the cropper and free its object URL. */
+  function endFraming(): Framing | null {
+    const current = framing
+    if (current) URL.revokeObjectURL(current.url)
+    setFraming(null)
+    return current
+  }
+
+  /**
+   * Upload the untouched original with the circle's crop (the server applies it, N-05). Without a
+   * crop (the browser could not draw the photo) the server's centre crop is the fallback.
+   */
+  async function upload(picked: Framing | null, crop: CropRect | null) {
+    if (!picked) return
+    const { file, target } = picked
     setBusy({ stage: "uploading", percent: 0 })
     try {
-      const attachment = await uploadFile(file, "image", (percent) => setBusy({ stage: "uploading", percent }))
+      const attachment = await uploadFile(file, "image", (percent) => setBusy({ stage: "uploading", percent }), crop)
       setBusy({ stage: "processing" })
       const res = await apiPut(`/api/users/${target}/photo`, { attachmentId: attachment.id }, ProfilePhotoResponse)
       chatStore.applyProfile(res.userId, res.photoId)
@@ -121,11 +149,15 @@ export function ProfilePhotoDrawer({ open, onOpenChange }: { open: boolean; onOp
           )}
         </div>
         <DrawerFooter>
-          <Button disabled={busy !== null || !selected} onClick={() => libraryRef.current?.click()}>
+          <Button disabled={busy !== null || framing !== null || !selected} onClick={() => libraryRef.current?.click()}>
             <ImageIcon />
             Choose photo
           </Button>
-          <Button variant="outline" disabled={busy !== null || !selected} onClick={() => cameraRef.current?.click()}>
+          <Button
+            variant="outline"
+            disabled={busy !== null || framing !== null || !selected}
+            onClick={() => cameraRef.current?.click()}
+          >
             <CameraIcon />
             Take photo
           </Button>
@@ -141,7 +173,7 @@ export function ProfilePhotoDrawer({ open, onOpenChange }: { open: boolean; onOp
             accept="image/*"
             className="hidden"
             data-testid="profile-photo-input"
-            onChange={(e) => void handlePick(e.currentTarget)}
+            onChange={(e) => handlePick(e.currentTarget)}
           />
           <input
             ref={cameraRef}
@@ -150,9 +182,18 @@ export function ProfilePhotoDrawer({ open, onOpenChange }: { open: boolean; onOp
             capture="user"
             className="hidden"
             data-testid="profile-camera-input"
-            onChange={(e) => void handlePick(e.currentTarget)}
+            onChange={(e) => handlePick(e.currentTarget)}
           />
         </DrawerFooter>
+        {/* Inside DrawerContent, so the drawer treats the cropper as a nested popup. */}
+        <CropDialog
+          src={framing?.url ?? null}
+          mode="profile"
+          initial={null}
+          onSave={(rect) => void upload(endFraming(), rect)}
+          onCancel={() => endFraming()}
+          onUnrenderable={() => void upload(endFraming(), null)}
+        />
       </DrawerContent>
     </Drawer>
   )

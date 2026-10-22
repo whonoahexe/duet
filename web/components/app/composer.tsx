@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { CameraIcon, ImagesIcon, PaperPlaneRightIcon, PlusIcon, TrashIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
-import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, VIDEO_PICK_MAX_SECONDS, isBlankBody } from "@duet/shared"
+import { MAX_ALBUM_ITEMS, UPLOAD_LIMITS, VIDEO_PICK_MAX_SECONDS, isBlankBody, type CropRect } from "@duet/shared"
 import { PreviewDrawer, kindOf, videoDurationMs, type PickedItem } from "@/components/app/preview-drawer"
 import { QuoteBlock, localReplyPreview } from "@/components/app/quote-block"
 import { MicButton, RecordingStatus, useVoiceRecorder } from "@/components/app/recorder"
@@ -118,7 +118,12 @@ export function Composer({ peerName }: { peerName: string }) {
       toast("You can send up to 10 at a time. The first 10 are selected.")
     }
     let items: PickedItem[] = await Promise.all(
-      files.map(async (file) => ({ file, durationMs: kindOf(file) === "video" ? await videoDurationMs(file) : null })),
+      files.map(async (file) => ({
+        file,
+        durationMs: kindOf(file) === "video" ? await videoDurationMs(file) : null,
+        crop: null,
+        previewUrl: null,
+      })),
     )
     const tooLong = items.filter((it) => it.durationMs !== null && it.durationMs > VIDEO_PICK_MAX_SECONDS * 1000)
     if (tooLong.length > 0) {
@@ -128,11 +133,36 @@ export function Composer({ peerName }: { peerName: string }) {
     if (items.length > 0) setPicked(items)
   }
 
-  function sendPicked(files: File[], caption: string) {
-    chatStore.sendMedia(files, caption, replyMessage ? replyMessage.seq : null)
+  // The store owns the cropped previews from here on (they show in the sending bubble), so they
+  // are not revoked here (QT-m25-send-crop).
+  function sendPicked(items: PickedItem[], caption: string) {
+    chatStore.sendMedia(
+      items.map(({ file, crop, previewUrl }) => ({ file, crop, previewUrl })),
+      caption,
+      replyMessage ? replyMessage.seq : null,
+    )
     requestScrollToLatest()
     chatStore.setReplyTarget(null)
     setPicked([])
+  }
+
+  /** A new crop replaces the item's previous one and its preview. */
+  function cropPicked(index: number, crop: CropRect, previewUrl: string | null) {
+    const prev = picked[index]
+    if (!prev) {
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      return
+    }
+    if (prev.previewUrl) URL.revokeObjectURL(prev.previewUrl)
+    setPicked(picked.map((it, j) => (j === index ? { ...it, crop, previewUrl } : it)))
+  }
+
+  /** Remove one item (or all, on discard) and free the cropped previews they held. */
+  function dropPicked(keep: (index: number) => boolean) {
+    picked.forEach((it, j) => {
+      if (!keep(j) && it.previewUrl) URL.revokeObjectURL(it.previewUrl)
+    })
+    setPicked(picked.filter((_, j) => keep(j)))
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -306,8 +336,9 @@ export function Composer({ peerName }: { peerName: string }) {
       <PreviewDrawer
         items={picked}
         onSend={sendPicked}
-        onRemove={(i) => setPicked((prev) => prev.filter((_, j) => j !== i))}
-        onDiscard={() => setPicked([])}
+        onCrop={cropPicked}
+        onRemove={(i) => dropPicked((j) => j !== i)}
+        onDiscard={() => dropPicked(() => false)}
       />
     </div>
   )

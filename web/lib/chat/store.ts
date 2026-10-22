@@ -13,6 +13,7 @@ import {
   mergeMessages,
   reminderWho,
   type AttachmentKind,
+  type CropRect,
   type MeResponse,
   MeResponse as MeResponseSchema,
   type MessageDto,
@@ -29,13 +30,28 @@ export type { OutboxEntry } from "./outbox"
 
 export type ConnectionState = "connecting" | "live" | "offline"
 
+/**
+ * One photo/video handed to sendMedia (QT-m25-send-crop): the untouched original, its crop and the
+ * local cropped preview. The store owns previewUrl from here on and revokes it with the entry.
+ */
+export interface OutgoingMedia {
+  file: File
+  crop: CropRect | null
+  previewUrl: string | null
+}
+
 /** One picked file of an album being sent (kept in memory only, research A3). */
 export interface MediaItem {
   key: string
   file: File
   kind: AttachmentKind
-  /** Local preview shown until the server's thumbnail exists (a voice note's own recording). */
+  /**
+   * Local preview shown until the server's thumbnail exists (a voice note's own recording, or the
+   * cropped preview of a cropped photo).
+   */
   objectUrl: string
+  /** The photo's crop, applied by the server to the untouched original (QT-m25-send-crop). */
+  crop: CropRect | null
   /** Set once the upload completed (a retry skips this item). */
   attachmentId: string | null
   /** Upload progress in whole percents. */
@@ -174,9 +190,14 @@ async function runMedia(id: string): Promise<void> {
     for (const item of entry.items) {
       if (item.attachmentId) continue
       patchMediaItem(id, item.key, { state: "uploading", progress: 0 })
-      const attachment = await uploadFile(item.file, item.kind, (progress) => {
-        if (gen === generation) patchMediaItem(id, item.key, { progress })
-      })
+      const attachment = await uploadFile(
+        item.file,
+        item.kind,
+        (progress) => {
+          if (gen === generation) patchMediaItem(id, item.key, { progress })
+        },
+        item.crop,
+      )
       if (gen !== generation) return
       patchMediaItem(id, item.key, { attachmentId: attachment.id, state: "done", progress: 100 })
       set({ localPreviews: { ...state.localPreviews, [attachment.id]: item.objectUrl } })
@@ -508,10 +529,11 @@ export const chatStore = {
 
   /**
    * Send picked photos/videos as one album with an optional caption (D-06, D-07). The bubble shows at
-   * once from local object URLs; items upload in order, then the message is sent.
+   * once from local object URLs (a cropped photo's cropped preview); items upload in order, each
+   * with its crop, then the message is sent.
    */
-  sendMedia(files: File[], caption: string, replyToSeq: number | null = null): void {
-    if (files.length === 0) return
+  sendMedia(picked: OutgoingMedia[], caption: string, replyToSeq: number | null = null): void {
+    if (picked.length === 0) return
     playSound("sent")
     const createdAt = Date.now()
     const entry: MediaEntry = {
@@ -521,11 +543,12 @@ export const chatStore = {
       replyToSeq,
       state: "sending",
       voice: null,
-      items: files.map((file, i) => ({
+      items: picked.map(({ file, crop, previewUrl }, i) => ({
         key: `${createdAt}-${i}`,
         file,
         kind: kindOf(file),
-        objectUrl: URL.createObjectURL(file),
+        objectUrl: previewUrl ?? URL.createObjectURL(file),
+        crop,
         attachmentId: null,
         progress: 0,
         state: "queued",
@@ -559,6 +582,7 @@ export const chatStore = {
           file,
           kind: "audio",
           objectUrl: URL.createObjectURL(file),
+          crop: null,
           attachmentId: null,
           progress: 0,
           state: "queued",

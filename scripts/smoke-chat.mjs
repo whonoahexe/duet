@@ -913,6 +913,12 @@ Object.assign(scenarios, {
     const capture = await ada.getByTestId("profile-camera-input").getAttribute("capture")
     if (capture !== "user") throw new Error(`Take photo input has capture="${capture}", expected "user"`)
     await ada.getByTestId("profile-photo-input").setInputFiles(makeJpeg(`avatar-${randomUUID().slice(0, 8)}.jpg`, 900, 600))
+    // QT-m25-profile-crop: the photo is framed in the circle cropper before anything uploads.
+    const cropper = ada.getByTestId("cropper")
+    await cropper.waitFor({ state: "visible", timeout: 5_000 })
+    await cropper.getByTestId("crop-box").waitFor({ state: "visible", timeout: 5_000 })
+    await cropper.getByRole("button", { name: "Save", exact: true }).click()
+    await cropper.waitFor({ state: "hidden", timeout: 5_000 })
 
     await until(
       async () => {
@@ -932,6 +938,18 @@ Object.assign(scenarios, {
     )
     await ada.keyboard.press("Escape")
     await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+
+    // QT-m25-round-variant: the round PNG (the Android notification icon) is served for the photo.
+    const photoSrc = (await avatarImg(bob, "peer-avatar"))?.src ?? ""
+    const photoId = /\/media\/([A-Za-z0-9_-]{22})\/avatar-sm/.exec(photoSrc)?.[1]
+    if (!photoId) throw new Error(`could not read Ada's photo id from "${photoSrc}"`)
+    const round = await bob.evaluate(async (id) => {
+      const res = await fetch(`/media/${id}/avatar-round`, { credentials: "same-origin" })
+      return { status: res.status, type: res.headers.get("content-type") }
+    }, photoId)
+    if (round.status !== 200 || round.type !== "image/png") {
+      throw new Error(`/media/<id>/avatar-round answered ${round.status} ${round.type}, expected 200 image/png`)
+    }
 
     await openPhotoDrawer(bob)
     const bobDrawer = photoDrawer(bob)
@@ -1137,6 +1155,70 @@ Object.assign(scenarios, {
     if ((await row.getByRole("switch").getAttribute("aria-checked")) !== "false") throw new Error("the fired reminder is still on")
     await ada.getByRole("button", { name: "Back", exact: true }).click()
     await list.waitFor({ state: "hidden", timeout: 3_000 })
+  },
+})
+
+Object.assign(scenarios, {
+  /**
+   * QT-m25-send-crop: Ada picks a 1200x900 photo, opens Crop in the preview drawer, chooses Square,
+   * drags the frame and saves. The drawer stays open and shows the square preview; after Send, Bob's
+   * photo from /media/ is square too (the server cropped the original).
+   */
+  async crop({ ada, bob }) {
+    await Promise.all([openChat(ada, BOB.displayName), openChat(bob, ADA.displayName)])
+    const caption = uniqueText("cropped")
+    await pickFiles(ada, [makeJpeg(`crop-${randomUUID().slice(0, 8)}.jpg`, 1200, 900)])
+    const drawer = previewDrawer(ada)
+    await drawer.getByRole("button", { name: "Crop photo" }).click()
+
+    const cropper = ada.getByTestId("cropper")
+    await cropper.waitFor({ state: "visible", timeout: 5_000 })
+    const box = cropper.getByTestId("crop-box")
+    await box.waitFor({ state: "visible", timeout: 5_000 })
+    await cropper.getByRole("button", { name: "Square", exact: true }).click()
+    await until(
+      async () => {
+        const b = await box.boundingBox()
+        return Boolean(b && Math.abs(b.width - b.height) < 2)
+      },
+      3_000,
+      "the crop frame did not become square",
+    )
+    const start = await box.boundingBox()
+    if (!start) throw new Error("the crop frame has no box")
+    const x = start.x + start.width / 2
+    const y = start.y + start.height / 2
+    await ada.mouse.move(x, y)
+    await ada.mouse.down()
+    await ada.mouse.move(x + 40, y, { steps: 5 })
+    await ada.mouse.up()
+    const moved = await box.boundingBox()
+    if (!moved || moved.x <= start.x) throw new Error("dragging did not move the crop frame")
+    await cropper.getByRole("button", { name: "Save", exact: true }).click()
+    await cropper.waitFor({ state: "hidden", timeout: 5_000 })
+
+    if (!(await drawer.isVisible())) throw new Error("the preview drawer closed after the crop")
+    await until(
+      async () => {
+        const size = await drawer
+          .getByTestId("preview-single")
+          .evaluate((img) => ({ w: img.naturalWidth, h: img.naturalHeight, src: img.getAttribute("src") ?? "" }))
+        return size.w > 0 && size.w === size.h
+      },
+      5_000,
+      "the preview does not show the square crop",
+    )
+    await drawer.getByPlaceholder("Add a caption…").fill(caption)
+    await drawer.getByRole("button", { name: "Send photo", exact: true }).click()
+    await drawer.waitFor({ state: "hidden", timeout: 5_000 })
+
+    const onBob = albumWithCaption(bob, caption)
+    await onBob.waitFor({ state: "visible", timeout: 20_000 })
+    await until(() => mediaImagesLoaded(onBob, 1), 20_000, "Bob's cropped photo never loaded from /media/")
+    const delivered = await onBob.locator("img").first().evaluate((img) => ({ w: img.naturalWidth, h: img.naturalHeight }))
+    if (delivered.w === 0 || delivered.w !== delivered.h) {
+      throw new Error(`Bob's photo is ${delivered.w}x${delivered.h}, expected a square`)
+    }
   },
 })
 

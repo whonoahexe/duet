@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ImageIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
-import { formatDuration, selectionSendLabel, selectionTitle, type AttachmentKind } from "@duet/shared"
+import { CropIcon, ImageIcon, VideoCameraIcon, XIcon } from "@phosphor-icons/react"
+import { formatDuration, selectionSendLabel, selectionTitle, type AttachmentKind, type CropRect } from "@duet/shared"
+import { CropDialog, cropPreviewUrl } from "@/components/app/cropper"
 import {
   Attachment,
   AttachmentAction,
@@ -21,11 +22,18 @@ export function kindOf(file: File): AttachmentKind {
   return file.type.startsWith("video/") ? "video" : "image"
 }
 
-/** A picked file plus, for a video, its length read from the file's own metadata (D-08). */
+/**
+ * A picked file plus, for a video, its length read from the file's own metadata (D-08), and for a
+ * photo its crop (QT-m25-send-crop): the rect the server applies to the untouched original, and a
+ * local cropped preview shown instead of the full photo.
+ */
 export interface PickedItem {
   file: File
   /** null for photos, and for a video the browser cannot read (the server still checks it). */
   durationMs: number | null
+  crop: CropRect | null
+  /** Object URL of the cropped preview (owned by the composer until sent, then by the store). */
+  previewUrl: string | null
 }
 
 /** How long reading one video's metadata may take before it is let through unchecked. */
@@ -81,24 +89,32 @@ function FallbackMedia({ file }: { file: File }) {
  * Media preview sheet (D-06, UI-SPEC "Preview drawer"), about 85dvh: one item shows large; several
  * show a strip of thumbnails, each removable. Title and send label count the items live; removing the
  * last one closes the drawer. Nothing is sent until the send button is pressed; swiping it down or
- * "Discard selection" drops the selection with no confirmation.
+ * "Discard selection" drops the selection with no confirmation. Every photo the browser can draw
+ * has a Crop action (QT-m25-send-crop, N-04): the cropper opens over the drawer, and Save shows the
+ * cropped preview with the drawer still open. Each photo of an album is cropped on its own.
  */
 export function PreviewDrawer({
   items,
   onSend,
+  onCrop,
   onRemove,
   onDiscard,
 }: {
   /** The picked files; the drawer is open while this is non-empty. */
   items: PickedItem[]
-  onSend: (files: File[], caption: string) => void
+  onSend: (items: PickedItem[], caption: string) => void
+  onCrop: (index: number, crop: CropRect, previewUrl: string | null) => void
   onRemove: (index: number) => void
   onDiscard: () => void
 }) {
   const [caption, setCaption] = useState("")
   /** Object URLs that failed to render (keyed by URL, so a new selection starts clean). */
   const [unrenderable, setUnrenderable] = useState<ReadonlySet<string>>(new Set())
-  const files = useMemo(() => items.map((it) => it.file), [items])
+  /** The original's URL of the photo being cropped (closes by itself when that item is removed). */
+  const [cropping, setCropping] = useState<string | null>(null)
+  // The file list keeps its identity while only crops change, so the object URLs are not remade.
+  const [files, setFiles] = useState<File[]>(() => items.map((it) => it.file))
+  if (files.length !== items.length || items.some((it, i) => it.file !== files[i])) setFiles(items.map((it) => it.file))
   const open = files.length > 0
   const kinds = files.map(kindOf)
   const urls = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files])
@@ -108,7 +124,7 @@ export function PreviewDrawer({
 
   // Sending or discarding clears the caption, so the next selection starts empty.
   function send() {
-    onSend(files, caption)
+    onSend(items, caption)
     setCaption("")
   }
   function discard() {
@@ -117,6 +133,20 @@ export function PreviewDrawer({
   }
   // Back drops the selection, like swiping the drawer down.
   useBackClose(open, discard)
+
+  const croppingIndex = cropping === null ? -1 : urls.indexOf(cropping)
+  /** What a photo tile shows: its cropped preview, else the original. */
+  const shownUrl = (i: number) => items[i]?.previewUrl ?? urls[i]
+  const canCrop = (i: number) => kinds[i] === "image" && !unrenderable.has(urls[i])
+
+  async function saveCrop(rect: CropRect) {
+    const index = croppingIndex
+    const src = cropping
+    if (index === -1 || src === null) return
+    const preview = await cropPreviewUrl(src, rect)
+    onCrop(index, rect, preview)
+    setCropping(null)
+  }
 
   return (
     <Drawer
@@ -151,14 +181,28 @@ export function PreviewDrawer({
                 onError={() => markUnrenderable(urls[0])}
               />
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element -- local object URL preview
-              <img
-                src={urls[0]}
-                alt=""
-                data-testid="preview-single"
-                className="max-h-[60dvh] min-h-0 w-full rounded-3xl object-contain"
-                onError={() => markUnrenderable(urls[0])}
-              />
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
+                <img
+                  src={shownUrl(0)}
+                  alt=""
+                  data-testid="preview-single"
+                  className="max-h-[60dvh] min-h-0 w-full rounded-3xl object-contain"
+                  onError={() => markUnrenderable(urls[0])}
+                />
+                {canCrop(0) && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="self-center"
+                    aria-label="Crop photo"
+                    onClick={() => setCropping(urls[0])}
+                  >
+                    <CropIcon />
+                    Crop
+                  </Button>
+                )}
+              </>
             ))}
           {files.length > 1 && (
             <AttachmentGroup data-testid="preview-strip">
@@ -176,12 +220,12 @@ export function PreviewDrawer({
                         className="aspect-square w-full object-cover"
                         onError={() => markUnrenderable(urls[i])}
                       />
-                      <VideoBadge durationMs={items[i].durationMs} />
+                      <VideoBadge durationMs={items[i]?.durationMs ?? null} />
                     </AttachmentMedia>
                   ) : (
                     <AttachmentMedia variant="image">
                       {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
-                      <img src={urls[i]} alt="" onError={() => markUnrenderable(urls[i])} />
+                      <img src={shownUrl(i)} alt="" onError={() => markUnrenderable(urls[i])} />
                     </AttachmentMedia>
                   )}
                   {unrenderable.has(urls[i]) && (
@@ -190,6 +234,11 @@ export function PreviewDrawer({
                     </AttachmentContent>
                   )}
                   <AttachmentActions>
+                    {canCrop(i) && (
+                      <AttachmentAction aria-label="Crop photo" onClick={() => setCropping(urls[i])}>
+                        <CropIcon />
+                      </AttachmentAction>
+                    )}
                     <AttachmentAction aria-label="Remove item" onClick={() => onRemove(i)}>
                       <XIcon />
                     </AttachmentAction>
@@ -217,6 +266,18 @@ export function PreviewDrawer({
             Discard selection
           </Button>
         </DrawerFooter>
+        {/* Inside DrawerContent, so the drawer treats the cropper as a nested popup. */}
+        <CropDialog
+          src={croppingIndex === -1 ? null : urls[croppingIndex]}
+          mode="photo"
+          initial={croppingIndex === -1 ? null : (items[croppingIndex]?.crop ?? null)}
+          onSave={saveCrop}
+          onCancel={() => setCropping(null)}
+          onUnrenderable={() => {
+            if (cropping !== null) markUnrenderable(cropping)
+            setCropping(null)
+          }}
+        />
       </DrawerContent>
     </Drawer>
   )

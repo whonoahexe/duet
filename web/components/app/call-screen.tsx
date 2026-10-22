@@ -10,7 +10,7 @@ import {
   WarningCircleIcon,
   WifiLowIcon,
 } from "@phosphor-icons/react"
-import { avatarUrl, formatCallDuration } from "@duet/shared"
+import { formatCallDuration } from "@duet/shared"
 import { initials } from "@/components/app/login-tiles"
 import { PersonAvatar } from "@/components/app/person-avatar"
 import { Badge } from "@/components/ui/badge"
@@ -471,8 +471,16 @@ export function CallScreen() {
             ) : modeB ? (
               remoteVideo
             ) : peerPhotoId ? (
-              // eslint-disable-next-line @next/next/no-img-element -- static export; media is auth-gated
-              <img src={avatarUrl(peerPhotoId, "lg")} alt="" className="size-full object-cover" data-testid="pip-peer-photo" />
+              <div className="flex size-full items-center justify-center">
+                <PersonAvatar
+                  name={call.peerName}
+                  photoId={peerPhotoId}
+                  size="lg"
+                  className="size-16"
+                  fallbackClassName="text-xl font-medium"
+                  data-testid="pip-peer-photo"
+                />
+              </div>
             ) : (
               <span className="flex size-full items-center justify-center text-xl font-medium">{initials(call.peerName)}</span>
             )}
