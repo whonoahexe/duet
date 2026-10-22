@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.0
 status: Awaiting next milestone
 stopped_at: Phase 03 complete — all phases complete
-last_updated: "2026-10-22T07:45:21.078Z"
+last_updated: "2026-10-22T10:53:30.999Z"
 last_activity: 2026-10-22
 last_activity_desc: Milestone v1.0 completed and archived
-state_head: 96992bc0e651b857c09e1873f7cb4c5735e742bc
+state_head: 00ddbcfc1cbda9b38aefbc4257a448010e2694a5
 progress:
   total_phases: 3
   completed_phases: 3
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-10-19)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-10-22 - Completed quick task 261022-4gf: Add synthesised sound effects (always on, no toggle) and group the ⋮ and + menus into labelled sections
+Last activity: 2026-10-22 - Completed quick task 261022-m25: Add crop and round profile photos
 
 ## Performance Metrics
 
@@ -80,7 +80,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 
 ### Pending Todos
 
-- [2026-10-21] [media] Add crop and round profile photos — [todo file](.planning/todos/pending/2026-10-21-add-crop-and-round-profile-photos.md)
+None.
 
 ### Blockers/Concerns
 
@@ -101,6 +101,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 | 261021-nw9 | Show calls in chat history and add reminders | 2026-10-21 | ad93844 | [261021-nw9-show-calls-in-chat-history-and-add-remin](./quick/261021-nw9-show-calls-in-chat-history-and-add-remin/) |
 | 261022-4gf | Add synthesised sound effects (always on, no toggle) and group the ⋮ and + menus into labelled sections | 2026-10-22 | ee1c1df | [261022-4gf-add-synthesised-sound-effects-always-on-](./quick/261022-4gf-add-synthesised-sound-effects-always-on-/) |
 | 10 | Stop showing repeating reminders in the chat timeline; keep one-off reminders | 2026-10-22 | 96992bc | — |
+| 261022-m25 | Add crop and round profile photos | 2026-10-22 | 00ddbcf | [261022-m25-add-crop-and-round-profile-photos](./quick/261022-m25-add-crop-and-round-profile-photos/) |
 
 ## Deferred Items
 
