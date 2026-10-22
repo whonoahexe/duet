@@ -175,21 +175,32 @@ export async function buildApp(config: Config, deps: AppDeps = {}): Promise<Fast
 
   // QT-nw9-reminder-fire: a due reminder inserts one line both people see and pushes only to its
   // target(s), except a target viewing duet right now (the in-app toast stands in for the push).
-  // Never chatEvents: a reminder line is not a chat message push.
+  // Never chatEvents: a reminder line is not a chat message push. A repeating reminder leaves no line
+  // (it cluttered the chat, QT-fast-recurring-quiet): a live-only `reminder` frame drives the toast.
   const now = deps.now ?? Date.now
   const reminderScheduler = createReminderScheduler({
     db,
     log: app.log,
     now,
     tickMs: config.REMINDER_TICK_MS,
-    fire(row, event) {
-      const line = insertReminderMessage(db, {
-        creatorId: row.creatorId,
-        title: row.title,
-        forUserId: row.forUserId,
-        leadMinutes: event.leadMinutes,
-      })
-      app.hub.broadcast({ t: "msg", message: toDtos(db, [line])[0] })
+    fire(row, event, rule) {
+      if (rule.kind === "recurring") {
+        app.hub.broadcast({
+          t: "reminder",
+          senderId: row.creatorId,
+          title: row.title,
+          forUserId: row.forUserId,
+          leadMinutes: event.leadMinutes,
+        })
+      } else {
+        const line = insertReminderMessage(db, {
+          creatorId: row.creatorId,
+          title: row.title,
+          forUserId: row.forUserId,
+          leadMinutes: event.leadMinutes,
+        })
+        app.hub.broadcast({ t: "msg", message: toDtos(db, [line])[0] })
+      }
       const recipients =
         row.forUserId !== null ? [row.forUserId] : db.select({ id: users.id }).from(users).all().map((u) => u.id)
       const creatorName = personOf(row.creatorId).name

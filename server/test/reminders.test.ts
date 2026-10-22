@@ -335,24 +335,30 @@ describe("the reminder scheduler", () => {
     expect(rows.every((row) => !row.enabled && row.nextFireAt === null)).toBe(true)
   })
 
-  it("a long downtime fires at most one line and moves to the next future slot", async () => {
+  it("a long downtime fires at most once and moves to the next future slot; a repeating one leaves no line", async () => {
     const e = await setup()
     await e.api(e.aliceCookie, "POST", "/api/reminders", {
       title: "Water",
       forUserId: null,
       rule: { kind: "recurring", everyMinutes: 60, from: "09:00", until: "22:00", days: [0, 1, 2, 3, 4, 5, 6] },
     })
+    const bob = await connect(e.t, e.bobCookie)
     // Next is 13:00; the server comes back at 16:02, two minutes after the 16:00 slot.
     e.setClock(istToEpoch("2026-10-21", "16:02"))
     e.t.app.reminders.tick()
-    expect(reminderLines(e.t)).toHaveLength(1)
+    // QT-fast-recurring-quiet: a live-only frame for the toast, no stored chat line.
+    expect(await nextOf(bob, "reminder")).toMatchObject({ senderId: e.aliceId, title: "Water", forUserId: null, leadMinutes: null })
+    expect(reminderLines(e.t)).toHaveLength(0)
+    // Bob is connected but not viewing, so both people get the push: one fire.
+    await vi.waitFor(() => expect(e.send).toHaveBeenCalledTimes(2))
     const row = e.t.app.db.select().from(reminders).get()!
     expect(row.nextFireAt).toBe(istToEpoch("2026-10-21", "17:00"))
     expect(row.enabled).toBe(true)
     // Three hours with no slot inside the grace: nothing fires.
     e.setClock(istToEpoch("2026-10-21", "20:30"))
     e.t.app.reminders.tick()
-    expect(reminderLines(e.t)).toHaveLength(1)
+    expect(await bob.collect(50)).toEqual([])
+    expect(e.send).toHaveBeenCalledTimes(2)
     expect(e.t.app.db.select().from(reminders).get()!.nextFireAt).toBe(istToEpoch("2026-10-21", "21:00"))
   })
 

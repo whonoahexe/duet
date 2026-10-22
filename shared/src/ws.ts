@@ -106,6 +106,17 @@ export const ServerFrame = z.discriminatedUnion("t", [
   z.object({ t: z.literal("pong") }),
   /** A new or changed message (CHAT-01): the client inserts or replaces it by seq. */
   z.object({ t: z.literal("msg"), message: MessageDto }),
+  /**
+   * A repeating reminder just fired (QT-fast-recurring-quiet). It leaves no chat line, so this
+   * live-only frame carries what the in-app toast needs; a one-time reminder is a `msg` line instead.
+   */
+  z.object({
+    t: z.literal("reminder"),
+    senderId: z.uuid(),
+    title: z.string(),
+    forUserId: z.uuid().nullable(),
+    leadMinutes: z.number().int().nullable(),
+  }),
   /** The other person is typing (CHAT-06). Relayed only to the other person's connections. */
   z.object({ t: z.literal("typing"), userId: z.uuid() }),
   /** A person's read cursor moved forward to seq at `at` (epoch ms) (CHAT-07). */

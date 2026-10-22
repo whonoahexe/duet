@@ -21,7 +21,7 @@ export interface ReminderSchedulerOptions {
   tickMs?: number
   lateGraceMs?: number
   /** Deliver one firing (insert the line, broadcast, push). Errors are logged and never stop the tick. */
-  fire: (row: ReminderRow, event: ReminderEvent) => void
+  fire: (row: ReminderRow, event: ReminderEvent, rule: ReminderRule) => void
 }
 
 /** Parse a stored rule; null when the JSON or the shape is bad. */
@@ -80,7 +80,7 @@ export function createReminderScheduler({
             continue
           }
           try {
-            fire(row, event)
+            fire(row, event, rule)
           } catch {
             log.warn({ evt: "reminder_fire_failed", id: row.id })
           }

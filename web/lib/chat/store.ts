@@ -408,15 +408,23 @@ export const chatStore = {
   announceReminder(dto: MessageDto): void {
     if (dto.kind !== "reminder" || !dto.reminder) return
     if (state.messages.some((m) => m.seq === dto.seq)) return
+    chatStore.announceReminderFired({ senderId: dto.senderId, title: dto.body ?? "", ...dto.reminder })
+  },
+
+  /**
+   * The toast and chime of a fired reminder, from a one-time reminder's line (announceReminder) or a
+   * repeating reminder's live-only `reminder` frame (QT-fast-recurring-quiet).
+   */
+  announceReminderFired(r: { senderId: string; title: string; forUserId: string | null; leadMinutes: number | null }): void {
     const me = state.me
     if (!me) return
-    if (dto.reminder.forUserId !== null && dto.reminder.forUserId !== me.id) return
+    if (r.forUserId !== null && r.forUserId !== me.id) return
     if (typeof document === "undefined" || document.visibilityState !== "visible") return
     const names: Record<string, string> = { [me.id]: me.displayName }
     if (state.peer) names[state.peer.id] = state.peer.displayName
-    const who = reminderWho(dto.senderId, dto.reminder.forUserId, me.id, names)
-    const lead = dto.reminder.leadMinutes
-    toast(`⏰ ${dto.body ?? ""}${lead !== null ? ` · in ${leadLabel(lead)}` : ""}`, {
+    const who = reminderWho(r.senderId, r.forUserId, me.id, names)
+    const lead = r.leadMinutes
+    toast(`⏰ ${r.title}${lead !== null ? ` · in ${leadLabel(lead)}` : ""}`, {
       description: who.charAt(0).toUpperCase() + who.slice(1),
     })
     playSound("reminder")

@@ -211,6 +211,9 @@ class Realtime {
         chatStore.announceReminder(frame.message)
         chatStore.applyMessage(frame.message)
         return
+      case "reminder":
+        chatStore.announceReminderFired(frame)
+        return
       case "typing":
         chatStore.peerTyping(frame.userId)
         return
