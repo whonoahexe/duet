@@ -107,12 +107,12 @@ describe("service worker push (NOTF-01, D-14, Pitfall 3)", () => {
 })
 
 describe("service worker push icon (QT-5zd-push-icon, T-5zd-05)", () => {
-  it("shows the sender's avatar-sm crop as the icon for a valid 22-character id", async () => {
+  it("shows the sender's avatar-round circle as the icon for a valid 22-character id", async () => {
     const { self, listeners } = loadSw()
     await dispatch(listeners, "push", { data: pushData({ t: "chat", title: "A", body: "b", avatar: "AbCdEfGhIjKlMnOpQrStUv" }) })
     expect(self.registration.showNotification).toHaveBeenCalledWith(
       "A",
-      expect.objectContaining({ icon: "/media/AbCdEfGhIjKlMnOpQrStUv/avatar-sm", badge: "/icons/badge-96.png" }),
+      expect.objectContaining({ icon: "/media/AbCdEfGhIjKlMnOpQrStUv/avatar-round", badge: "/icons/badge-96.png" }),
     )
   })
 

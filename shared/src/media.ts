@@ -53,7 +53,7 @@ export type CompleteUploadBody = z.infer<typeof CompleteUploadBody>
  * The regenerated files GET /media/:id/:variant may serve. The original is never one of them
  * (T-02-22): it may be HEIC with GPS EXIF or a mislabeled file.
  */
-export const MediaVariant = z.enum(["thumb", "display", "poster", "video", "audio", "avatar-sm", "avatar-lg"])
+export const MediaVariant = z.enum(["thumb", "display", "poster", "video", "audio", "avatar-sm", "avatar-lg", "avatar-round"])
 export type MediaVariant = z.infer<typeof MediaVariant>
 
 /**

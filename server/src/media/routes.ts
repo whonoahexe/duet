@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm"
 import type { FastifyInstance, FastifyReply } from "fastify"
 import { requireUser } from "../auth/session"
 import { attachments } from "../db/schema"
+import { ensureRoundAvatar } from "./avatar"
 import { decryptChunks, readEncHeader } from "./crypto"
 import { ATTACHMENT_ID_RE } from "./uploads"
 
@@ -13,6 +14,8 @@ import { ATTACHMENT_ID_RE } from "./uploads"
  * The original is deliberately absent, and the URL has no extension, so the Cloudflare edge never
  * treats media as a cacheable static asset (T-02-27). avatar-sm / avatar-lg are the square crops of a
  * profile photo attachment (QT-5zd-photo-store): same session gate, ready check and decrypting path.
+ * avatar-round is its 192 px circle PNG with transparent corners (QT-m25-round-variant), the
+ * Android notification icon; a profile photo set before it existed gets it on the first request.
  */
 const VARIANTS = {
   thumb: ["thumb.webp", "image/webp"],
@@ -22,6 +25,7 @@ const VARIANTS = {
   audio: ["audio.m4a", "audio/mp4"],
   "avatar-sm": ["avatar-sm.webp", "image/webp"],
   "avatar-lg": ["avatar-lg.webp", "image/webp"],
+  "avatar-round": ["avatar-round.png", "image/png"],
 } as const satisfies Record<string, readonly [string, string]>
 
 type VariantName = keyof typeof VARIANTS
@@ -100,6 +104,16 @@ export async function mediaRoutes(app: FastifyInstance, opts: MediaRoutesOptions
     if (!row || row.status !== "ready") return notFound(reply)
     const [file, type] = VARIANTS[variant]
     const abs = path.join(mediaRoot, id, file)
+    if (variant === "avatar-round" && !existsSync(abs)) {
+      // Lazily made for a profile photo only; a miss or a failure is a no-store 404, so a later
+      // request tries again (T-m25-05).
+      try {
+        if (!(await ensureRoundAvatar(mediaRoot, key, id))) return notFound(reply)
+      } catch (err) {
+        request.log.error({ evt: "avatar_round_failed", attachmentId: id, err: err instanceof Error ? err.message : String(err) })
+        return notFound(reply)
+      }
+    }
     // A variant this kind does not have (a photo's poster): a no-store 404, never an immutable one.
     if (!existsSync(abs)) return notFound(reply)
     const header = await readEncHeader(abs)

@@ -34,8 +34,10 @@ self.addEventListener("push", (event) => {
   const isCall = d.t === "call" || d.t === "call-missed"
   const isReminder = d.t === "reminder"
   const tag = isCall ? "duet-call" : isReminder ? "duet-reminder" : d.t === "test" ? "duet-test" : "duet-chat"
+  // Android shows a web-push icon exactly as the file is (no mask), so the circle has to be in the
+  // file: avatar-round is the photo as a PNG circle with transparent corners (QT-m25-sw-icon).
   const icon =
-    typeof d.avatar === "string" && ATTACHMENT_ID.test(d.avatar) ? "/media/" + d.avatar + "/avatar-sm" : "/icons/icon-192.png"
+    typeof d.avatar === "string" && ATTACHMENT_ID.test(d.avatar) ? "/media/" + d.avatar + "/avatar-round" : "/icons/icon-192.png"
   let data = { url: "/" }
   if (isCall && typeof d.callId === "string" && CALL_ID.test(d.callId)) {
     data = { url: (d.t === "call" ? "/?call=" : "/?missed=") + d.callId, callId: d.callId }

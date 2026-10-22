@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto"
-import { existsSync, readdirSync } from "node:fs"
+import { existsSync, readdirSync, rmSync } from "node:fs"
 import path from "node:path"
 import sharp from "sharp"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
@@ -248,5 +248,67 @@ describe("setting a photo (QT-5zd-photo-store, QT-5zd-photo-live)", () => {
     expect(existsSync(path.join(mediaRoot, photoA))).toBe(false)
     expect(await nextOfType(bobWs, "profile")).toEqual({ t: "profile", userId: bobId, photoId: null })
     bobWs.ws.close()
+  })
+})
+
+describe("avatar-round circle (QT-m25-round-variant, N-07)", () => {
+  /** Alpha channel of a decoded PNG at (x, y). */
+  async function alphaAt(file: string) {
+    const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    return { info, alpha: (x: number, y: number) => data[(y * info.width + x) * info.channels + 3]! }
+  }
+
+  function getRound(id: string, cookie: string | null = aliceCookie) {
+    return t.app.inject({ method: "GET", url: `/media/${id}/avatar-round`, headers: cookie !== null ? { cookie } : {} })
+  }
+
+  let photo: string
+
+  it("is written encrypted with the other crops: a 192x192 PNG with transparent corners", async () => {
+    photo = await readyUpload()
+    expect((await putPhoto(aliceCookie, aliceId, { attachmentId: photo })).statusCode).toBe(200)
+    const abs = path.join(mediaRoot, photo, "avatar-round.png")
+    expect(await readEncHeader(abs)).not.toBeNull()
+    const plain = await decryptedCopy(t, abs)
+    const meta = await sharp(plain).metadata()
+    expect(meta.format).toBe("png")
+    expect([meta.width, meta.height]).toEqual([192, 192])
+    expect(meta.hasAlpha).toBe(true)
+    const { alpha } = await alphaAt(plain)
+    expect(alpha(2, 2)).toBe(0)
+    expect(alpha(189, 189)).toBe(0)
+    expect(alpha(96, 96)).toBe(255)
+  })
+
+  it("is served as image/png behind the session gate", async () => {
+    const res = await getRound(photo)
+    expect(res.statusCode).toBe(200)
+    expect(res.headers["content-type"]).toBe("image/png")
+    expect(res.headers["cache-control"]).toBe("private, max-age=31536000, immutable")
+    expect((await getRound(photo, null)).statusCode).toBe(401)
+  })
+
+  it("is generated on first request for a photo set before it existed, once for concurrent requests", async () => {
+    const abs = path.join(mediaRoot, photo, "avatar-round.png")
+    rmSync(abs)
+    const [a, b] = await Promise.all([getRound(photo), getRound(photo, bobCookie)])
+    expect(a.statusCode).toBe(200)
+    expect(b.statusCode).toBe(200)
+    expect(a.headers["content-type"]).toBe("image/png")
+    expect(await readEncHeader(abs)).not.toBeNull()
+    expect(readdirSync(path.join(mediaRoot, "work"))).toEqual([])
+
+    rmSync(abs)
+    expect((await getRound(photo)).statusCode).toBe(200)
+    expect(existsSync(abs)).toBe(true)
+  })
+
+  it("is never made for message media (no avatar-lg.webp)", async () => {
+    const id = await readyUpload()
+    const res = await getRound(id)
+    expect(res.statusCode).toBe(404)
+    expect(res.headers["cache-control"]).toBe("no-store")
+    expect(existsSync(path.join(mediaRoot, id, "avatar-round.png"))).toBe(false)
+    expect((await putPhoto(aliceCookie, aliceId, { attachmentId: null })).statusCode).toBe(200)
   })
 })

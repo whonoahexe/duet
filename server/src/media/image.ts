@@ -15,6 +15,8 @@ const THUMB_QUALITY = 70
 /** Profile photo crops (QT-5zd-photo-store): exact squares, centre-cropped. */
 export const AVATAR_SMALL_EDGE = 192
 export const AVATAR_LARGE_EDGE = 640
+/** Round profile photo (QT-m25-round-variant): the push notification icon on Android. */
+export const AVATAR_ROUND_EDGE = 192
 const AVATAR_QUALITY = 80
 /** heif-convert on a 48 MP HEIC takes a few seconds; anything near this is a hostile file. */
 const HEIF_CONVERT_TIMEOUT_MS = 120_000
@@ -118,15 +120,50 @@ export async function cropImage(
 }
 
 /**
- * A profile photo's display.webp -> avatar-sm.webp (192x192) + avatar-lg.webp (640x640) in outDir
- * (QT-5zd-photo-store). Always exactly NxN: centre-cropped and enlarged when the source is smaller.
- * The source is already autorotated and has no metadata, and sharp writes none (T-5zd-07). A failure
- * is MediaError("processing_failed").
+ * A profile photo's display.webp -> avatar-sm.webp (192x192), avatar-lg.webp (640x640) and
+ * avatar-round.png (192x192 circle) in outDir (QT-5zd-photo-store, QT-m25-round-variant). Always
+ * exactly NxN, centre-cropped and enlarged when the source is smaller. A photo framed in the circle
+ * cropper is already square, so the centre crop changes nothing there; it remains the fallback for a
+ * photo the browser could not show in the cropper. The source is already autorotated and has no
+ * metadata, and sharp writes none (T-5zd-07). A failure is MediaError("processing_failed").
  */
 export async function processAvatar(sourcePath: string, outDir: string): Promise<void> {
   const square = { fit: "cover", position: "centre" } as const
   await writeVariant(sourcePath, path.join(outDir, "avatar-sm.webp"), AVATAR_SMALL_EDGE, AVATAR_QUALITY, square, "processing_failed")
   await writeVariant(sourcePath, path.join(outDir, "avatar-lg.webp"), AVATAR_LARGE_EDGE, AVATAR_QUALITY, square, "processing_failed")
+  await writeRoundAvatar(sourcePath, path.join(outDir, "avatar-round.png"))
+}
+
+/** A filled circle covering the whole square: dest-in keeps the photo inside it only. */
+const ROUND_MASK = Buffer.from(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${AVATAR_ROUND_EDGE}" height="${AVATAR_ROUND_EDGE}">` +
+    `<circle cx="${AVATAR_ROUND_EDGE / 2}" cy="${AVATAR_ROUND_EDGE / 2}" r="${AVATAR_ROUND_EDGE / 2}" fill="#fff"/></svg>`,
+)
+
+/**
+ * The photo as a 192x192 circle with transparent corners, as PNG (QT-m25-round-variant, N-07).
+ * Android shows a web-push icon exactly as the file is, so the circle has to be in the pixels.
+ * Written to a temp name and renamed; a failure is MediaError("processing_failed").
+ */
+export async function writeRoundAvatar(sourcePath: string, targetPath: string): Promise<void> {
+  const tmp = `${targetPath}.tmp`
+  try {
+    // Two passes, so the mask always lands on the finished 192x192 square with an alpha channel.
+    const square = await sharp(sourcePath)
+      .rotate()
+      .resize(AVATAR_ROUND_EDGE, AVATAR_ROUND_EDGE, { fit: "cover", position: "centre" })
+      .ensureAlpha()
+      .png()
+      .toBuffer()
+    await sharp(square)
+      .composite([{ input: ROUND_MASK, blend: "dest-in" }])
+      .png()
+      .toFile(tmp)
+    await rename(tmp, targetPath)
+  } catch (err) {
+    await rm(tmp, { force: true })
+    throw new MediaError("processing_failed", err instanceof Error ? err.message : String(err))
+  }
 }
 
 type ResizeFit = { fit: "inside"; withoutEnlargement: true } | { fit: "cover"; position: "centre" }

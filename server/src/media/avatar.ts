@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import path from "node:path"
 import { eq } from "drizzle-orm"
@@ -8,7 +9,7 @@ import { requireUser } from "../auth/session"
 import { attachments, users } from "../db/schema"
 import { decryptToFile, encryptFile } from "./crypto"
 import { MediaError } from "./exec"
-import { processAvatar } from "./image"
+import { processAvatar, writeRoundAvatar } from "./image"
 import { attachmentDir, workRoot, type MediaProcessor } from "./process"
 
 export interface ProfileRoutesOptions {
@@ -21,7 +22,44 @@ export interface ProfileRoutesOptions {
   waitMs?: number
 }
 
-const AVATAR_FILES = ["avatar-sm.webp", "avatar-lg.webp"] as const
+const AVATAR_FILES = ["avatar-sm.webp", "avatar-lg.webp", "avatar-round.png"] as const
+
+/** Round-copy jobs in flight, one per attachment, so concurrent first requests share one job. */
+const roundJobs = new Map<string, Promise<void>>()
+
+/**
+ * Make sure a profile photo has its avatar-round.png (QT-m25-round-variant, N-07). True when it
+ * exists or was just made. False when the attachment has no avatar-lg.webp: it was never a profile
+ * photo, so message media never gets a round copy (T-m25-05). Photos set before the round variant
+ * existed get it here, made from the encrypted avatar-lg.webp in a media/work scratch dir that is
+ * always removed, and stored encrypted (T-m25-04). One job per attachment runs at a time. A failure
+ * throws. A replaced or removed photo's whole dir is deleted, so its round copy goes with it.
+ */
+export async function ensureRoundAvatar(mediaRoot: string, key: Buffer, id: string): Promise<boolean> {
+  const dir = attachmentDir(mediaRoot, id)
+  const target = path.join(dir, "avatar-round.png")
+  if (existsSync(target)) return true
+  if (!existsSync(path.join(dir, "avatar-lg.webp"))) return false
+  let job = roundJobs.get(dir)
+  if (!job) {
+    job = (async () => {
+      await mkdir(workRoot(mediaRoot), { recursive: true, mode: 0o700 })
+      const scratch = await mkdtemp(path.join(workRoot(mediaRoot), `${id}-round-`))
+      try {
+        const large = path.join(scratch, "avatar-lg.webp")
+        const round = path.join(scratch, "avatar-round.png")
+        await decryptToFile(key, path.join(dir, "avatar-lg.webp"), large)
+        await writeRoundAvatar(large, round)
+        await encryptFile(key, round, target)
+      } finally {
+        await rm(scratch, { recursive: true, force: true })
+      }
+    })().finally(() => roundJobs.delete(dir))
+    roundJobs.set(dir, job)
+  }
+  await job
+  return true
+}
 
 /** Answered as { error } with this status. */
 class PhotoError extends Error {
@@ -37,7 +75,8 @@ class PhotoError extends Error {
  * Shared profile photos (QT-5zd-photo-store, QT-5zd-photo-live): PUT /api/users/:id/photo sets or
  * removes a person's photo. Either logged-in person may change either photo (decided 2026-10-20,
  * T-5zd-01). The photo is the requester's own unattached image upload (T-5zd-02); its display.webp is
- * cropped to two squares in a media/work scratch dir and stored encrypted (T-5zd-03). The change is
+ * cropped to two squares and a circle (avatar-round.png, QT-m25-round-variant) in a media/work
+ * scratch dir and stored encrypted (T-5zd-03). The change is
  * broadcast to both people, and a replaced or removed avatar attachment is deleted, never message
  * media (T-5zd-06). Logs carry ids and the action only (T-5zd-09).
  */
@@ -62,7 +101,7 @@ export async function profileRoutes(app: FastifyInstance, opts: ProfileRoutesOpt
     return app.db.select().from(attachments).where(eq(attachments.id, id)).get()
   }
 
-  /** display.webp -> avatar-sm/lg.webp, plaintext only inside a scratch dir removed in a finally. */
+  /** display.webp -> avatar-sm/lg.webp + avatar-round.png, plaintext only inside a scratch dir removed in a finally. */
   async function writeCrops(id: string): Promise<void> {
     const dir = attachmentDir(mediaRoot, id)
     await mkdir(workRoot(mediaRoot), { recursive: true, mode: 0o700 })
