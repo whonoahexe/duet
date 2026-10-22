@@ -5,6 +5,7 @@ import path from "node:path"
 import { eq } from "drizzle-orm"
 import type { FastifyInstance } from "fastify"
 import {
+  CompleteUploadBody,
   CreateUploadBody,
   UPLOAD_CHUNK_SIZE,
   UPLOAD_LIMITS,
@@ -14,12 +15,14 @@ import {
   type AttachmentKind,
   type CompleteUploadResponse,
   type CreateUploadResponse,
+  type CropRect,
 } from "@duet/shared"
 import { requireUser } from "../auth/session"
 import { toAttachmentDto } from "../chat/service"
 import { attachments } from "../db/schema"
 import { encryptBuffer, encryptFile, readDecrypted } from "./crypto"
 import { MediaError } from "./exec"
+import { cropImage } from "./image"
 import { attachmentDir, uploadTmpDir, workRoot, type MediaProcessor } from "./process"
 import { VIDEO_FORMATS, VOICE_FORMATS, inputFormatFor, probeMedia } from "./probe"
 
@@ -71,6 +74,8 @@ export interface UploadRoutesOptions {
  * Chunked uploads (MDIA-05, research Pattern 5). Cloudflare's Free plan rejects bodies over 100 MB
  * (Pitfall 1), so a file is sent as 8 MiB raw application/octet-stream chunks and assembled on
  * complete. The octet-stream parser exists only inside this plugin's scope, with an 8 MiB limit.
+ * Complete may carry an image crop rect (CompleteUploadBody, QT-m25-crop-server): the original is
+ * cropped before it is stored, so every variant shows the crop.
  * Only the uploader can write chunks, complete, or later attach the upload (T-02-28). Non-GET
  * requests are already Origin-checked globally.
  */
@@ -154,6 +159,7 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
     id: string,
     kind: AttachmentKind,
     declaredSize: number,
+    crop: CropRect | undefined,
   ): Promise<AttachmentDto | "incomplete" | { rejected: UploadRejection }> {
     const dir = uploadTmpDir(mediaRoot, id)
     const count = chunkCount(declaredSize)
@@ -162,7 +168,8 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
 
     // The plaintext exists only in a media/work scratch dir while this step runs (T-4qu-01): the
     // parts are decrypted (each at most 8 MiB, one at a time) into scratch/original, which is
-    // probed and then stored encrypted. A part without a valid header throws (500).
+    // probed, cropped when the phone sent a crop (QT-m25-crop-server), and then stored encrypted.
+    // A part without a valid header throws (500).
     const outDir = attachmentDir(mediaRoot, id)
     await mkdir(workRoot(mediaRoot), { recursive: true, mode: 0o700 })
     const scratch = await mkdtemp(path.join(workRoot(mediaRoot), `${id}-`))
@@ -173,7 +180,22 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
 
       // Video/audio: ffprobe before anything else touches the file; a refused upload never reaches
       // ffmpeg and its bytes are deleted (an HLS playlist is not worth keeping).
-      const rejected = await gate(kind, plain)
+      let rejected = await gate(kind, plain)
+
+      // An image crop is applied before the row is "processing", so every variant (and a job
+      // re-queued after a crash) starts from the cropped original and nothing is cropped twice
+      // (N-05). An undecodable image is refused like a failed probe.
+      let stored = plain
+      if (!rejected && crop) {
+        stored = path.join(scratch, "cropped")
+        try {
+          await cropImage(plain, stored, crop, scratch)
+        } catch (err) {
+          if (!(err instanceof MediaError && err.code === "unsupported_media")) throw err
+          rejected = "unsupported_media"
+        }
+      }
+
       if (rejected) {
         app.db.update(attachments).set({ status: "failed", error: rejected }).where(eq(attachments.id, id)).run()
         await rm(dir, { recursive: true, force: true })
@@ -182,7 +204,7 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
       }
 
       await mkdir(outDir, { recursive: true })
-      await encryptFile(key, plain, path.join(outDir, "original"))
+      await encryptFile(key, stored, path.join(outDir, "original"))
     } finally {
       await rm(scratch, { recursive: true, force: true })
     }
@@ -203,6 +225,12 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
     const { id } = request.params as { id: string }
     const row = ownUpload(id, request.user!.id)
     if (!row) return reply.code(404).send({ error: "not_found" })
+    // The body is checked before any status branch (T-m25-01): a crop is a strict 0..1 rect, and
+    // only images can be cropped (N-01: no video trimming).
+    const parsed = CompleteUploadBody.safeParse(request.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" })
+    const crop = parsed.data.crop
+    if (crop && row.kind !== "image") return reply.code(400).send({ error: "invalid_body" })
 
     let attachment: AttachmentDto
     if (row.status === "failed" && row.error !== null && REJECTIONS.has(row.error)) {
@@ -212,7 +240,7 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
     } else {
       let pending = completing.get(id)
       if (!pending) {
-        pending = complete(id, row.kind, row.declaredSize).finally(() => completing.delete(id))
+        pending = complete(id, row.kind, row.declaredSize, crop).finally(() => completing.delete(id))
         completing.set(id, pending)
       }
       const result = await pending
@@ -222,7 +250,7 @@ export async function uploadRoutes(app: FastifyInstance, opts: UploadRoutesOptio
         return reply.code(422).send({ error: result.rejected })
       }
       attachment = result
-      request.log.info({ evt: "upload_completed", userId: request.user!.id, attachmentId: id })
+      request.log.info({ evt: "upload_completed", userId: request.user!.id, attachmentId: id, cropped: crop !== undefined })
     }
     const body: CompleteUploadResponse = { attachment }
     return body

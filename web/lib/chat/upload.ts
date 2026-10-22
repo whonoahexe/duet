@@ -6,6 +6,7 @@ import {
   chunkCount,
   type AttachmentDto,
   type AttachmentKind,
+  type CropRect,
 } from "@duet/shared"
 import { ApiError, apiPost } from "@/lib/api"
 
@@ -51,11 +52,15 @@ function retryable(err: unknown): boolean {
  * Upload one file (MDIA-05, research Pattern 5): POST /api/uploads -> 8 MiB chunk PUTs in order
  * (each retried up to 3 times) -> POST /api/uploads/{id}/complete. onProgress gets whole percents
  * (0..100) across all chunks. Errors are ApiError (status 0 for network failures).
+ *
+ * The file sent is always the untouched original (QT-m25-crop-server, N-05): a photo's crop travels
+ * as a normalised rect in the complete body, and the server applies it before making any variant.
  */
 export async function uploadFile(
   file: Blob,
   kind: AttachmentKind,
   onProgress: (percent: number) => void,
+  crop: CropRect | null = null,
 ): Promise<AttachmentDto> {
   const { id, chunkSize } = await apiPost("/api/uploads", { kind, size: file.size }, CreateUploadResponse)
   const count = chunkCount(file.size, chunkSize)
@@ -83,6 +88,10 @@ export async function uploadFile(
     }
   }
 
-  const { attachment } = await apiPost(`/api/uploads/${encodeURIComponent(id)}/complete`, {}, CompleteUploadResponse)
+  const { attachment } = await apiPost(
+    `/api/uploads/${encodeURIComponent(id)}/complete`,
+    crop ? { crop } : {},
+    CompleteUploadResponse,
+  )
   return attachment
 }

@@ -220,12 +220,16 @@ export async function openWs(
   }
 }
 
-/** Run a full chunked upload of `bytes` (POST /api/uploads -> chunk PUTs -> complete). */
+/**
+ * Run a full chunked upload of `bytes` (POST /api/uploads -> chunk PUTs -> complete). completeBody,
+ * when given, is the complete request's JSON payload (a crop, QT-m25-crop-server).
+ */
 export async function uploadBytes(
   app: FastifyInstance,
   cookie: string,
   bytes: Buffer,
   kind: "image" | "video" | "audio" = "image",
+  completeBody?: Record<string, unknown>,
 ): Promise<{ id: string; attachment: Record<string, any> }> {
   const created = await app.inject({
     method: "POST",
@@ -248,6 +252,7 @@ export async function uploadBytes(
     method: "POST",
     url: `/api/uploads/${id}/complete`,
     headers: { cookie, origin: TEST_ORIGIN },
+    ...(completeBody !== undefined ? { payload: completeBody } : {}),
   })
   if (done.statusCode !== 200) throw new Error(`complete returned ${done.statusCode}`)
   return { id, attachment: done.json().attachment }

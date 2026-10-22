@@ -3,6 +3,7 @@ import { existsSync } from "node:fs"
 import { rename, rm } from "node:fs/promises"
 import path from "node:path"
 import sharp, { type Metadata } from "sharp"
+import { cropToPixels, type CropRect } from "@duet/shared"
 import { MediaError, runTool } from "./exec"
 
 /** D-09 display copy: long edge at most 2048 px, WebP quality 82. */
@@ -35,6 +36,24 @@ export interface ImageResult {
  * - Each variant is written to a temp name and renamed, so a half-written file is never served.
  */
 export async function processImage(originalPath: string, outDir: string): Promise<ImageResult> {
+  return withSharpSource(originalPath, outDir, async (source) => {
+    const display = await writeVariant(source, path.join(outDir, "display.webp"), DISPLAY_EDGE, DISPLAY_QUALITY)
+    await writeVariant(source, path.join(outDir, "thumb.webp"), THUMB_EDGE, THUMB_QUALITY)
+    return display
+  })
+}
+
+/**
+ * Run fn with a path sharp can decode for originalPath. An unreadable file is
+ * MediaError("unsupported_media"). iPhone HEIC (HEVC-compressed HEIF) is first turned into a JPEG in
+ * workDir by heif-convert (Pitfall 5), which applies the HEIF rotation itself; that scratch file is
+ * always removed afterwards. Everything else is passed through as is.
+ */
+export async function withSharpSource<T>(
+  originalPath: string,
+  workDir: string,
+  fn: (source: string) => Promise<T>,
+): Promise<T> {
   let meta: Metadata
   try {
     meta = await sharp(originalPath).metadata()
@@ -46,7 +65,7 @@ export async function processImage(originalPath: string, outDir: string): Promis
   let source = originalPath
   try {
     if (meta.format === "heif" && meta.compression === "hevc") {
-      const base = path.join(outDir, `.heic-${randomBytes(6).toString("hex")}`)
+      const base = path.join(workDir, `.heic-${randomBytes(6).toString("hex")}`)
       const jpg = `${base}.jpg`
       scratch.push(jpg, `${base}-1.jpg`)
       await runTool("heif-convert", ["-q", "92", originalPath, jpg], {
@@ -58,13 +77,44 @@ export async function processImage(originalPath: string, outDir: string): Promis
       source = existsSync(jpg) ? jpg : `${base}-1.jpg`
       if (!existsSync(source)) throw new MediaError("unsupported_media", "heif-convert wrote no image")
     }
-
-    const display = await writeVariant(source, path.join(outDir, "display.webp"), DISPLAY_EDGE, DISPLAY_QUALITY)
-    await writeVariant(source, path.join(outDir, "thumb.webp"), THUMB_EDGE, THUMB_QUALITY)
-    return display
+    return await fn(source)
   } finally {
     await Promise.all(scratch.map((f) => rm(f, { force: true })))
   }
+}
+
+/** JPEG quality of a cropped original: it is re-encoded once, so it stays near-lossless. */
+const CROP_JPEG_QUALITY = 95
+
+/**
+ * Apply the phone's crop rect to an original (QT-m25-crop-server, N-05) and write the result to
+ * targetPath. The rect is relative to the EXIF-upright image: rotate() runs first, and extract()
+ * after it works on the upright pixels. The output is PNG when the source has alpha, otherwise
+ * JPEG quality 95 with full 4:4:4 chroma. sharp writes no metadata, so EXIF and GPS are dropped.
+ * Any failure is MediaError("unsupported_media"); a half-written file is never left behind.
+ */
+export async function cropImage(
+  originalPath: string,
+  targetPath: string,
+  crop: CropRect,
+  workDir: string,
+): Promise<ImageResult> {
+  return withSharpSource(originalPath, workDir, async (source) => {
+    const tmp = `${targetPath}.tmp`
+    try {
+      const meta = await sharp(source).metadata()
+      const { width, height } = meta.autoOrient
+      const pixels = cropToPixels(crop, width, height)
+      const img = sharp(source).rotate().extract(pixels)
+      const info = await (meta.hasAlpha ? img.png() : img.jpeg({ quality: CROP_JPEG_QUALITY, chromaSubsampling: "4:4:4" })).toFile(tmp)
+      await rename(tmp, targetPath)
+      return { width: info.width, height: info.height }
+    } catch (err) {
+      await rm(tmp, { force: true })
+      if (err instanceof MediaError) throw err
+      throw new MediaError("unsupported_media", err instanceof Error ? err.message : String(err))
+    }
+  })
 }
 
 /**

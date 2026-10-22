@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { AttachmentDto, AttachmentKind, MAX_ALBUM_ITEMS } from "./chat"
+import { CropRect } from "./crop"
 
 /**
  * Media upload contract (MDIA-01, MDIA-05). Uploads are chunked because the Cloudflare Free plan
@@ -37,6 +38,16 @@ export const CompleteUploadResponse = z.object({
   attachment: AttachmentDto,
 })
 export type CompleteUploadResponse = z.infer<typeof CompleteUploadResponse>
+
+/**
+ * POST /api/uploads/:id/complete body (QT-m25-crop-server): optionally the crop the phone picked for
+ * an image. The upload itself is always the untouched original; the server applies the crop before
+ * any variant exists, so the stored original is the cropped image (N-05).
+ */
+export const CompleteUploadBody = z.strictObject({
+  crop: CropRect.optional(),
+})
+export type CompleteUploadBody = z.infer<typeof CompleteUploadBody>
 
 /**
  * The regenerated files GET /media/:id/:variant may serve. The original is never one of them
