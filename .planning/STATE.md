@@ -84,7 +84,6 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 
 ### Blockers/Concerns
 
-- Media at rest is encrypted with `~/.config/duet/media.key` (mounted read-only into the container). Back it up off the machine: losing it loses all media, and duet will not boot without it.
 - The Cloudflare API token (`~/.config/duet/cloudflare.ini`) expires 2026-12-08. Rotate it before then, because TURN key and tunnel management depend on it.
 - Password reset is still "re-run the seed script" (AUTH-06 candidate).
 
