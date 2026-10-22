@@ -3,10 +3,10 @@ gsd_state_version: "1.0"
 milestone: v1.0
 status: Awaiting next milestone
 stopped_at: Phase 03 complete — all phases complete
-last_updated: "2026-10-21T22:08:11.860Z"
-last_activity: 2026-10-21
+last_updated: "2026-10-22T07:45:21.078Z"
+last_activity: 2026-10-22
 last_activity_desc: Milestone v1.0 completed and archived
-state_head: ee1c1df093480e8b350a423ffe4b752a53c7f586
+state_head: 96992bc0e651b857c09e1873f7cb4c5735e742bc
 progress:
   total_phases: 3
   completed_phases: 3
@@ -101,6 +101,7 @@ The full log is in PROJECT.md Key Decisions. v1.0 phase-level decisions are arch
 | 7 | Remove Call test from the header menu | 2026-10-21 | 1710ead | — |
 | 261021-nw9 | Show calls in chat history and add reminders | 2026-10-21 | ad93844 | [261021-nw9-show-calls-in-chat-history-and-add-remin](./quick/261021-nw9-show-calls-in-chat-history-and-add-remin/) |
 | 261022-4gf | Add synthesised sound effects (always on, no toggle) and group the ⋮ and + menus into labelled sections | 2026-10-22 | ee1c1df | [261022-4gf-add-synthesised-sound-effects-always-on-](./quick/261022-4gf-add-synthesised-sound-effects-always-on-/) |
+| 10 | Stop showing repeating reminders in the chat timeline; keep one-off reminders | 2026-10-22 | 96992bc | — |
 
 ## Deferred Items
 
